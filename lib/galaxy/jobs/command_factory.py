@@ -2,6 +2,7 @@ from os import getcwd
 from os import chmod
 from os.path import join
 from os.path import abspath
+from pasteur.modulepatch import __handle_dependency_module
 
 from logging import getLogger
 log = getLogger( __name__ )
@@ -45,6 +46,7 @@ def build_command(
     # containers ready to go!
     if not container:
         __handle_dependency_resolution(commands_builder, job_wrapper, remote_command_params)
+        __handle_dependency_module(commands_builder, job_wrapper) #PASTEUR MAREUIL
 
     if container or job_wrapper.commands_in_new_shell:
         externalized_commands = __externalize_commands(job_wrapper, commands_builder, remote_command_params)

@@ -10,9 +10,12 @@ from galaxy.exceptions import ConfigurationError
 from ..providers import AuthProvider
 from galaxy.auth import _get_bool
 
+from pasteur.authdecopatch import add_userfromemail
+
 log = logging.getLogger(__name__)
 
 
+#@add_userfromemail
 def _get_subs(d, k, params):
     if k not in d:
         raise ConfigurationError("Missing '%s' parameter in LDAP options" % k)

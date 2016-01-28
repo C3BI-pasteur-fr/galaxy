@@ -248,6 +248,7 @@ class Configuration( object ):
         self.drmaa_external_killjob_script = kwargs.get('drmaa_external_killjob_script', None)
         self.external_chown_script = kwargs.get('external_chown_script', None)
         self.environment_setup_file = kwargs.get( 'environment_setup_file', None )
+        self.use_modules = kwargs.get( 'use_modules', 'False' )
         self.use_heartbeat = string_as_bool( kwargs.get( 'use_heartbeat', 'False' ) )
         self.log_actions = string_as_bool( kwargs.get( 'log_actions', 'False' ) )
         self.log_events = string_as_bool( kwargs.get( 'log_events', 'False' ) )

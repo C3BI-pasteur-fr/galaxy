@@ -35,6 +35,8 @@ from .datasets import OutputsToWorkingDirectoryPathRewriter
 from .datasets import NullDatasetPathRewriter
 from .datasets import DatasetPath
 
+from pasteur.modulepatch import module_dependency, module_prepare
+
 log = logging.getLogger( __name__ )
 
 DATABASE_MAX_STRING_SIZE = util.DATABASE_MAX_STRING_SIZE
@@ -862,6 +864,8 @@ class JobWrapper( object ):
         self.command_line, self.extra_filenames, self.environment_variables = tool_evaluator.build()
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir
+        #PASTEUR MAREUIL
+        self.dependency_module_commands = module_prepare(self.app, self.command_line, job, self.working_directory)
         # Shell fragment to inject dependencies
         self.dependency_shell_commands = self.tool.build_dependency_shell_commands()
         # We need command_line persisted to the db in order for Galaxy to re-queue the job
