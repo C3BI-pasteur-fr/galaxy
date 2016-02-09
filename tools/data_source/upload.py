@@ -3,7 +3,6 @@
 
 # WARNING: Changes in this tool (particularly as related to parsing) may need
 # to be reflected in galaxy.web.controllers.tool_runner and galaxy.tools
-
 import codecs
 import gzip
 import os
