@@ -14,7 +14,8 @@ import zipfile
 from encodings import search_function as encodings_search_function
 
 from galaxy import util
-from galaxy.datatypes.checkers import check_binary, check_html, is_gzip
+#from galaxy.datatypes.checkers import check_binary, check_html, is_gzip
+from galaxy.datatypes.checkers import *  #PASTEUR_PATCH genouest patch
 from galaxy.datatypes.binary import Binary
 
 log = logging.getLogger(__name__)
@@ -417,8 +418,10 @@ def handle_uploaded_dataset_file( filename, datatypes_registry, ext='auto', is_m
 
 AUTO_DETECT_EXTENSIONS = [ 'auto' ]  # should 'data' also cause auto detect?
 DECOMPRESSION_FUNCTIONS = dict( gzip=gzip.GzipFile )
-COMPRESSION_CHECK_FUNCTIONS = [ ( 'gzip', is_gzip ) ]
-COMPRESSION_DATATYPES = dict( gzip=[ 'bam' ] )
+#COMPRESSION_CHECK_FUNCTIONS = [ ( 'gzip', is_gzip ) ]
+#COMPRESSION_DATATYPES = dict( gzip=[ 'bam' ] )
+COMPRESSION_CHECK_FUNCTIONS = [ ( 'gzip', is_gzip ), ('bz2', is_bz2), ('zip', check_zip) ] #PASTEUR_PATCH genouest patch
+COMPRESSION_DATATYPES = dict( gzip = [ 'bam', 'fastq.gz', 'tar.gz' ], bz2 = ['fastq.bz2', 'tar.bz2'], zip = ['zip'] ) #PASTEUR_PATCH genouest patch
 COMPRESSED_EXTENSIONS = []
 for exts in COMPRESSION_DATATYPES.itervalues():
     COMPRESSED_EXTENSIONS.extend( exts )
