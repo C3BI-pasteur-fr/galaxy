@@ -430,7 +430,7 @@ class LibraryDatasetsController( BaseAPIController, UsesVisualizationMixin ):
         :rtype:     dictionary
         """
 
-        kwd[ 'space_to_tab' ] = False
+        kwd[ 'space_to_tab' ] = 'False'
         kwd[ 'to_posix_lines' ] = 'True'
         kwd[ 'dbkey' ] = kwd.get( 'dbkey', '?' )
         kwd[ 'file_type' ] = kwd.get( 'file_type', 'auto' )
