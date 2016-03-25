@@ -38,7 +38,6 @@ def restrict_tool_to_notestusers( context, tool ):
     user = context.trans.user
     if user is not None:
         login = user.email
-    print tool.id
     if tool.id in TEST_TOOLS:
         if login in TEST_USERS:
             return True
