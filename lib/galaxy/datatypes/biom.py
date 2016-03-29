@@ -1,3 +1,13 @@
+"""
+Created on Mars. 29, 2016
+
+@authors: Mathieu Valade, Institut Pasteur, Paris
+@contacts: fabien.mareuil@pasteur.fr
+@project: galaxy
+@githuborganization: C3BI
+biom datatype sniffer
+"""
+
 from galaxy.datatypes.text import Json
 from metadata import MetadataElement
 import json

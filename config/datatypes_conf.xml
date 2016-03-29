@@ -2,7 +2,7 @@
 <datatypes>
   <registration converters_path="lib/galaxy/datatypes/converters" display_path="display_applications">
     <!-- Frogs Datatype -->
-    <datatype extension="biom1" type="galaxy.datatypes.data:Text" display_in_upload="true" subclass="True" mimetype="application/json"/>
+    <datatype extension="biom1" type="galaxy.datatypes.biom:Biom" display_in_upload="true" subclass="True" mimetype="application/json" /description="The BIOM file format is designed to be a general-use format for representing biological sample by observation contingency tables. The biom format is based on JSON to provide the overall structure for the format." description_url="http://biom-format.org/"/>
     <!-- genouest patch -->
     <datatype extension="zip" type="galaxy.datatypes.data:Zip" display_in_upload="true" subclass="True"/>
     <datatype extension="tar.gz" type="galaxy.datatypes.data:Tgz" display_in_upload="true" subclass="True"/>
