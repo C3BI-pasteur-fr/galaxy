@@ -1,3 +1,13 @@
+"""
+Created on Mars. 04, 2016
+
+@authors: Mathieu Valade, Fabien Mareuil, Institut Pasteur, Paris
+@contacts: fabien.mareuil@pasteur.fr
+@project: galaxy
+@githuborganization: C3BI
+genomeDiff datatype sniffer
+"""
+
 from galaxy.datatypes.tabular import Tabular
 from metadata import MetadataElement
 
