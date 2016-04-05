@@ -75,7 +75,9 @@
         <param type="template" name="redirect_url" strip="True" >
             #if $site_id.startswith( 'local_' )
                 ${site_link}?file=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
-            #elif $site_id.startswith( 'web_link_' ):
+		        #elif $site_id.startswith( 'Pasteur_' ):
+                ${site_link}?sessionURL=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
+						#elif $site_id.startswith( 'web_link_' ):
                 ${site_link}?sessionURL=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
             #else:
                 ${jnlp.url}
