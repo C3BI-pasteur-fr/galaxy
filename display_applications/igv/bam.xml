@@ -9,18 +9,18 @@
         <dynamic_param name="site_dbkeys" value="3" split="True" separator="," />
         <dynamic_param name="site_organisms" value="4" split="True" separator="," />
         <!-- Filter out some of the links based upon matching site_dbkeys to dataset dbkey -->
-        <!-- <filter>${$site_id.startswith( 'local_' ) or $dataset.dbkey in $site_dbkeys}</filter> -->
+        <!-- <filter>${$site_id.startswith( 'local_' ) or ${$site_id.startswith( 'Pasteur_' ) or $dataset.dbkey in $site_dbkeys}</filter> -->
         <!-- We define url and params as normal, but values defined in dynamic_param are available by specified name -->
         <url>${redirect_url}</url>
         <param type="data" name="bam_file" url="galaxy_${DATASET_HASH}.bam" />
         <param type="data" name="bai_file" url="galaxy_${DATASET_HASH}.bam.bai" metadata="bam_index" />
-        <!-- <param type="template" name="site_organism" strip="True" >
+        <param type="template" name="site_organism" strip="True" >
             #if ($dataset.dbkey in $site_dbkeys)
                 $site_organisms[ $site_dbkeys.index( $bam_file.dbkey ) ]
             #else:
                 $bam_file.dbkey
             #end if
-        </param> -->
+        </param>
         <param type="template" name="jnlp" url="galaxy_${DATASET_HASH}.jnlp" viewable="True" mimetype="application/x-java-jnlp-file"><![CDATA[
 <?xml version="1.0" encoding="utf-8"?>
 <jnlp
@@ -75,11 +75,13 @@
         <param type="template" name="redirect_url" strip="True" >
             #if $site_id.startswith( 'local_' )
                 ${site_link}?file=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
-            #elif $site_id.startswith( 'Pasteur_' ):
-                ${site_link}?sessionURL=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
             #elif $site_id.startswith( 'web_link_' ):
-                ${site_link}?sessionURL=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
-            #else:
+                #if (str($site_organism) != '?')
+                    ${site_link}?sessionURL=${bam_file.qp}&amp;genome=${site_organism}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
+                #else:
+                    ${site_link}?sessionURL=${bam_file.url}&amp;merge=true&amp;name=${qp( ( $bam_file.name or $DATASET_HASH ).replace( ',', ';' ) )}
+                #end if
+           #else:
                 ${jnlp.url}
             #end if
         </param>
