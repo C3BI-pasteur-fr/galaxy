@@ -3,7 +3,7 @@ log = logging.getLogger( __name__)
 
 RESTRICT_TOOLS = []
 
-TEST_USERS = ["fmareuil@pasteur.fr", "odoppelt@pasteur.fr", "mvalade@pasteur.fr"]
+TEST_USERS = ["fmareuil@pasteur.fr", "odoppelt@pasteur.fr"]
 TEST_SECTIONS = ["tests"]
 TEST_TOOLS = []
 
@@ -25,6 +25,8 @@ def restrict_section_to_notestusers( context, section ):
     user = context.trans.user
     if user is not None:
         login = user.email
+    else:
+        login = "anonyme"
     if section.id in TEST_SECTIONS:
         if login in TEST_USERS:
             return True
@@ -38,6 +40,8 @@ def restrict_tool_to_notestusers( context, tool ):
     user = context.trans.user
     if user is not None:
         login = user.email
+    else:
+        login = "anonyme"
     if tool.id in TEST_TOOLS:
         if login in TEST_USERS:
             return True
