@@ -35,7 +35,6 @@ from galaxy.web.form_builder import build_select_field, CheckboxField
 from galaxy.web.framework.helpers import grids, time_ago
 from galaxy.exceptions import ObjectInvalid
 
-from pasteur.authdecopatch import match_shortlongpasteuremail
 
 log = logging.getLogger( __name__ )
 
@@ -463,8 +462,8 @@ class User( BaseUIController, UsesFormDefinitionsMixin, CreatesUsersMixin, Creat
         kwd['redirect'] = kwd.get( 'redirect', url_for( controller='user', action='openid_manage', use_panels=True ) ).strip()
         kwd['openid_providers'] = trans.app.openid_providers
         return self.user_openid_grid( trans, **kwd )
-        
-#    @match_shortlongpasteuremail
+
+
     @web.expose
     def login( self, trans, refresh_frames=[], **kwd ):
         '''Handle Galaxy Log in'''

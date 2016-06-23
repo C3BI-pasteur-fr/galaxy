@@ -2,7 +2,8 @@
 Created on 08/01/2016
 
 @author: Fabien Mareuil
-""" 
+"""
+"""
 import functools
 import ldap
  
@@ -38,6 +39,6 @@ def match_shortlongpasteuremail(fonc):
         result = fonc(*args, **kwargs)
         return result
     return innerfunc   
-               
+"""
             
 
