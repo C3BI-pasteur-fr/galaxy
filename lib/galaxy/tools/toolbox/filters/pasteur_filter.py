@@ -1,7 +1,7 @@
 import logging
 log = logging.getLogger( __name__)
 
-RESTRICT_TOOLS = []
+RESTRICT_TOOLS = ["liftOver1"]
 
 TEST_USERS = ["fmareuil@pasteur.fr", "odoppelt@pasteur.fr"]
 TEST_SECTIONS = ["tests"]
@@ -10,12 +10,14 @@ TEST_TOOLS = []
 
 def restrict_tool_to_pasteuruser( context, tool ):
     user = context.trans.user
-    if user is not None:
-        email = user.email
-        domaine = email.split('@')[1]
+    if user:
+        if user.groups:
+            group = user.groups[0].group.name
+        else:
+            group = "default"
     else:
-        domaine = "default"
-    if domaine == "pasteur.fr":
+        group = "default"
+    if group == "pasteur_users":
         return True
     else:
         return tool.id not in RESTRICT_TOOLS
