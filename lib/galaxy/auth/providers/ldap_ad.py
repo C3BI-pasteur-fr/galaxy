@@ -10,7 +10,6 @@ from galaxy.exceptions import ConfigurationError
 from ..providers import AuthProvider
 from galaxy.auth import _get_bool
 
-from pasteur.authdecopatch import add_userfromemail
 
 log = logging.getLogger(__name__)
 
