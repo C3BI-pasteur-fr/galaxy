@@ -19,7 +19,7 @@
     <style type="text/css">
         body { margin: 0; padding: 0; overflow: hidden; }
         #left {
-            background: #C1C9E5 url("${h.url_for('/static/style/menu_bg.png')}") top repeat-x;
+            background: #f0f0f0  top repeat-x;
         }
     </style>
 </%def>
