@@ -54,7 +54,7 @@ if [ -n "$GALAXY_RUN_ALL" ]; then
     ARGS=`echo "$@" | sed 's/--wait//'`
     for server in $servers; do
         if [ $WAIT -eq 0 ]; then
-            python ./scripts/paster.py serve $GALAXY_CONFIG_FILE --server-name=$server --pid-file=$server.pid --log-file=$server.log $ARGS
+            python ./scripts/paster.py serve $GALAXY_CONFIG_FILE --server-name=$server --pid-file=$server.pid --log-file=../logs/$server.log $ARGS
             while true; do
                 sleep 1
                 printf "."
@@ -72,7 +72,7 @@ if [ -n "$GALAXY_RUN_ALL" ]; then
             echo
         else
             echo "Handling $server with log file $server.log..."
-            python ./scripts/paster.py serve $GALAXY_CONFIG_FILE --server-name=$server --pid-file=$server.pid --log-file=$server.log $@
+            python ./scripts/paster.py serve $GALAXY_CONFIG_FILE --server-name=$server --pid-file=$server.pid --log-file=../logs/$server.log $@
         fi
     done
 else

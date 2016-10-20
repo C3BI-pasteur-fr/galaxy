@@ -32,7 +32,7 @@ if [ -z "$GALAXY_REPORTS_CONFIG" ]; then
 fi
 
 GALAXY_REPORTS_PID=${GALAXY_REPORTS_PID:-reports_webapp.pid}
-GALAXY_REPORTS_LOG=${GALAXY_REPORTS_LOG:-reports_webapp.log}
+GALAXY_REPORTS_LOG=${GALAXY_REPORTS_LOG:-../logs/reports_webapp.log}
 
 if [ -n "$GALAXY_REPORTS_CONFIG_DIR" ]; then
     python ./scripts/build_universe_config.py "$GALAXY_REPORTS_CONFIG_DIR" "$GALAXY_REPORTS_CONFIG"

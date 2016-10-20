@@ -23,4 +23,4 @@ if [ -z "$TOOL_SHED_CONFIG_FILE" ]; then
     export TOOL_SHED_CONFIG_FILE
 fi
 
-python ./scripts/paster.py serve $TOOL_SHED_CONFIG_FILE --pid-file=tool_shed_webapp.pid --log-file=tool_shed_webapp.log $args
+python ./scripts/paster.py serve $TOOL_SHED_CONFIG_FILE --pid-file=tool_shed_webapp.pid --log-file=../logs/tool_shed_webapp.log $args
