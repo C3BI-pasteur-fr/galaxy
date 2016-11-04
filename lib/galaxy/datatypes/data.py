@@ -1,5 +1,5 @@
-from galaxy.datatypes.checkers import * #PASTEUR_PATCH genouest patch
-import tarfile #PASTEUR_PATCH genouest patch
+#from galaxy.datatypes.checkers import * #PASTEUR_PATCH genouest patch
+#import tarfile #PASTEUR_PATCH genouest patch
 import logging
 import mimetypes
 import os
@@ -673,7 +673,7 @@ class Data( object ):
         trans.response.set_content_type( mime )
 
 
-#PASTEUR_PATCH genouest
+"""#PASTEUR_PATCH genouest
 class Zip( Data ):
     file_ext = "zip"
 
@@ -757,6 +757,7 @@ class Fastqbz2( Data ):
         is_tar = tarfile.is_tarfile( filename )
         return (is_bzipped and is_valid and not is_tar)
 #PASTEUR_PATCH genouest
+"""
 
 
 
