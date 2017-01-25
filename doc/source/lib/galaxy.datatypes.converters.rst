@@ -225,6 +225,22 @@ galaxy.datatypes.converters.vcf_to_vcf_bgzip module
     :undoc-members:
     :show-inheritance:
 
+galaxy.datatypes.converters.bcf_bgzip_to_bcf_converter module
+-------------------------------------------------------------
+
+.. automodule:: galaxy.datatypes.converters.bcf_bgzip_to_bcf_converter
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+galaxy.datatypes.converters.bcf_to_bcf_bgzip_converter module
+-------------------------------------------------------------
+
+.. automodule:: galaxy.datatypes.converters.bcf_to_bcf_bgzip_converter
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 galaxy.datatypes.converters.wiggle_to_array_tree_converter module
 -----------------------------------------------------------------
 
@@ -240,5 +256,3 @@ galaxy.datatypes.converters.wiggle_to_simple_converter module
     :members:
     :undoc-members:
     :show-inheritance:
-
-

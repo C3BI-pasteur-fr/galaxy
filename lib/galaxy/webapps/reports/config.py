@@ -1,8 +1,10 @@
 """Universe configuration builder."""
-import sys
-import os
 import logging
-import ConfigParser
+import os
+import sys
+
+from six.moves import configparser
+
 from galaxy.util import string_as_bool
 
 log = logging.getLogger( __name__ )
@@ -35,13 +37,12 @@ class Configuration( object ):
         self.require_login = string_as_bool( kwargs.get( "require_login", "False" ) )
         self.template_path = resolve_path( kwargs.get( "template_path", "templates" ), self.root )
         self.template_cache = resolve_path( kwargs.get( "template_cache_path", "database/compiled_templates/reports" ), self.root )
-        self.sendmail_path = kwargs.get('sendmail_path', "/usr/sbin/sendmail")
         self.allow_user_creation = string_as_bool( kwargs.get( "allow_user_creation", "True" ) )
         self.allow_user_deletion = string_as_bool( kwargs.get( "allow_user_deletion", "False" ) )
         self.log_actions = string_as_bool( kwargs.get( 'log_actions', 'False' ) )
         self.brand = kwargs.get( 'brand', None )
         # Configuration for the message box directly below the masthead.
-        self.message_box_visible = kwargs.get( 'message_box_visible', False )
+        self.message_box_visible = string_as_bool( kwargs.get( 'message_box_visible', False ) )
         self.message_box_content = kwargs.get( 'message_box_content', None )
         self.message_box_class = kwargs.get( 'message_box_class', 'info' )
         self.wiki_url = kwargs.get( 'wiki_url', 'https://wiki.galaxyproject.org/' )
@@ -53,7 +54,7 @@ class Configuration( object ):
         self.sentry_dsn = kwargs.get( 'sentry_dsn', None )
         # Parse global_conf
         global_conf = kwargs.get( 'global_conf', None )
-        global_conf_parser = ConfigParser.ConfigParser()
+        global_conf_parser = configparser.ConfigParser()
         if global_conf and "__file__" in global_conf:
             global_conf_parser.read(global_conf['__file__'])
 
@@ -85,7 +86,7 @@ def get_database_engine_options( kwargs ):
     prefix = "database_engine_option_"
     prefix_len = len( prefix )
     rval = {}
-    for key, value in kwargs.iteritems():
+    for key, value in kwargs.items():
         if key.startswith( prefix ):
             key = key[prefix_len:]
             if key in conversions:

@@ -9,9 +9,7 @@ import optparse
 import subprocess
 import tempfile
 
-from galaxy import eggs
-eggs.require( "pysam" )
-import ctabix
+from pysam import ctabix
 
 
 def main():
@@ -47,6 +45,7 @@ def main():
     output, err = after_sort.communicate()
 
     ctabix.tabix_compress(tmpfile.name, output_fname, force=True)
+
 
 if __name__ == "__main__":
     main()

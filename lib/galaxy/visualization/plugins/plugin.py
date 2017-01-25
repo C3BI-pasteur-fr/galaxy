@@ -6,9 +6,6 @@ from a query string and render a webpage based on those data.
 import os
 import copy
 
-import pkg_resources
-pkg_resources.require( 'MarkupSafe' )
-pkg_resources.require( 'Mako' )
 import mako
 
 from galaxy.managers import api_keys
@@ -247,9 +244,9 @@ class VisualizationPlugin( pluginframework.Plugin, ServesStaticPluginMixin, Serv
 # =============================================================================
 class InteractiveEnvironmentPlugin( VisualizationPlugin ):
     """
-    Serves web-based REPLs such as IPython and RStudio.
+    Serves web-based REPLs such as Jupyter and RStudio.
     """
-    INTENV_REQUEST_FACTORY = interactive_environments.InteractiveEnviornmentRequest
+    INTENV_REQUEST_FACTORY = interactive_environments.InteractiveEnvironmentRequest
 
     def __init__( self, app, path, name, config, context=None, **kwargs ):
         # TODO: this is a hack until we can get int envs seperated from the vis reg and into their own framework
@@ -265,7 +262,7 @@ class InteractiveEnvironmentPlugin( VisualizationPlugin ):
         #   this feels hacky to me but it's what mako recommends:
         #   http://docs.makotemplates.org/en/latest/runtime.html
         render_vars.update( vars={} )
-        # No longer needed but being left around for a few releases as ipython-galaxy
+        # No longer needed but being left around for a few releases as jupyter-galaxy
         # as an external visualization plugin is deprecated in favor of core interactive
         # environment plugin.
         if 'get_api_key' not in render_vars:

@@ -1,16 +1,15 @@
 """
 Proteomics Datatypes
 """
-import binascii
 import logging
 import re
 
 from galaxy.datatypes import data
-from galaxy.datatypes.binary import Binary, SQlite
+from galaxy.datatypes.binary import Binary
 from galaxy.datatypes.data import Text
 from galaxy.datatypes.tabular import Tabular
 from galaxy.datatypes.xml import GenericXml
-from galaxy.util import nice_size, sqlite
+from galaxy.util import nice_size
 
 
 log = logging.getLogger(__name__)
@@ -18,6 +17,8 @@ log = logging.getLogger(__name__)
 
 class Wiff(Binary):
     """Class for wiff files."""
+    edam_data = "data_2536"
+    edam_format = "format_3710"
     file_ext = 'wiff'
     allow_datatype_change = False
     composite_type = 'auto_primary_file'
@@ -38,7 +39,7 @@ class Wiff(Binary):
     def generate_primary_file(self, dataset=None):
         rval = ['<html><head><title>Wiff Composite Dataset </title></head><p/>']
         rval.append('<div>This composite dataset is composed of the following files:<p/><ul>')
-        for composite_name, composite_file in self.get_composite_files(dataset=dataset).iteritems():
+        for composite_name, composite_file in self.get_composite_files(dataset=dataset).items():
             fn = composite_name
             opt_text = ''
             if composite_file.optional:
@@ -50,16 +51,14 @@ class Wiff(Binary):
         rval.append('</ul></div></html>')
         return "\n".join(rval)
 
+
 Binary.register_sniffable_binary_format("wiff", "wiff", Wiff )
-
-
-class IdpDB(Binary):
-    file_ext = "idpDB"
 
 
 class PepXmlReport(Tabular):
     """pepxml converted to tabular report"""
-    file_ext = "tsv"
+    edam_data = "data_2536"
+    file_ext = "pepxml.tsv"
 
     def __init__(self, **kwd):
         Tabular.__init__(self, **kwd)
@@ -72,7 +71,8 @@ class PepXmlReport(Tabular):
 
 class ProtXmlReport(Tabular):
     """protxml converted to tabular report"""
-    file_ext = "tsv"
+    edam_data = "data_2536"
+    file_ext = "protxml.tsv"
     comment_lines = 1
 
     def __init__(self, **kwd):
@@ -97,6 +97,8 @@ class ProtXmlReport(Tabular):
 class ProteomicsXml(GenericXml):
     """ An enhanced XML datatype used to reuse code across several
     proteomic/mass-spec datatypes. """
+    edam_data = "data_2536"
+    edam_format = "format_2032"
 
     def sniff(self, filename):
         """ Determines whether the file is the correct XML type. """
@@ -121,6 +123,7 @@ class ProteomicsXml(GenericXml):
 
 class PepXml(ProteomicsXml):
     """pepXML data"""
+    edam_format = "format_3655"
     file_ext = "pepxml"
     blurb = 'pepXML data'
     root = "msms_pipeline_analysis"
@@ -128,8 +131,8 @@ class PepXml(ProteomicsXml):
 
 class MzML(ProteomicsXml):
     """mzML data"""
-    file_ext = "mzml"
     edam_format = "format_3244"
+    file_ext = "mzml"
     blurb = 'mzML Mass Spectrometry data'
     root = "(mzML|indexedmzML)"
 
@@ -143,28 +146,29 @@ class ProtXML(ProteomicsXml):
 
 class MzXML(ProteomicsXml):
     """mzXML data"""
+    edam_format = "format_3654"
     file_ext = "mzxml"
     blurb = "mzXML Mass Spectrometry data"
     root = "mzXML"
 
 
 class MzIdentML(ProteomicsXml):
-    file_ext = "mzid"
     edam_format = "format_3247"
+    file_ext = "mzid"
     blurb = "XML identified peptides and proteins."
     root = "MzIdentML"
 
 
 class TraML(ProteomicsXml):
-    file_ext = "traml"
     edam_format = "format_3246"
+    file_ext = "traml"
     blurb = "TraML transition list"
     root = "TraML"
 
 
 class MzQuantML(ProteomicsXml):
-    file_ext = "mzq"
     edam_format = "format_3248"
+    file_ext = "mzq"
     blurb = "XML quantification data"
     root = "MzQuantML"
 
@@ -188,13 +192,22 @@ class IdXML(ProteomicsXml):
 
 
 class TandemXML(ProteomicsXml):
+    edam_format = "format_3711"
     file_ext = "tandem"
     blurb = "X!Tandem search results file"
     root = "bioml"
 
 
+class UniProtXML(ProteomicsXml):
+    file_ext = "uniprotxml"
+    blurb = "UniProt Proteome file"
+    root = "uniprot"
+
+
 class Mgf(Text):
     """Mascot Generic Format data"""
+    edam_data = "data_2536"
+    edam_format = "format_3651"
     file_ext = "mgf"
 
     def set_peek(self, dataset, is_multi_byte=False):
@@ -221,6 +234,8 @@ class Mgf(Text):
 
 class MascotDat(Text):
     """Mascot search results """
+    edam_data = "data_2536"
+    edam_format = "format_3713"
     file_ext = "mascotdat"
 
     def set_peek(self, dataset, is_multi_byte=False):
@@ -247,6 +262,8 @@ class MascotDat(Text):
 
 class ThermoRAW(Binary):
     """Class describing a Thermo Finnigan binary RAW file"""
+    edam_data = "data_2536"
+    edam_format = "format_3712"
     file_ext = "raw"
 
     def sniff(self, filename):
@@ -255,10 +272,9 @@ class ThermoRAW(Binary):
         # This combination represents 17 bytes, but to play safe we read 20 bytes from
         # the start of the file.
         try:
-            header = open(filename).read(20)
-            hexheader = binascii.b2a_hex(header)
-            finnigan = binascii.hexlify('F\0i\0n\0n\0i\0g\0a\0n')
-            if hexheader.find(finnigan) != -1:
+            header = open(filename, 'rb').read(20)
+            finnigan = b'F\0i\0n\0n\0i\0g\0a\0n'
+            if header.find(finnigan) != -1:
                 return True
             return False
         except:
@@ -277,6 +293,7 @@ class ThermoRAW(Binary):
             return dataset.peek
         except:
             return "Thermo Finnigan RAW file (%s)" % (nice_size(dataset.get_size()))
+
 
 Binary.register_sniffable_binary_format("thermo.raw", "raw", ThermoRAW )
 
@@ -334,7 +351,7 @@ class SPLib(Msp):
     def generate_primary_file(self, dataset=None):
         rval = ['<html><head><title>Spectral Library Composite Dataset </title></head><p/>']
         rval.append('<div>This composite dataset is composed of the following files:<p/><ul>')
-        for composite_name, composite_file in self.get_composite_files(dataset=dataset).iteritems():
+        for composite_name, composite_file in self.get_composite_files(dataset=dataset).items():
             fn = composite_name
             opt_text = ''
             if composite_file.optional:
@@ -400,28 +417,3 @@ class XHunterAslFormat(Binary):
 class Sf3(Binary):
     """Class describing a Scaffold SF3 files"""
     file_ext = "sf3"
-
-
-class MzSQlite( SQlite ):
-    """Class describing a Proteomics Sqlite database """
-    file_ext = "mz.sqlite"
-
-    def set_meta( self, dataset, overwrite=True, **kwd ):
-        super( MzSQlite, self ).set_meta( dataset, overwrite=overwrite, **kwd )
-
-    def sniff( self, filename ):
-        if super( MzSQlite, self ).sniff( filename ):
-            mz_table_names = ["DBSequence", "Modification", "Peaks", "Peptide", "PeptideEvidence", "Score", "SearchDatabase", "Source", "SpectraData", "Spectrum", "SpectrumIdentification"]
-            try:
-                conn = sqlite.connect( filename )
-                c = conn.cursor()
-                tables_query = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                result = c.execute( tables_query ).fetchall()
-                result = map( lambda x: x[0], result )
-                for table_name in mz_table_names:
-                    if table_name not in result:
-                        return False
-                return True
-            except Exception, e:
-                log.warn( '%s, sniff Exception: %s', self, e )
-        return False

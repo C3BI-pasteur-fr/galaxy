@@ -6,11 +6,17 @@ raven.middleware
 :license: BSD, see LICENSE for more details.
 """
 
-import galaxy.eggs
-galaxy.eggs.require( "raven" )
+try:
+    from raven import Client
+    from raven.utils.wsgi import get_current_url, get_headers, get_environ
+except:
+    Client = None
 
-from raven import Client
-from raven.utils.wsgi import get_current_url, get_headers, get_environ
+from galaxy.util.postfork import register_postfork_function
+
+
+RAVEN_IMPORT_MESSAGE = ('The Python raven package is required to use this '
+                        'feature, please install it')
 
 
 class Sentry(object):
@@ -19,8 +25,14 @@ class Sentry(object):
     uncaught exceptions and send them to Sentry.
     """
     def __init__(self, application, dsn):
+        assert Client is not None, RAVEN_IMPORT_MESSAGE
         self.application = application
-        self.client = Client( dsn )
+        self.client = None
+
+        def postfork_sentry_client():
+            self.client = Client( dsn )
+
+        register_postfork_function(postfork_sentry_client)
 
     def __call__(self, environ, start_response):
         try:
@@ -58,7 +70,7 @@ class Sentry(object):
         # remote service) and can be considered a security risk as well. For
         # multiple services running alongside Galaxy on the same host, this
         # could allow a sentry user with access to logs to impersonate a user
-        # on another service. In the case of services like IPython, this can be
+        # on another service. In the case of services like Jupyter, this can be
         # a serious concern as that would allow for terminal access. Furthermore,
         # very little debugging information can be gained as a result of having
         # access to all of the users cookies (including Galaxy cookies)
@@ -82,6 +94,6 @@ class Sentry(object):
             }
         )
         # Galaxy: store event_id in environment so we can show it to the user
-        environ['sentry_event_id'] = event_id[0]
+        environ['sentry_event_id'] = event_id
 
         return event_id

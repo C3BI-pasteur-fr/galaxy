@@ -1,348 +1,171 @@
 /**
     This class creates a form section and populates it with input elements. It also handles repeat blocks and conditionals by recursively creating new sub sections.
 */
-define(['utils/utils',
-        'mvc/ui/ui-table',
-        'mvc/ui/ui-misc',
-        'mvc/ui/ui-portlet',
-        'mvc/form/form-repeat',
-        'mvc/form/form-input',
-        'mvc/form/form-parameters'],
-    function(Utils, Table, Ui, Portlet, Repeat, InputElement, Parameters) {
-
-    // create form view
+define([ 'utils/utils', 'mvc/ui/ui-misc', 'mvc/ui/ui-portlet', 'mvc/form/form-repeat', 'mvc/form/form-input', 'mvc/form/form-parameters' ],
+function( Utils, Ui, Portlet, Repeat, InputElement, Parameters ) {
     var View = Backbone.View.extend({
-        // initialize
-        initialize: function(app, options) {
-            // link app
+        initialize: function( app, options ) {
             this.app = app;
-
-            // link inputs
             this.inputs = options.inputs;
-
-            // fix table style
-            options.cls = 'ui-table-plain';
-
-            // add table class for tr tag
-            // this assist in transforming the form into a json structure
-            options.cls_tr = 'section-row';
-
-            // create table
-            this.table = new Table.View(options);
-
-            // create parameter handler
-            this.parameters = new Parameters(app, options);
-
-            // configure portlet and form table
-            this.setElement(this.table.$el);
-
-            // render section
+            this.parameters = new Parameters();
+            this.setElement( $( '<div/>' ) );
             this.render();
         },
 
-        /** Render section view
-        */
+        /** Render section view */
         render: function() {
-            // reset table
-            this.table.delAll();
-
-            // load settings elements into table
-            for (var i in this.inputs) {
-                this.add(this.inputs[i]);
-            }
+            var self = this;
+            this.$el.empty();
+            _.each( this.inputs, function( input ) { self.add( input ) } );
         },
 
-        /** Add a new input element
-        */
-        add: function(input) {
-            // link this
-            var self = this;
-
-            // clone definition
-            var input_def = jQuery.extend(true, {}, input);
-
-            // create unique id
+        /** Add a new input element */
+        add: function( input ) {
+            var input_def = jQuery.extend( true, {}, input );
             input_def.id = input.id = Utils.uid();
-
-            // add to sequential list of inputs
-            this.app.input_list[input_def.id] = input_def;
-
-            // identify field type
-            var type = input_def.type;
-            switch(type) {
-                // conditional field
+            this.app.input_list[ input_def.id ] = input_def;
+            switch( input_def.type ) {
                 case 'conditional':
-                    this._addConditional(input_def);
+                    this._addConditional( input_def );
                     break;
-                // repeat block
                 case 'repeat':
-                    this._addRepeat(input_def);
+                    this._addRepeat( input_def );
                     break;
-                // customized section
                 case 'section':
-                    this._addSection(input_def);
+                    this._addSection( input_def );
                     break;
-                // default single element row
                 default:
-                    this._addRow(input_def);
+                    this._addRow( input_def );
             }
         },
 
-        /** Add a conditional block
-        */
-        _addConditional: function(input_def) {
-            // link this
+        /** Add a conditional block */
+        _addConditional: function( input_def ) {
             var self = this;
-
-            // copy identifier
             input_def.test_param.id = input_def.id;
-
-            // build test parameter
-            var field = this._addRow(input_def.test_param);
+            this.app.options.sustain_conditionals && ( input_def.test_param.disabled = true );
+            var field = this._addRow( input_def.test_param );
 
             // set onchange event for test parameter
-            field.options.onchange = function(value) {
-                // identify the selected case
-                var selectedCase = self.app.data.matchCase(input_def, value);
-
-                // check value in order to hide/show options
-                for (var i in input_def.cases) {
-                    // get case
-                    var case_def = input_def.cases[i];
-
-                    // identify subsection name
-                    var section_id = input_def.id + '-section-' + i;
-
-                    // identify row
-                    var section_row = self.table.get(section_id);
-
-                    // check if non-hidden elements exist
+            field.model && field.model.set( 'onchange', function( value ) {
+                var selectedCase = self.app.data.matchCase( input_def, value );
+                for ( var i in input_def.cases ) {
+                    var case_def = input_def.cases[ i ];
+                    var section_row = self.$( '#' + input_def.id + '-section-' + i );
                     var nonhidden = false;
-                    for (var j in case_def.inputs) {
-                        if (!case_def.inputs[j].hidden) {
+                    for ( var j in case_def.inputs ) {
+                        if ( !case_def.inputs[ j ].hidden ) {
                             nonhidden = true;
                             break;
                         }
                     }
-
-                    // show/hide sub form
-                    if (i == selectedCase && nonhidden) {
-                        section_row.fadeIn('fast');
+                    if ( i == selectedCase && nonhidden ) {
+                        section_row.fadeIn( 'fast' );
                     } else {
                         section_row.hide();
                     }
                 }
-
-                // refresh form inputs
-                self.app.trigger('change');
-            };
+                self.app.trigger( 'change' );
+            });
 
             // add conditional sub sections
-            for (var i in input_def.cases) {
-                // create id tag
-                var sub_section_id = input_def.id + '-section-' + i;
-
-                // create sub section
-                var sub_section = new View(this.app, {
-                    inputs  : input_def.cases[i].inputs
-                });
-
-                // displays as grouped subsection
-                sub_section.$el.addClass('ui-table-section');
-
-                // create table row
-                this.table.add(sub_section.$el);
-
-                // append to table
-                this.table.append(sub_section_id);
+            for ( var i in input_def.cases ) {
+                var sub_section = new View( this.app, { inputs: input_def.cases[ i ].inputs } );
+                this._append( sub_section.$el.addClass( 'ui-form-section' ), input_def.id + '-section-' + i );
             }
 
             // trigger refresh on conditional input field after all input elements have been created
-            field.trigger('change');
+            field.trigger( 'change' );
         },
 
-        /** Add a repeat block
-        */
-        _addRepeat: function(input_def) {
-            // link this
+        /** Add a repeat block */
+        _addRepeat: function( input_def ) {
             var self = this;
-
-            // block index
             var block_index = 0;
 
             // create repeat block element
             var repeat = new Repeat.View({
-                title           : input_def.title,
-                title_new       : input_def.title,
+                title           : input_def.title || 'Repeat',
                 min             : input_def.min,
                 max             : input_def.max,
-                onnew           : function() {
-                    // create
-                    create(input_def.inputs);
-
-                    // trigger refresh
-                    self.app.trigger('change');
-                }
+                onnew           : function() { create( input_def.inputs ); self.app.trigger( 'change' ); }
             });
 
             // helper function to create new repeat blocks
-            function create (inputs) {
-                // create id tag
-                var sub_section_id = input_def.id + '-section-' + (block_index++);
-
-                // create sub section
-                var sub_section = new View(self.app, {
-                    inputs  : inputs
-                });
-
-                // add tab
-                repeat.add({
-                    id      : sub_section_id,
-                    $el     : sub_section.$el,
-                    ondel   : function() {
-                        // delete repeat block
-                        repeat.del(sub_section_id);
-
-                        // trigger refresh
-                        self.app.trigger('change');
-                    }
-                });
+            function create ( inputs ) {
+                var sub_section_id = input_def.id + '-section-' + ( block_index++ );
+                var sub_section = new View( self.app, { inputs: inputs } );
+                repeat.add( { id      : sub_section_id,
+                              $el     : sub_section.$el,
+                              ondel   : function() { repeat.del( sub_section_id ); self.app.trigger( 'change' ); } } );
             }
 
             //
             // add parsed/minimum number of repeat blocks
             //
-            var n_min   = input_def.min;
-            var n_cache = _.size(input_def.cache);
-            for (var i = 0; i < Math.max(n_cache, n_min); i++) {
-                var inputs = null;
-                if (i < n_cache) {
-                    inputs = input_def.cache[i];
-                } else {
-                    inputs = input_def.inputs;
-                }
-
-                // create repeat block
-                create(inputs);
+            var n_cache = _.size( input_def.cache );
+            for ( var i = 0; i < Math.max( Math.max( n_cache, input_def.min || 0 ), input_def.default || 0 ); i++ ) {
+                create( i < n_cache ? input_def.cache[ i ] : input_def.inputs );
             }
 
+            // hide options
+            this.app.options.sustain_repeats && repeat.hideOptions();
+
             // create input field wrapper
-            var input_element = new InputElement(this.app, {
-                label   : input_def.title,
+            var input_element = new InputElement( this.app, {
+                label   : input_def.title || input_def.name,
                 help    : input_def.help,
                 field   : repeat
             });
-
-            // create table row
-            this.table.add(input_element.$el);
-
-            // append row to table
-            this.table.append(input_def.id);
+            this._append( input_element.$el, input_def.id );
         },
 
-        /** Add a customized section
-        */
-        _addSection: function(input_def) {
-            // link this
-            var self = this;
-
-            // create sub section
-            var sub_section = new View(self.app, {
-                inputs  : input_def.inputs
-            });
-
-            // delete button
-            var button_visible = new Ui.ButtonIcon({
-                icon    : 'fa-eye-slash',
-                tooltip : 'Show/hide section',
-                cls     : 'ui-button-icon-plain'
-            });
-
-            // create portlet for sub section
+        /** Add a customized section */
+        _addSection: function( input_def ) {
             var portlet = new Portlet.View({
-                title       : input_def.title,
-                cls         : 'ui-portlet-section',
-                operations  : {
-                    button_visible: button_visible
-                }
+                title               : input_def.title || input_def.name,
+                cls                 : 'ui-portlet-section',
+                collapsible         : true,
+                collapsible_button  : true,
+                collapsed           : !input_def.expanded
             });
-            portlet.append(sub_section.$el);
-            portlet.append($('<div/>').addClass('ui-table-form-info').html(input_def.help));
-
-            // add event handler visibility button
-            var visible = false;
-            portlet.$content.hide();
-            portlet.$header.css('cursor', 'pointer');
-            portlet.$header.on('click', function() {
-                if (visible) {
-                    visible = false;
-                    portlet.$content.hide();
-                    button_visible.setIcon('fa-eye-slash');
-                } else {
-                    visible = true;
-                    portlet.$content.fadeIn('fast');
-                    button_visible.setIcon('fa-eye');
-                }
-            });
-
-            // add expansion event handler
-            this.app.on('expand', function(input_id) {
-                (portlet.$el.find('#' + input_id).length > 0) && !visible && portlet.$header.trigger('click');
-            });
-
-            // show sub section if requested
-            if (input_def.expanded) {
-                portlet.$header.trigger('click');
-            }
-
-            // create table row
-            this.table.add(portlet.$el);
-
-            // append row to table
-            this.table.append(input_def.id);
+            portlet.append( new View( this.app, { inputs: input_def.inputs } ).$el );
+            portlet.append( $( '<div/>' ).addClass( 'ui-form-info' ).html( input_def.help ) );
+            this.app.on( 'expand', function( input_id ) { ( portlet.$( '#' + input_id ).length > 0 ) && portlet.expand(); } );
+            this._append( portlet.$el, input_def.id );
         },
 
-        /** Add a single input field element
-        */
-        _addRow: function(input_def) {
-            // get id
+        /** Add a single input field element */
+        _addRow: function( input_def ) {
+            var self = this;
             var id = input_def.id;
-
-            // create input field
-            var field = this.parameters.create(input_def);
-
-            // add to field list
-            this.app.field_list[id] = field;
-
-            // create input field wrapper
-            var input_element = new InputElement(this.app, {
+            input_def.onchange = input_def.onchange || function() { self.app.trigger( 'change', id ) };
+            var field = this.parameters.create( input_def );
+            this.app.field_list[ id ] = field;
+            var input_element = new InputElement( this.app, {
                 name                : input_def.name,
-                label               : input_def.label || input_def.name,
+                label               : input_def.hide_label ? '' : input_def.label || input_def.name,
                 value               : input_def.value,
-                default_value       : input_def.default_value,
-                collapsible         : input_def.collapsible,
+                text_value          : input_def.text_value,
                 collapsible_value   : input_def.collapsible_value,
+                collapsible_preview : input_def.collapsible_preview,
                 help                : input_def.help,
                 argument            : input_def.argument,
+                disabled            : input_def.disabled,
+                color               : input_def.color,
+                style               : input_def.style,
+                backdrop            : input_def.backdrop,
+                hidden              : input_def.hidden,
                 field               : field
             });
-
-            // add to element list
-            this.app.element_list[id] = input_element;
-
-            // create table row
-            this.table.add(input_element.$el);
-
-            // append to table
-            this.table.append(id);
-
-            // hide row if neccessary
-            if (input_def.hidden) {
-                this.table.get(id).hide();
-            }
-
-            // return created field
+            this.app.element_list[ id ] = input_element;
+            this._append( input_element.$el, input_def.id );
             return field;
+        },
+
+        /** Append a new element to the form i.e. input element, repeat block, conditionals etc. */
+        _append: function( $el, id ) {
+            this.$el.append( $el.addClass( 'section-row' ).attr( 'id', id ) );
         }
     });
 

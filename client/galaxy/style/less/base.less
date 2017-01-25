@@ -12,9 +12,8 @@
 
 @import "fontawesome/font-awesome.less";
 .fa-icon {
-  font-family: FontAwesome;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    // TODO: remove fa-icon and replace with fa
+    .fa;
 }
 
 @import "select2.less";
@@ -30,7 +29,8 @@
 @import "library.less";
 @import "toastr.less";
 @import "jstree.less";
-
+@import "tour.less";
+@import "flex.less";
 
 // Mixins
 .unselectable {
@@ -69,7 +69,6 @@ body  {
         width: 100%;
         height: 100%;
     }
-
 }
 
 // ==== Panel layout styles ====
@@ -103,6 +102,7 @@ body  {
     overflow: hidden;
     border-bottom: solid #999 1px;
     font-size: 90%;
+    display: none;
 }
 
 #inactivebox {
@@ -114,6 +114,7 @@ body  {
     overflow: hidden;
     border-bottom: solid #999 1px;
     font-size: 90%;
+    display: none;
 }
 
 // Panels
@@ -211,7 +212,7 @@ body.has-message-box.has-inactivity-box {
     height: @panel_footer_height;
     line-height: @panel_footer_height;
     width: 100%;
-    z-index: 1000; // Above #DD-helper
+    z-index: 1000; // Above #dd-helper
     border-top: solid @layout-border-color 1px;
     background: @navbar-default-bg;
 
@@ -253,6 +254,7 @@ body.has-message-box.has-inactivity-box {
         content:'\f054';
     }
     z-index: 201;
+    cursor: pointer;
     display: block;
     position: fixed;
     left: 0;
@@ -292,8 +294,9 @@ div.unified-panel-body {
     width: 100%;
     padding: 0px;
 }
+@panel-bg-color: #DFE5F9;
 div.unified-panel-body-background {
-    background: none repeat scroll 0 0 #DFE5F9;
+    background: none repeat scroll 0 0 @panel-bg-color;
 }
 
 #left > div.unified-panel-body, #right > div.unified-panel-body {
@@ -328,7 +331,7 @@ div.unified-panel-body-background {
 }
 
 // Used for dragging panels, popup menus, to deal with capturing clicks in iframes
-#DD-helper {
+#dd-helper {
     background: white;
     opacity: 0;
     z-index: 900; // Bootstrap elements start at 1000
@@ -337,6 +340,7 @@ div.unified-panel-body-background {
     left: 0;
     width: 100%;
     height: 100%;
+    display: none;
 }
 
 // Messages for message box, slightly different style
@@ -372,20 +376,17 @@ div.unified-panel-body-background {
 }
 
 // Masthead
-
 #masthead {
-
     position:absolute;
     top:0;
     left:0;
     width:100%;
     min-width:990px;
     padding: 0;
-
+    margin-bottom: 0px;
     .nav {
         z-index: 15001;
     }
-
     .nav > li > a {
         cursor: pointer;
         text-decoration: none;
@@ -393,22 +394,10 @@ div.unified-panel-body-background {
             color: gold;
         }
     }
-
-    //.dropdown-menu {
-      //  z-index: 15002;
-    //}
-
-    li.dropdown > a:hover .caret {
-        border-top-color: gold;
-        border-bottom-color: gold;
-    }
-
     .navbar-brand {
-
         position: absolute;
         left: 0;
         top: 0;
-
         font-family: verdana;
         font-weight: bold;
         font-size: 20px;
@@ -418,52 +407,50 @@ div.unified-panel-body-background {
         padding: 5px 20px 12px;
         margin-left: -15px;
         z-index: 2000;
-
         img {
             display: inline;
             width: 26px;
             vertical-align: top;
+            margin-left: 0.35em;
+            border: none;
         }
         a {
             color: white;
             text-decoration: none;
         }
     }
-
-    .iconbar
-    {
-        position            : absolute;
-        top                 : 7px;
-        right               : 110px;
-        cursor              : pointer;
-        color               : @gray-light;
-        overflow            : hidden;
-
-        .symbol
-        {
-            float           : left;
-            margin          : 0px 10px;
-            font-size       : 11px;
+    .navbar-header {
+        position: relative;
+        right: -50%;
+        float: left;
+        .navbar-tabs {
+            display: block;
+            position: relative;
+            right: 50%;
         }
-
-        .symbol .number
-        {
+    }
+    .navbar-tabs {
+        .toggle {
+            color           : gold;
+        }
+        .dropdown-icon {
+            top             : 1px;
+            font-size       : 1.8em;
+        }
+        .dropdown-note {
             font-weight     : bold;
             font-size       : 10px;
-            font-family     : @font-family-sans-serif;
-            position        : relative;
-            left            : 23px;
-            top             : -12px;
-        }
-
-        .toggle
-        {
+            position        : absolute;
+            left            : 35px;
+            top             : 20px;
             color           : gold;
         }
     }
+    li.dropdown > a:hover .caret {
+        border-top-color: gold;
+        border-bottom-color: gold;
+    }
 }
-
-
 
 .quota-meter-container {
     position: absolute;
@@ -592,10 +579,12 @@ div.toolHelpBody {
 
 .toolForm.toolFormInCanvas {
     border: solid @form-border 1px;
+    .border-radius(2px);
     background: @white;
+    margin: 0px;
     &.toolForm-active {
-        border: solid @brand-primary 3px;
-        margin: 4px;
+        box-shadow: 0 0 0 3px @brand-primary;
+        .border-radius(1px);
     }
     .toolFormTitle {
         font-size: @font-size-base;
@@ -682,6 +671,10 @@ div.form-row-error-message {
     margin-top: 5px;
 }
 
+.workflow-right .right-content .section-row {
+    margin-bottom: 10px;
+}
+
 // Selects
 select {
     //border: 1px solid @input-border;
@@ -744,6 +737,8 @@ input[type="submit"], button {
     display: none;
     right: 6px;
     top: 9px;
+    font-size: 1.4em;
+    color: #888;
 }
 
 #search-clear-btn {
@@ -762,13 +757,16 @@ input[type="submit"], button {
 
 // Messages
 
-.errormessagelarge, .warningmessagelarge, .donemessagelarge, .infomessagelarge, .toolHelpBody .error, .toolHelpBody .warning, .toolHelpBody .note {
+.errormessagelarge, .warningmessagelarge, .donemessagelarge, .infomessagelarge, .ui-form-help .error, .ui-form-help .warning, .ui-form-help .note {
     .alert();
     min-height: 36px;
     padding-left: 52px;
     background-image: url(error_large.png);
     background-repeat: no-repeat;
     background-position: 10px 8px;
+    .messagerow {
+        padding: 10px 20px;
+    }
 }
 
 .errormessagelarge {
@@ -800,7 +798,7 @@ input[type="submit"], button {
     background-image: none;
 }
 
-.errormessage, .warningmessage, .donemessage, .infomessage, .errormessagesmall, .warningmessagesmall, .donemessagesmall, .infomessagesmall, toolHelpBody .error, .toolHelpBody .warning, .toolHelpBody .note {
+.errormessage, .warningmessage, .donemessage, .infomessage, .errormessagesmall, .warningmessagesmall, .donemessagesmall, .infomessagesmall, .ui-form-help .error, .ui-form-help .warning, .ui-form-help .note {
     .alert();
     padding: 5px;
     padding-left: 25px;
@@ -812,11 +810,11 @@ input[type="submit"], button {
     background-position: 5px 5px;
 }
 
-.errormessage, .errormessagesmall, .toolHelpBody .error {
+.errormessage, .errormessagesmall, .ui-form-help .error {
     .alert-danger();
 }
 
-.warningmessage, .warningmessagesmall, .toolHelpBody .warning {
+.warningmessage, .warningmessagesmall, .ui-form-help .warning {
     .alert-warning();
     background-image: url(warn_small.png);
 }
@@ -826,7 +824,7 @@ input[type="submit"], button {
     background-image: url(ok_small.png);
 }
 
-.infomessage, .infomessagesmall, .toolHelpBody .note {
+.infomessage, .infomessagesmall, .ui-form-help .note {
     .alert-info();
     background-image: url(info_small.png);
 }
@@ -886,7 +884,6 @@ table.tabletip tbody tr:hover td {
     background-color: #eee;
 }
 
-
 table.colored {
     border-top: solid @table-border-color 1px;
     border-bottom: solid @table-border-color 1px;
@@ -928,16 +925,13 @@ div.debug {
 .grid-header {
     padding-bottom: 1em;
 }
-
 .grid-header h2 {
     margin: 0;
     margin-bottom: 0.5em;
 }
-
 .grid-header .title {
     font-weight: bold;
 }
-
 .grid {
     padding-top: 1em;
     border-collapse: collapse;
@@ -1065,6 +1059,15 @@ div.odd_row {
 
 // Tool panel stuff
 
+// Extra label colors
+.label-beta {
+  .label-warning();
+}
+
+.label-new {
+  .label-info();
+}
+
 span.toolParameterExpandableCollapsable {
     font-weight: bold;
     cursor: pointer;
@@ -1163,7 +1166,9 @@ button {
     .btn();
     .btn-default();
 }
-
+a.btn {
+    text-decoration: none;
+}
 .action-button {
     .btn();
     .btn-default();
@@ -1219,7 +1224,7 @@ a.action-button {
         text-decoration: none;
     }
 
-    .label, > label {
+    .menubutton-label, > label {
         position: relative;
         display: inline-block;
         border-right: none;
@@ -1232,7 +1237,7 @@ a.action-button {
         text-overflow: ellipsis;
     }
 
-    &.popup .label {
+    &.popup .menubutton-label {
         border-right: solid @btn-default-border 1px;
         padding-right: 6px;
     }
@@ -1370,6 +1375,10 @@ div.permissionContainer {
 
 }
 
+.preserve-text-breaks {
+    white-space: pre-line;
+}
+
 // Icon buttons.
 
 .icon-button  {
@@ -1449,8 +1458,9 @@ div.permissionContainer {
 // ============================================================================ History
 @import "ui/icon-btn.less";
 @import "list-item.less";
+@import "dataset.less";
 @import "history.less";
-@import "collections.less";
+@import "collection.less";
 @import "job.less";
 
 @import "ui/paired-collection-creator.less";
@@ -1459,6 +1469,7 @@ div.permissionContainer {
 @import "ui/dataset-choice.less";
 @import "ui/peek-column-selector.less";
 @import "ui/pagination.less";
+@import "ui/error-modal.less";
 
 
 // ==== Tool menu styles
@@ -1468,7 +1479,7 @@ div.permissionContainer {
     color: @base-text-color;
     background: @side-panel-bg;
     min-height: 100%;
-    padding: 5px 10px;
+    padding: 35px 10px;
 }
 
 div.toolSectionPad
@@ -1511,6 +1522,10 @@ div.toolTitle
   margin-right: 10px;
   display: list-item;
   list-style: square outside;
+  .labels {
+    float: right;
+    margin-left: 2px;
+  }
 }
 
 div.toolSectionBody div.toolPanelLabel
@@ -1532,7 +1547,9 @@ div.toolTitleNoSection
 #tool-search {
     padding-top: 5px;
     padding-bottom: 10px;
-    position: relative;
+    position: fixed;
+    top: 65px;
+    width: 210px;
 }
 
 // Dataset Display Styles
@@ -1697,8 +1714,56 @@ div.toolTitleNoSection
     .sprite(@chevron-expand-bw);
 }
 
-// honeypot for registration form
+// noscript overlay - displayed when javascript is disabled
+.noscript-overlay {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: white;
+    z-index: 10000;
+    & > div {
+        margin: 64px 0px 0px 64px;
+    }
+}
 
+// honeypot for registration form
 #for_bears {
     display: none;
+}
+
+// communication channel bootstrap modal 
+.chat-modal {
+    overflow: hidden;
+}
+
+.modal-header-body {
+    padding: 2px;
+}
+
+.communication-iframe {
+    width: 100%;
+    height: 100%;
+}
+
+.close-modal {
+    float: right; 
+    cursor: pointer;
+}
+
+.expand-compress-modal {
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 93.2%;
+}
+
+// password complexity monitor
+#change_password, #registrationForm {
+    .progress {
+        width:200px;
+        margin-left: 20px;
+    }
+    .progress-bar {
+        color:black;
+        text-align:left;
+    }
 }

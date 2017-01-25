@@ -1,20 +1,25 @@
+import logging
 import os
 import os.path
+
+from six import string_types
+
 import galaxy.tools.parameters.basic
 import galaxy.tools.parameters.grouping
 from galaxy.util import string_as_bool
+
 try:
     from nose.tools import nottest
 except ImportError:
-    nottest = lambda x: x
-import logging
+    def nottest(x):
+        return x
 
 log = logging.getLogger( __name__ )
 
 DEFAULT_FTYPE = 'auto'
 DEFAULT_DBKEY = 'hg17'
 DEFAULT_INTERACTOR = "api"  # Default mechanism test code uses for interacting with Galaxy instance.
-DEFAULT_MAX_SECS = 120
+DEFAULT_MAX_SECS = None
 
 
 @nottest
@@ -42,7 +47,9 @@ class ToolTestBuilder( object ):
 
     def __init__( self, tool, test_dict, i, default_interactor ):
         name = test_dict.get( 'name', 'Test-%d' % (i + 1) )
-        maxseconds = int( test_dict.get( 'maxseconds', DEFAULT_MAX_SECS ) )
+        maxseconds = test_dict.get( 'maxseconds', DEFAULT_MAX_SECS )
+        if maxseconds is not None:
+            maxseconds = int( maxseconds )
 
         self.tool = tool
         self.name = name
@@ -72,11 +79,15 @@ class ToolTestBuilder( object ):
                 query_value = test_param.checked
             else:
                 query_value = _process_bool_param_value( test_param, declared_value )
-            matches_declared_value = lambda case_value: _process_bool_param_value( test_param, case_value ) == query_value
+
+            def matches_declared_value(case_value):
+                return _process_bool_param_value( test_param, case_value ) == query_value
         elif isinstance(test_param, galaxy.tools.parameters.basic.SelectToolParameter):
             if declared_value is not None:
                 # Test case supplied explicit value to check against.
-                matches_declared_value = lambda case_value: case_value == declared_value
+
+                def matches_declared_value(case_value):
+                    return case_value == declared_value
             elif test_param.static_options:
                 # No explicit value in test case, not much to do if options are dynamic but
                 # if static options are available can find the one specified as default or
@@ -88,7 +99,9 @@ class ToolTestBuilder( object ):
                     first_option = test_param.static_options[0]
                     first_option_value = first_option[1]
                     default_option = first_option_value
-                matches_declared_value = lambda case_value: case_value == default_option
+
+                def matches_declared_value(case_value):
+                    return case_value == default_option
             else:
                 # No explicit value for this param and cannot determine a
                 # default - give up. Previously this would just result in a key
@@ -107,7 +120,7 @@ class ToolTestBuilder( object ):
             log.info( msg )
 
     def __split_if_str( self, value ):
-        split = isinstance(value, str)
+        split = isinstance(value, string_types)
         if split:
             value = value.split(",")
         return value
@@ -133,7 +146,7 @@ class ToolTestBuilder( object ):
             self.expect_exit_code = test_dict.get("expect_exit_code", None)
             self.expect_failure = test_dict.get("expect_failure", False)
             self.md5 = test_dict.get("md5", None)
-        except Exception, e:
+        except Exception as e:
             self.inputs = {}
             self.error = True
             self.exception = e
@@ -157,7 +170,8 @@ class ToolTestBuilder( object ):
                     for input_name, input_value in case.inputs.items():
                         case_inputs = self.__process_raw_inputs( { input_name: input_value }, raw_inputs, parent_context=cond_context )
                         expanded_inputs.update( case_inputs )
-                    expanded_case_value = self.__split_if_str( case.value )
+                    if not value.type == "text":
+                        expanded_case_value = self.__split_if_str( case.value )
                     if case_value is not None:
                         # A bit tricky here - we are growing inputs with value
                         # that may be implicit (i.e. not defined by user just
@@ -170,7 +184,7 @@ class ToolTestBuilder( object ):
                         expanded_inputs[ case_context.for_state() ] = processed_value
             elif isinstance( value, galaxy.tools.parameters.grouping.Section ):
                 context = ParamContext( name=value.name, parent_context=parent_context )
-                for r_name, r_value in value.inputs.iteritems():
+                for r_name, r_value in value.inputs.items():
                     expanded_input = self.__process_raw_inputs( { context.for_state(): r_value }, raw_inputs, parent_context=context )
                     if expanded_input:
                         expanded_inputs.update( expanded_input )
@@ -179,7 +193,7 @@ class ToolTestBuilder( object ):
                 while True:
                     context = ParamContext( name=value.name, index=repeat_index, parent_context=parent_context )
                     updated = False
-                    for r_name, r_value in value.inputs.iteritems():
+                    for r_name, r_value in value.inputs.items():
                         expanded_input = self.__process_raw_inputs( { context.for_state(): r_value }, raw_inputs, parent_context=context )
                         if expanded_input:
                             expanded_inputs.update( expanded_input )
@@ -192,7 +206,8 @@ class ToolTestBuilder( object ):
                 raw_input = context.extract_value( raw_inputs )
                 if raw_input:
                     (name, param_value, param_extra) = raw_input
-                    param_value = self.__split_if_str( param_value )
+                    if not value.type == "text":
+                        param_value = self.__split_if_str( param_value )
                     if isinstance( value, galaxy.tools.parameters.basic.DataToolParameter ):
                         if not isinstance(param_value, list):
                             param_value = [ param_value ]
@@ -239,7 +254,7 @@ def _process_simple_value( param, param_value ):
         # Do replacement described above for lists or singleton
         # values.
         if isinstance( param_value, list ):
-            processed_value = map( process_param_value, param_value )
+            processed_value = list( map( process_param_value, param_value ) )
         else:
             processed_value = process_param_value( param_value )
     elif isinstance( param, galaxy.tools.parameters.basic.BooleanToolParameter ):

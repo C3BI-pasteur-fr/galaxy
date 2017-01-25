@@ -1,8 +1,10 @@
 from unittest import TestCase
-from galaxy.util.bunch import Bunch
-from galaxy.jobs.output_checker import check_output
+
 from galaxy.jobs.error_level import StdioErrorLevel
+from galaxy.jobs.output_checker import check_output
+from galaxy.model import Job
 from galaxy.tools.parser.interface import ToolStdioRegex
+from galaxy.util.bunch import Bunch
 
 
 class OutputCheckerTestCase( TestCase ):
@@ -12,11 +14,8 @@ class OutputCheckerTestCase( TestCase ):
             stdio_regexes=[],
             stdio_exit_codes=[],
         )
-        self.job = Bunch(
-            stdout=None,
-            stderr=None,
-            get_id_tag=lambda: "test_id",
-        )
+        self.job = Job()
+        self.job.id = "test_id"
         self.stdout = ''
         self.stderr = ''
         self.tool_exit_code = None

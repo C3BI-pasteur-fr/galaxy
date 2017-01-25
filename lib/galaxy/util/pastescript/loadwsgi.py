@@ -3,16 +3,20 @@
 
 # Mostly taken from PasteDeploy and stripped down for Galaxy
 
-from __future__ import with_statement
-
 import inspect
 import os
-import sys
 import re
+import sys
 
 import pkg_resources
 
-__all__ = ['loadapp', 'loadserver', 'loadfilter', 'appconfig']
+from six import iteritems
+from six.moves.urllib.parse import unquote
+
+from galaxy.util.properties import NicerConfigParser
+
+
+__all__ = ('loadapp', 'loadserver', 'loadfilter', 'appconfig')
 
 # ---- from paste.deploy.compat --------------------------------------
 
@@ -27,22 +31,11 @@ def print_(template, *args, **kwargs):
         template = template % kwargs
     sys.stdout.writelines(template)
 
-if sys.version_info < (3, 0):
-    basestring = basestring
-    from ConfigParser import ConfigParser
-    from urllib import unquote
-    iteritems = lambda d: d.iteritems()
-    dictkeys = lambda d: d.keys()
 
+if sys.version_info < (3, 0):
     def reraise(t, e, tb):
         exec('raise t, e, tb', dict(t=t, e=e, tb=tb))
 else:
-    basestring = str
-    from configparser import ConfigParser
-    from urllib.parse import unquote
-    iteritems = lambda d: d.items()
-    dictkeys = lambda d: list(d.keys())
-
     def reraise(t, e, tb):
         exec('raise e from tb', dict(e=e, tb=tb))
 
@@ -65,9 +58,9 @@ def fix_type_error(exc_info, callable, varargs, kwargs):
     """
     if exc_info is None:
         exc_info = sys.exc_info()
-    if (exc_info[0] != TypeError
-            or str(exc_info[1]).find('arguments') == -1
-            or getattr(exc_info[1], '_type_error_fixed', False)):
+    if (exc_info[0] != TypeError or
+            str(exc_info[1]).find('arguments') == -1 or
+            getattr(exc_info[1], '_type_error_fixed', False)):
         return exc_info
     exc_info[1]._type_error_fixed = True
     argspec = inspect.formatargspec(*inspect.getargspec(callable))
@@ -75,9 +68,8 @@ def fix_type_error(exc_info, callable, varargs, kwargs):
     if kwargs and args:
         args += ', '
     if kwargs:
-        kwargs = kwargs.items()
-        kwargs.sort()
-        args += ', '.join(['%s=...' % n for n, v in kwargs])
+        kwargs = sorted(kwargs.keys())
+        args += ', '.join('%s=...' % n for n in kwargs)
     gotspec = '(%s)' % args
     msg = '%s; got %s, wanted %s' % (exc_info[1], gotspec, argspec)
     exc_info[1].args = (msg,)
@@ -152,61 +144,6 @@ def _flatten(lst):
     return result
 
 
-class NicerConfigParser(ConfigParser):
-
-    def __init__(self, filename, *args, **kw):
-        ConfigParser.__init__(self, *args, **kw)
-        self.filename = filename
-        if hasattr(self, '_interpolation'):
-            self._interpolation = self.InterpolateWrapper(self._interpolation)
-
-    read_file = getattr(ConfigParser, 'read_file', ConfigParser.readfp)
-
-    def defaults(self):
-        """Return the defaults, with their values interpolated (with the
-        defaults dict itself)
-
-        Mainly to support defaults using values such as %(here)s
-        """
-        defaults = ConfigParser.defaults(self).copy()
-        for key, val in iteritems(defaults):
-            defaults[key] = self.get('DEFAULT', key) or val
-        return defaults
-
-    def _interpolate(self, section, option, rawval, vars):
-        # Python < 3.2
-        try:
-            return ConfigParser._interpolate(
-                self, section, option, rawval, vars)
-        except Exception:
-            e = sys.exc_info()[1]
-            args = list(e.args)
-            args[0] = 'Error in file %s: %s' % (self.filename, e)
-            e.args = tuple(args)
-            e.message = args[0]
-            raise
-
-    class InterpolateWrapper(object):
-        # Python >= 3.2
-        def __init__(self, original):
-            self._original = original
-
-        def __getattr__(self, name):
-            return getattr(self._original, name)
-
-        def before_get(self, parser, section, option, value, defaults):
-            try:
-                return self._original.before_get(parser, section, option,
-                                                 value, defaults)
-            except Exception:
-                e = sys.exc_info()[1]
-                args = list(e.args)
-                args[0] = 'Error in file %s: %s' % (parser.filename, e)
-                e.args = tuple(args)
-                e.message = args[0]
-                raise
-
-
 ############################################################
 # Object types
 ############################################################
@@ -252,6 +189,7 @@ class _App(_ObjectType):
         else:
             assert 0, "Protocol %r unknown" % context.protocol
 
+
 APP = _App()
 
 
@@ -273,6 +211,7 @@ class _Filter(_ObjectType):
             return filter_wrapper
         else:
             assert 0, "Protocol %r unknown" % context.protocol
+
 
 FILTER = _Filter()
 
@@ -296,6 +235,7 @@ class _Server(_ObjectType):
         else:
             assert 0, "Protocol %r unknown" % context.protocol
 
+
 SERVER = _Server()
 
 
@@ -308,9 +248,10 @@ class _PipeLine(_ObjectType):
         app = context.app_context.create()
         filters = [c.create() for c in context.filter_contexts]
         filters.reverse()
-        for filter in filters:
-            app = filter(app)
+        for filter_ in filters:
+            app = filter_(app)
         return app
+
 
 PIPELINE = _PipeLine()
 
@@ -320,8 +261,9 @@ class _FilterApp(_ObjectType):
 
     def invoke(self, context):
         next_app = context.next_context.create()
-        filter = context.filter_context.create()
-        return filter(next_app)
+        filter_ = context.filter_context.create()
+        return filter_(next_app)
+
 
 FILTER_APP = _FilterApp()
 
@@ -330,18 +272,18 @@ class _FilterWith(_App):
     name = 'filtered_with'
 
     def invoke(self, context):
-        filter = context.filter_context.create()
+        filter_ = context.filter_context.create()
         filtered = context.next_context.create()
         if context.next_context.object_type is APP:
-            return filter(filtered)
+            return filter_(filtered)
         else:
             # filtering a filter
             def composed(app):
-                return filter(filtered(app))
+                return filter_(filtered(app))
             return composed
 
-FILTER_WITH = _FilterWith()
 
+FILTER_WITH = _FilterWith()
 
 ############################################################
 # Loaders
@@ -365,6 +307,7 @@ def appconfig(uri, name=None, relative_to=None, global_conf=None):
                           relative_to=relative_to,
                           global_conf=global_conf)
     return context.config()
+
 
 _loaders = {}
 
@@ -424,6 +367,7 @@ def _loadconfig(object_type, uri, path, name, relative_to,
         loader.update_defaults(global_conf, overwrite=False)
     return loader.get_context(object_type, name, global_conf)
 
+
 _loaders['config'] = _loadconfig
 
 
@@ -431,6 +375,7 @@ def _loadegg(object_type, uri, spec, name, relative_to,
              global_conf):
     loader = EggLoader(spec)
     return loader.get_context(object_type, name, global_conf)
+
 
 _loaders['egg'] = _loadegg
 
@@ -440,6 +385,7 @@ def _loadfunc(object_type, uri, spec, name, relative_to,
 
     loader = FuncLoader(spec)
     return loader.get_context(object_type, name, global_conf)
+
 
 _loaders['call'] = _loadfunc
 
@@ -760,7 +706,7 @@ class EggLoader(_Loader):
                     dist.location,
                     ', '.join(_flatten(object_type.egg_protocols)),
                     ', '.join(_flatten([
-                        dictkeys(pkg_resources.get_entry_info(self.spec, prot, name) or {})
+                        list((pkg_resources.get_entry_info(self.spec, prot, name) or {}).keys())
                         for prot in protocol_options] or '(no entry points)'))))
         if len(possible) > 1:
             raise LookupError(

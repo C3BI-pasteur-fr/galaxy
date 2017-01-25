@@ -2,20 +2,19 @@
 """
 from __future__ import print_function
 
-import os
-import imp
-
 import json
+import os
+import sys
+import unittest
 
-test_utils = imp.load_source( 'test_utils',
-    os.path.join( os.path.dirname( __file__), '../unittest_utils/utility.py' ) )
-import galaxy_mock
-
-from galaxy import eggs
-eggs.require( 'SQLAlchemy >= 0.4' )
 import sqlalchemy
+from six import string_types
 
 from galaxy.managers.users import UserManager
+
+unit_root = os.path.abspath( os.path.join( os.path.dirname( __file__ ), os.pardir ) )
+sys.path.insert( 1, unit_root )
+from unittest_utils import galaxy_mock
 
 # =============================================================================
 admin_email = 'admin@admin.admin'
@@ -24,7 +23,7 @@ default_password = '123456'
 
 
 # =============================================================================
-class BaseTestCase( test_utils.unittest.TestCase ):
+class BaseTestCase( unittest.TestCase ):
 
     @classmethod
     def setUpClass( cls ):
@@ -35,7 +34,7 @@ class BaseTestCase( test_utils.unittest.TestCase ):
         print( '\n', '-' * 20, 'end class', cls )
 
     def __init__( self, *args ):
-        test_utils.unittest.TestCase.__init__( self, *args )
+        unittest.TestCase.__init__( self, *args )
 
     def setUp( self ):
         self.log( '.' * 20, 'begin test', self )
@@ -62,7 +61,7 @@ class BaseTestCase( test_utils.unittest.TestCase ):
         print( *args, **kwargs )
 
     # ---- additional test types
-    TYPES_NEEDING_NO_SERIALIZERS = ( basestring, bool, type( None ), int, float )
+    TYPES_NEEDING_NO_SERIALIZERS = ( string_types, bool, type( None ), int, float )
 
     def assertKeys( self, obj, key_list ):
         self.assertEqual( sorted( obj.keys() ), sorted( key_list ) )
@@ -75,13 +74,13 @@ class BaseTestCase( test_utils.unittest.TestCase ):
             self.assertTrue( True, 'keys found in object' )
 
     def assertNullableBasestring( self, item ):
-        if not isinstance( item, ( basestring, type( None ) ) ):
+        if not isinstance( item, ( string_types, type( None ) ) ):
             self.fail( 'Non-nullable basestring: ' + str( type( item ) ) )
         # TODO: len mod 8 and hex re
         self.assertTrue( True, 'is nullable basestring: ' + str( item ) )
 
     def assertEncodedId( self, item ):
-        if not isinstance( item, basestring ):
+        if not isinstance( item, string_types ):
             self.fail( 'Non-string: ' + str( type( item ) ) )
         # TODO: len mod 8 and hex re
         self.assertTrue( True, 'is id: ' + item )
@@ -93,14 +92,14 @@ class BaseTestCase( test_utils.unittest.TestCase ):
             self.assertEncodedId( item )
 
     def assertDate( self, item ):
-        if not isinstance( item, basestring ):
+        if not isinstance( item, string_types ):
             self.fail( 'Non-string: ' + str( type( item ) ) )
         # TODO: no great way to parse this fully (w/o python-dateutil)
         # TODO: re?
         self.assertTrue( True, 'is date: ' + item )
 
     def assertUUID( self, item ):
-        if not isinstance( item, basestring ):
+        if not isinstance( item, string_types ):
             self.fail( 'Non-string: ' + str( type( item ) ) )
         # TODO: re for d4d76d69-80d4-4ed7-80c7-211ebcc1a358
         self.assertTrue( True, 'is uuid: ' + item )
@@ -117,7 +116,7 @@ class BaseTestCase( test_utils.unittest.TestCase ):
 
     def assertIsJsonifyable( self, item ):
         # TODO: use galaxy's override
-        self.assertIsInstance( json.dumps( item ), basestring )
+        self.assertIsInstance( json.dumps( item ), string_types )
 
 
 class CreatesCollectionsMixin( object ):
@@ -138,4 +137,4 @@ class CreatesCollectionsMixin( object ):
 # =============================================================================
 if __name__ == '__main__':
     # or more generally, nosetests test_resourcemanagers.py -s -v
-    test_utils.unittest.main()
+    unittest.main()

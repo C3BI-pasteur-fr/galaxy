@@ -7,8 +7,8 @@ MAIN_SECTION = "app:main"
 
 def sync():
     # Add or replace the relevant properites from galaxy.ini
-    # into reports_wsgi.ini
-    reports_config_file = "config/reports_wsgi.ini"
+    # into reports.ini
+    reports_config_file = "config/reports.ini"
     if len(argv) > 1:
         reports_config_file = argv[1]
 
@@ -56,6 +56,7 @@ def get_synced_line(reports_line, universe_config):
 
 def get_universe_line(property_name, universe_config):
     return "%s=%s\n" % (property_name, universe_config.get(MAIN_SECTION, property_name))
+
 
 if __name__ == '__main__':
     sync()

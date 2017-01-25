@@ -2,13 +2,18 @@
 Support for integration with the Biostar application
 """
 
-import logging
 import hmac
-import urlparse
+import logging
 import re
+import urlparse
+
 from unicodedata import normalize
-from galaxy.web.base.controller import url_for
+
+from six import text_type
+
 from galaxy.tools.errors import ErrorReporter
+from galaxy.web.base.controller import url_for
+
 from . import smart_str
 
 log = logging.getLogger( __name__ )
@@ -41,14 +46,14 @@ def biostar_enabled( app ):
 # Slugifying from Armin Ronacher (http://flask.pocoo.org/snippets/5/)
 def slugify(text, delim=u'-'):
     """Generates an slightly worse ASCII-only slug."""
-    if not isinstance( text, unicode ):
-        text = unicode( text )
+    if not isinstance( text, text_type ):
+        text = text_type( text )
     result = []
     for word in _punct_re.split(text.lower()):
         word = normalize('NFKD', word).encode('ascii', 'ignore')
         if word:
             result.append(word)
-    return unicode(delim.join(result))
+    return text_type(delim.join(result))
 
 
 def get_biostar_url( app, payload=None, biostar_action=None ):

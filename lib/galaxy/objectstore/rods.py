@@ -4,40 +4,38 @@ Object Store plugin for the Integrated Rule-Oriented Data Store (iRODS)
 The module is named rods to avoid conflicting with the PyRods module, irods
 """
 
+import logging
 import os
 import time
-import logging
 
-from posixpath import join as path_join
 from posixpath import basename as path_basename
 from posixpath import dirname as path_dirname
+from posixpath import join as path_join
 
-from galaxy.exceptions import ObjectNotFound
-from ..objectstore import DiskObjectStore, ObjectStore, local_extra_dirs
+from galaxy.exceptions import ObjectInvalid, ObjectNotFound
+from galaxy.util import safe_relpath
 
-try:
-    import galaxy.eggs
-    galaxy.eggs.require( 'PyRods' )
-except Exception:
-    pass
+from ..objectstore import DiskObjectStore, local_extra_dirs
+
 try:
     import irods
 except ImportError:
     irods = None
 
-NO_PYRODS_ERROR_MESSAGE = "IRODS object store configured, but no PyRods dependency available. Please install and properly configure PyRods or modify object store configuration."
+
+IRODS_IMPORT_MESSAGE = ('The Python irods package is required to use this '
+                        'feature, please install it')
 
 log = logging.getLogger( __name__ )
 
 
-class IRODSObjectStore( DiskObjectStore, ObjectStore ):
+class IRODSObjectStore( DiskObjectStore ):
     """
     Galaxy object store based on iRODS
     """
     def __init__( self, config, file_path=None, extra_dirs=None ):
-        if irods is None:
-            raise Exception(NO_PYRODS_ERROR_MESSAGE)
         super( IRODSObjectStore, self ).__init__( config, file_path=file_path, extra_dirs=extra_dirs )
+        assert irods is not None, IRODS_IMPORT_MESSAGE
         self.cache_path = config.object_store_cache_path
         self.default_resource = config.irods_default_resource or None
 
@@ -71,6 +69,20 @@ class IRODSObjectStore( DiskObjectStore, ObjectStore ):
         log.info( "iRODS data for this instance will be stored in collection: %s, resource: %s", self.root_collection_path, self.default_resource )
 
     def __get_rods_path( self, obj, base_dir=None, dir_only=False, extra_dir=None, extra_dir_at_root=False, alt_name=None, strip_dat=True, **kwargs ):
+        # extra_dir should never be constructed from provided data but just
+        # make sure there are no shenannigans afoot
+        if extra_dir and extra_dir != os.path.normpath(extra_dir):
+            log.warning('extra_dir is not normalized: %s', extra_dir)
+            raise ObjectInvalid("The requested object is invalid")
+        # ensure that any parent directory references in alt_name would not
+        # result in a path not contained in the directory path constructed here
+        if alt_name:
+            if not safe_relpath(alt_name):
+                log.warning('alt_name would locate path outside dir: %s', alt_name)
+                raise ObjectInvalid("The requested object is invalid")
+            # alt_name can contain parent directory references, but iRODS will
+            # not follow them, so if they are valid we normalize them out
+            alt_name = os.path.normpath(alt_name)
         path = ""
         if extra_dir is not None:
             path = extra_dir
@@ -152,7 +164,7 @@ class IRODSObjectStore( DiskObjectStore, ObjectStore ):
                 # that we can prevent overwriting
                 doi = irods.dataObjInp_t()
                 doi.objPath = rods_path
-                doi.createMode = 0640
+                doi.createMode = 0o640
                 doi.dataSize = 0  # 0 actually means "unknown", although literally 0 would be preferable
                 irods.addKeyVal( doi.condInput, irods.DEST_RESC_NAME_KW, self.default_resource )
                 status = irods.rcDataObjCreate( self.rods_conn, doi )
@@ -195,7 +207,7 @@ class IRODSObjectStore( DiskObjectStore, ObjectStore ):
             return True
         except AttributeError:
             log.warning( 'delete(): operation failed: object does not exist: %s', rods_path )
-        except AssertionError, e:
+        except AssertionError as e:
             # delete() does not raise on deletion failure
             log.error( 'delete(): operation failed: %s', e )
         finally:
@@ -281,7 +293,7 @@ class IRODSObjectStore( DiskObjectStore, ObjectStore ):
         # put will create if necessary
         doi = irods.dataObjInp_t()
         doi.objPath = self.__get_rods_path( obj, **kwargs )
-        doi.createMode = 0640
+        doi.createMode = 0o640
         doi.dataSize = os.stat( file_name ).st_size
         doi.numThreads = 0
         irods.addKeyVal( doi.condInput, irods.DEST_RESC_NAME_KW, self.default_resource )
@@ -312,6 +324,7 @@ def _rods_strerror( errno ):
             if type( v ) == int and v < 0:
                 irods.__rods_strerror_map[ v ] = name
     return irods.__rods_strerror_map.get( errno, 'GALAXY_NO_ERRNO_MAPPING_FOUND' )
+
 
 if irods is not None:
     irods.strerror = _rods_strerror

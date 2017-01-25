@@ -1,12 +1,10 @@
 #!/usr/bin/env python
-#Reads a LAV file and writes two BED files.
-import sys
-from galaxy import eggs
-import pkg_resources
-pkg_resources.require( "bx-python" )
-import bx.align.lav
+# Reads a LAV file and writes two BED files.
+from __future__ import print_function
 
-assert sys.version_info[:2] >= ( 2, 4 )
+import sys
+
+import bx.align.lav
 
 
 def stop_err( msg ):
@@ -19,7 +17,7 @@ def main():
         lav_file = open(sys.argv[1], 'r')
         bed_file1 = open(sys.argv[2], 'w')
         bed_file2 = open(sys.argv[3], 'w')
-    except Exception, e:
+    except Exception as e:
         stop_err( str( e ) )
 
     lavsRead = 0
@@ -42,13 +40,13 @@ def main():
         bedsWritten += 1
 
     for spec, file in species.items():
-        print "#FILE\t%s\t%s" % (file.name, spec)
+        print("#FILE\t%s\t%s" % (file.name, spec))
 
     lav_file.close()
     bed_file1.close()
     bed_file2.close()
 
-    print "%d lav blocks read, %d regions written\n" % (lavsRead, bedsWritten)
+    print("%d lav blocks read, %d regions written\n" % (lavsRead, bedsWritten))
 
 
 if __name__ == "__main__":

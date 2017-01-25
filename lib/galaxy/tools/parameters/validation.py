@@ -1,25 +1,24 @@
 """
 Classes related to parameter validation.
 """
-
 import logging
 import re
-from galaxy import model
-from galaxy import util
+
+from six import string_types
+
+from galaxy import (
+    model,
+    util
+)
 
 log = logging.getLogger( __name__ )
-
-
-class LateValidationError( Exception ):
-
-    def __init__( self, message ):
-        self.message = message
 
 
 class Validator( object ):
     """
     A validator checks that a value meets some conditions OR raises ValueError
     """
+    requires_dataset_metadata = False
 
     @classmethod
     def from_element( cls, param, elem ):
@@ -27,7 +26,7 @@ class Validator( object ):
         assert type is not None, "Required 'type' attribute missing from validator"
         return validator_types[type].from_element( param, elem )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         raise TypeError( "Abstract Method" )
 
 
@@ -60,8 +59,8 @@ class RegexValidator( Validator ):
         # the sre module.
         self.expression = expression
 
-    def validate( self, value, history=None ):
-        if re.match( self.expression, value ) is None:
+    def validate( self, value, trans=None ):
+        if re.match( self.expression, value or '' ) is None:
             raise ValueError( self.message )
 
 
@@ -94,7 +93,7 @@ class ExpressionValidator( Validator ):
         # Save compiled expression, code objects are thread safe (right?)
         self.expression = compile( expression, '<string>', 'eval' )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if not( eval( self.expression, dict( value=value ) ) ):
             message = self.message
             if self.substitute_value_in_message:
@@ -155,7 +154,7 @@ class InRangeValidator( Validator ):
             op2 = '<'
         self.message = message or "Value must be %s %s and %s %s" % ( op1, self_min_str, op2, self_max_str )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if self.exclude_min:
             if not self.min < float( value ):
                 raise ValueError( self.message )
@@ -206,7 +205,7 @@ class LengthValidator( Validator ):
         self.min = length_min
         self.max = length_max
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if self.min is not None and len( value ) < self.min:
             raise ValueError( self.message or ( "Must have length of at least %d" % self.min ) )
         if self.max is not None and len( value ) > self.max:
@@ -225,17 +224,35 @@ class DatasetOkValidator( Validator ):
     def from_element( cls, param, elem ):
         return cls( elem.get( 'message', None ) )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if value and value.state != model.Dataset.states.OK:
             if self.message is None:
                 self.message = "The selected dataset is still being generated, select another dataset or wait until it is completed"
             raise ValueError( self.message )
 
 
+class DatasetEmptyValidator( Validator ):
+    """Validator that checks if a dataset has a positive file size."""
+    def __init__( self, message=None ):
+        self.message = message
+
+    @classmethod
+    def from_element( cls, param, elem ):
+        return cls( elem.get( 'message', None ) )
+
+    def validate( self, value, trans=None ):
+        if value:
+            if value.get_size() == 0:
+                if self.message is None:
+                    self.message = "The selected dataset is empty, this tool expects non-empty files."
+                raise ValueError( self.message )
+
+
 class MetadataValidator( Validator ):
     """
     Validator that checks for missing metadata
     """
+    requires_dataset_metadata = True
 
     def __init__( self, message=None, check="", skip="" ):
         self.message = message
@@ -246,7 +263,7 @@ class MetadataValidator( Validator ):
     def from_element( cls, param, elem ):
         return cls( message=elem.get( 'message', None ), check=elem.get( 'check', "" ), skip=elem.get( 'skip', "" ) )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if value:
             if not isinstance( value, model.DatasetInstance ):
                 raise ValueError( 'A non-dataset value was provided.' )
@@ -260,6 +277,7 @@ class UnspecifiedBuildValidator( Validator ):
     """
     Validator that checks for dbkey not equal to '?'
     """
+    requires_dataset_metadata = True
 
     def __init__( self, message=None ):
         if message is None:
@@ -271,7 +289,7 @@ class UnspecifiedBuildValidator( Validator ):
     def from_element( cls, param, elem ):
         return cls( elem.get( 'message', None ) )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         # if value is None, we cannot validate
         if value:
             dbkey = value.metadata.dbkey
@@ -291,7 +309,7 @@ class NoOptionsValidator( Validator ):
     def from_element( cls, param, elem ):
         return cls( elem.get( 'message', None ) )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if value is None:
             if self.message is None:
                 self.message = "No options available for selection"
@@ -308,7 +326,7 @@ class EmptyTextfieldValidator( Validator ):
     def from_element( cls, param, elem ):
         return cls( elem.get( 'message', None ) )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if value == '':
             if self.message is None:
                 self.message = "Field requires a value"
@@ -319,6 +337,7 @@ class MetadataInFileColumnValidator( Validator ):
     """
     Validator that checks if the value for a dataset's metadata item exists in a file.
     """
+    requires_dataset_metadata = True
 
     @classmethod
     def from_element( cls, param, elem ):
@@ -329,23 +348,24 @@ class MetadataInFileColumnValidator( Validator ):
         if metadata_name:
             metadata_name = metadata_name.strip()
         metadata_column = int( elem.get( "metadata_column", 0 ) )
+        split = elem.get( "split", "\t" )
         message = elem.get( "message", "Value for metadata %s was not found in %s." % ( metadata_name, filename ) )
         line_startswith = elem.get( "line_startswith", None  )
         if line_startswith:
             line_startswith = line_startswith.strip()
-        return cls( filename, metadata_name, metadata_column, message, line_startswith )
+        return cls( filename, metadata_name, metadata_column, message, line_startswith, split )
 
-    def __init__( self, filename, metadata_name, metadata_column, message="Value for metadata not found.", line_startswith=None ):
+    def __init__( self, filename, metadata_name, metadata_column, message="Value for metadata not found.", line_startswith=None, split="\t" ):
         self.metadata_name = metadata_name
         self.message = message
         self.valid_values = []
         for line in open( filename ):
             if line_startswith is None or line.startswith( line_startswith ):
-                fields = line.split( '\t' )
+                fields = line.split( split )
                 if metadata_column < len( fields ):
                     self.valid_values.append( fields[metadata_column].strip() )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if not value:
             return
         if hasattr( value, "metadata" ):
@@ -358,6 +378,7 @@ class MetadataInDataTableColumnValidator( Validator ):
     """
     Validator that checks if the value for a dataset's metadata item exists in a file.
     """
+    requires_dataset_metadata = True
 
     @classmethod
     def from_element( cls, param, elem ):
@@ -384,7 +405,7 @@ class MetadataInDataTableColumnValidator( Validator ):
         self.valid_values = []
         self._data_table_content_version = None
         self._tool_data_table = tool_data_table
-        if isinstance( metadata_column, basestring ):
+        if isinstance( metadata_column, string_types ):
             metadata_column = tool_data_table.columns[ metadata_column ]
         self._metadata_column = metadata_column
         self._load_values()
@@ -396,7 +417,7 @@ class MetadataInDataTableColumnValidator( Validator ):
             if self._metadata_column < len( fields ):
                 self.valid_values.append( fields[ self._metadata_column ] )
 
-    def validate( self, value, history=None ):
+    def validate( self, value, trans=None ):
         if not value:
             return
         if hasattr( value, "metadata" ):
@@ -407,6 +428,7 @@ class MetadataInDataTableColumnValidator( Validator ):
                 return
         raise ValueError( self.message )
 
+
 validator_types = dict( expression=ExpressionValidator,
                         regex=RegexValidator,
                         in_range=InRangeValidator,
@@ -415,9 +437,10 @@ validator_types = dict( expression=ExpressionValidator,
                         unspecified_build=UnspecifiedBuildValidator,
                         no_options=NoOptionsValidator,
                         empty_field=EmptyTextfieldValidator,
+                        empty_dataset=DatasetEmptyValidator,
                         dataset_metadata_in_file=MetadataInFileColumnValidator,
                         dataset_metadata_in_data_table=MetadataInDataTableColumnValidator,
-                        dataset_ok_validator=DatasetOkValidator )
+                        dataset_ok_validator=DatasetOkValidator, )
 
 
 def get_suite():

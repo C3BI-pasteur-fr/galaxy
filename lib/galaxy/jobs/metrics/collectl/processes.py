@@ -3,13 +3,17 @@ statistics for a given pid's process and process ancestors.
 """
 import collections
 import csv
+import logging
+import sys
 import tempfile
 
 from galaxy import util
 
 from ..collectl import stats
 
-import logging
+if sys.version_info > (3,):
+    long = int
+
 log = logging.getLogger( __name__ )
 
 # Collectl process information cheat sheet:
@@ -93,7 +97,7 @@ def parse_process_statistics( statistics ):
         statistics = DEFAULT_STATISTICS
 
     statistics = util.listify( statistics )
-    statistics = map( _tuplize_statistic, statistics )
+    statistics = [ _tuplize_statistic(_) for _ in statistics ]
     # Check for validity...
     for statistic in statistics:
         if statistic[ 0 ] not in STATISTIC_TYPES:
@@ -181,10 +185,10 @@ class CollectlProcessSummarizer( object ):
             if column == "AccumT":
                 # Only thing that makes sense is sum
                 if statistic_type != "max":
-                    log.warn( "Only statistic max makes sense for AccumT" )
+                    log.warning( "Only statistic max makes sense for AccumT" )
                     continue
 
-                value = sum( [ v.max for v in self.process_accum_statistics.itervalues() ] )
+                value = sum( v.max for v in self.process_accum_statistics.values() )
             else:
                 statistics_tracker = self.tree_statistics[ column ]
                 value = getattr( statistics_tracker, statistic_type )
@@ -249,4 +253,4 @@ def _tuplize_statistic( statistic ):
     return statistic
 
 
-__all__ = [ 'generate_process_statistics' ]
+__all__ = ( 'generate_process_statistics', )

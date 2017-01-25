@@ -9,9 +9,7 @@ usage: %prog in_file out_file
 """
 import optparse
 
-from galaxy import eggs
-eggs.require( "pysam" )
-import ctabix
+from pysam import ctabix
 
 
 def main():
@@ -21,6 +19,7 @@ def main():
     input_fname, output_fname = args
 
     ctabix.tabix_compress(input_fname, output_fname, force=True)
+
 
 if __name__ == "__main__":
     main()

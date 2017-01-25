@@ -3,8 +3,6 @@ Manager and Serializer for libraries.
 """
 import logging
 
-from galaxy import eggs
-eggs.require('SQLAlchemy')
 from sqlalchemy import and_, false, not_, or_, true
 from sqlalchemy.orm.exc import MultipleResultsFound
 from sqlalchemy.orm.exc import NoResultFound
@@ -35,7 +33,7 @@ class LibraryManager( object ):
         :type   check_accessible:         bool
 
         :returns:   the requested library
-        :rtype:     Library
+        :rtype:     galaxy.model.Library
         """
         try:
             library = trans.sa_session.query( trans.app.model.Library ).filter( trans.app.model.Library.table.c.id == decoded_library_id ).one()
@@ -43,7 +41,7 @@ class LibraryManager( object ):
             raise exceptions.InconsistentDatabase( 'Multiple libraries found with the same id.' )
         except NoResultFound:
             raise exceptions.RequestParameterInvalidException( 'No library found with the id provided.' )
-        except Exception, e:
+        except Exception as e:
             raise exceptions.InternalServerError( 'Error loading from the database.' + str( e ) )
         library = self.secure( trans, library, check_accessible)
         return library
@@ -147,8 +145,8 @@ class LibraryManager( object ):
         """
         Check if library is accessible to user.
 
-        :param  folder:                  library
-        :type   folder:                  Library
+        :param  library:                 library
+        :type   library:                 galaxy.model.Library
         :param  check_accessible:        flag whether to check that user can access library
         :type   check_accessible:        bool
 
@@ -178,7 +176,7 @@ class LibraryManager( object ):
         Return library data in the form of a dictionary.
 
         :param  library:       library
-        :type   library:       Library
+        :type   library:       galaxy.model.Library
 
         :returns:   dict with data about the library
         :rtype:     dictionary
@@ -186,7 +184,7 @@ class LibraryManager( object ):
         library_dict = library.to_dict( view='element', value_mapper={ 'id': trans.security.encode_id, 'root_folder_id': trans.security.encode_id } )
         if trans.app.security_agent.library_is_public( library, contents=False ):
             library_dict[ 'public' ] = True
-        library_dict[ 'create_time_pretty'] = pretty_print_time_interval( library_dict[ 'create_time' ], precise=True )
+        library_dict[ 'create_time_pretty'] = pretty_print_time_interval( library.create_time, precise=True )
         current_user_roles = trans.get_current_user_roles()
         if not trans.user_is_admin():
             library_dict[ 'can_user_add' ] = trans.app.security_agent.can_add_library_item( current_user_roles, library )
@@ -203,7 +201,7 @@ class LibraryManager( object ):
         Load all permissions currently related to the given library.
 
         :param  library:      the model object
-        :type   library:      Library
+        :type   library:      galaxy.model.Library
 
         :rtype:     dictionary
         :returns:   dict of current roles for all available permission types
