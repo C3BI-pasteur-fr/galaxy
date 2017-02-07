@@ -1,5 +1,6 @@
 export GALAXY_SLOTS_CONFIGURED="1"
-if [ -n "$SLURM_CPUS_ON_NODE" ]; then
+if [ -n "$SLURM_CPUS_ON_NODE" ] && [ "$SLURM_NNODES" = 1 ]; then
+    # PASTEUR hack: test SLURM_NNODES to ensure that the cpus are on one node
     # This should be valid on SLURM except in the case that srun is used to
     # submit additional job steps under an existing allocation, which we do not
     # currently do.
