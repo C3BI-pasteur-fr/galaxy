@@ -9,6 +9,7 @@ community contribution and maintenance however.
 import logging
 from os import environ, pathsep
 from os.path import exists, isdir, join
+from pasteur.modulepatch import fix_default_version
 from subprocess import PIPE, Popen
 
 from six import StringIO
@@ -19,8 +20,6 @@ from ..resolvers import (
     MappableDependencyResolver,
     NullDependency,
 )
-
-from galaxy.pasteur.modulepatch import fix_default_version
 
 log = logging.getLogger( __name__ )
 
