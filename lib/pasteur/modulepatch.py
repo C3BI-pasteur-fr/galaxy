@@ -58,3 +58,21 @@ def module_dependency( job_tool_id, job_tool_version, module_sample_path ):
 def __handle_dependency_module(commands_builder, job_wrapper):
     if job_wrapper.dependency_module_commands:
         commands_builder.prepend_commands(job_wrapper.dependency_module_commands)
+
+
+def fix_default_version(modules):
+    """
+    This decorator is used to fix the issue from module returning x.x(default) for version:
+      e.g. when looking for tool v.1.1, if this is the default one loaded by module
+           it will return tool/1.1(default). Therefore comparison of version fails.
+
+    :param has_module: function AvailModuleCheck.__modules from lib/galaxy/tools/deps/resolvers/modules.py
+    :type has_module: FUNCTION
+    """
+
+    def new_modules(self):
+        mod_gen = modules()
+        for name, version in mod_gen:
+            yield name, version.replace('(default)','')
+
+    return new_modules

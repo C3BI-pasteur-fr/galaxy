@@ -20,6 +20,8 @@ from ..resolvers import (
     NullDependency,
 )
 
+from galaxy.pasteur.modulepatch import fix_default_version
+
 log = logging.getLogger( __name__ )
 
 DEFAULT_MODULECMD_PATH = "modulecmd"  # Just check path
@@ -133,6 +135,7 @@ class AvailModuleChecker(object):
                 return True
         return False
 
+    @fix_default_version
     def __modules(self):
         raw_output = self.__module_avail_output().decode("utf-8")
         for line in StringIO(raw_output):
