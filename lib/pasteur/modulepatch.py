@@ -73,6 +73,8 @@ def fix_default_version(modules):
     def new_modules(self):
         mod_gen = modules(self)
         for name, version in mod_gen:
-            yield name, version.replace('(default)','')
+            if version is not None:
+                version = version.replace('(default)','')
+            yield name, version
 
     return new_modules
