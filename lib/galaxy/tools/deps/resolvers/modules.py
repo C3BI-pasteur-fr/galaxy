@@ -173,6 +173,15 @@ class ModuleDependency(Dependency):
         self.module_version = module_version
         self._exact = exact
 
+    # Fix for use of module, already fix in latest version of Galaxy
+    @property
+    def name(self):
+        return self.module_name
+
+    @property
+    def version(self):
+        return self.module_version
+
     @property
     def exact(self):
         return self._exact
