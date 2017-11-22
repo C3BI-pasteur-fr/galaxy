@@ -92,7 +92,7 @@ def __main__():
     if samtools_version < LooseVersion('1.0'):
         cmd = "samtools sort -o '%s' '%s' > '%s'" % ( unsorted_bam_filename, sorting_prefix, output_filename )
     else:
-        cmd = "samtools sort -T '%s' '%s' > '%s'" % ( sorting_prefix, unsorted_bam_filename, output_filename )
+        cmd = "samtools sort -T '%s' -o output.bam '%s' && mv output.bam '%s'" % ( sorting_prefix, unsorted_bam_filename, output_filename )
     proc = subprocess.Popen( args=cmd, stderr=open( sorted_stderr_filename, 'wb' ), shell=True, cwd=tmp_dir )
     return_code = proc.wait()
 
