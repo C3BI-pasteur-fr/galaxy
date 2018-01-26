@@ -67,7 +67,7 @@ class ToolOutput( ToolOutputBase ):
         return as_dict
 
 
-class ToolOutputCollection( ToolOutputBase ):
+class ToolOutputCollection( ToolOutput ):
     """
     Represents a HistoryDatasetCollectionAssociation of output datasets produced
     by a tool.
