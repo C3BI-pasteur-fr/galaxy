@@ -67,7 +67,7 @@ class ToolOutput( ToolOutputBase ):
         return as_dict
 
 
-class ToolOutputCollection( ToolOutput ):
+class ToolOutputCollection( ToolOutputBase ):
     """
     Represents a HistoryDatasetCollectionAssociation of output datasets produced
     by a tool.
@@ -82,6 +82,8 @@ class ToolOutputCollection( ToolOutput ):
       </collection>
     <outputs>
     """
+
+    dict_collection_visible_keys = ['name', 'format', 'label', 'hidden']
 
     def __init__(
         self,
@@ -99,6 +101,7 @@ class ToolOutputCollection( ToolOutput ):
         super( ToolOutputCollection, self ).__init__( name, label=label, filters=filters, hidden=hidden )
         self.collection = True
         self.default_format = default_format
+	self.format = default_format
         self.structure = structure
         self.outputs = odict()
 
@@ -108,6 +111,16 @@ class ToolOutputCollection( ToolOutput ):
         self.metadata_source = default_metadata_source
         self.format_source = default_format_source
         self.change_format = []  # TODO
+	
+    def to_dict(self, view='collection', value_mapper=None, app=None):
+        as_dict = super(ToolOutputCollection, self).to_dict(view=view, value_mapper=value_mapper)
+	format = self.format
+        if format and format != "input" and app:
+            edam_format = app.datatypes_registry.edam_formats.get(self.format)
+            as_dict["edam_format"] = edam_format
+            edam_data = app.datatypes_registry.edam_data.get(self.format)
+            as_dict["edam_data"] = edam_data
+        return as_dict	
 
     def known_outputs( self, inputs, type_registry ):
         if self.dynamic_structure:
