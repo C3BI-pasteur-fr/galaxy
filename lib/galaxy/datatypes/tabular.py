@@ -982,7 +982,10 @@ class BaseCSV( TabularData ):
             header_row = None
             try:
                 header_row = next(reader)
-                data_row = next(reader)
+		try:
+                    data_row = next(reader)
+		except StopIteration:
+                    data_row = []    
                 for row in reader:
                     pass
             except csv.Error as e:
