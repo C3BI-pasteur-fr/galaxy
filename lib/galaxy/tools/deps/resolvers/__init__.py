@@ -5,19 +5,20 @@ from abc import (
     abstractproperty,
 )
 
+import six
 import yaml
 
 from galaxy.util import listify
 from galaxy.util.dictifiable import Dictifiable
-
 from ..requirements import ToolRequirement
 
 
-class DependencyResolver(Dictifiable, object):
+@six.add_metaclass(ABCMeta)
+class DependencyResolver(Dictifiable):
     """Abstract description of a technique for resolving container images for tool execution."""
 
     # Keys for dictification.
-    dict_collection_visible_keys = ['resolver_type', 'resolves_simple_dependencies']
+    dict_collection_visible_keys = ['resolver_type', 'resolves_simple_dependencies', 'can_uninstall_dependencies']
     # A "simple" dependency is one that does not depend on the the tool
     # resolving the dependency. Classic tool shed dependencies are non-simple
     # because the repository install context is used in dependency resolution
@@ -25,11 +26,11 @@ class DependencyResolver(Dictifiable, object):
     # resolution.
     disabled = False
     resolves_simple_dependencies = True
+    can_uninstall_dependencies = False
     config_options = {}
-    __metaclass__ = ABCMeta
 
     @abstractmethod
-    def resolve( self, requirement, **kwds ):
+    def resolve(self, requirement, **kwds):
         """Given inputs describing dependency in the abstract yield a Dependency object.
 
         The Dependency object describes various attributes (script, bin,
@@ -42,21 +43,30 @@ class DependencyResolver(Dictifiable, object):
         """
 
 
-class MultipleDependencyResolver:
+class MultipleDependencyResolver(object):
     """Variant of DependencyResolver that can optionally resolve multiple dependencies together."""
 
     @abstractmethod
-    def resolve_all( self, requirements, **kwds ):
-        """Given multiple requirements yield Dependency objects if and only if they may all be resolved together.
+    def resolve_all(self, requirements, **kwds):
+        """
+        Given multiple requirements yields a list of Dependency objects if and only if they may all be resolved together.
+
+        Unsuccessfull attempts should return an empty list.
+
+        :param requirements: list of tool requirements
+        :param type: [ToolRequirement] or ToolRequirements
+
+        :returns: list of resolved dependencies
+        :rtype: [Dependency]
         """
 
 
-class ListableDependencyResolver:
+@six.add_metaclass(ABCMeta)
+class ListableDependencyResolver(object):
     """ Mix this into a ``DependencyResolver`` and implement to indicate
     the dependency resolver can iterate over its dependencies and generate
     requirements.
     """
-    __metaclass__ = ABCMeta
 
     @abstractmethod
     def list_dependencies(self):
@@ -68,7 +78,7 @@ class ListableDependencyResolver:
         return ToolRequirement(name=name, type="package", version=version)
 
 
-class MappableDependencyResolver:
+class MappableDependencyResolver(object):
     """Mix this into a ``DependencyResolver`` to allow mapping files.
 
     Mapping files allow adapting generic requirements to specific local implementations.
@@ -86,8 +96,8 @@ class MappableDependencyResolver:
     @staticmethod
     def _mapping_file_to_list(mapping_file):
         with open(mapping_file, "r") as f:
-            raw_mapping = yaml.load(f) or []
-            return map(RequirementMapping.from_dict, raw_mapping)
+            raw_mapping = yaml.safe_load(f) or []
+        return map(RequirementMapping.from_dict, raw_mapping)
 
     def _expand_mappings(self, requirement):
         for mapping in self._mappings:
@@ -165,20 +175,20 @@ class RequirementMapping(object):
         return RequirementMapping(from_name, from_version, to_name, to_version)
 
 
-class SpecificationAwareDependencyResolver:
+@six.add_metaclass(ABCMeta)
+class SpecificationAwareDependencyResolver(object):
     """Mix this into a :class:`DependencyResolver` to implement URI specification matching.
 
     Allows adapting generic requirements to more specific URIs - to tailor name
     or version to specified resolution system.
     """
-    __metaclass__ = ABCMeta
 
     @abstractmethod
     def _expand_specs(self, requirement):
         """Find closest matching specification for discovered resolver and return new concrete requirement."""
 
 
-class SpecificationPatternDependencyResolver:
+class SpecificationPatternDependencyResolver(SpecificationAwareDependencyResolver):
     """Implement the :class:`SpecificationAwareDependencyResolver` with a regex pattern."""
 
     @abstractproperty
@@ -209,11 +219,11 @@ class SpecificationPatternDependencyResolver:
         return requirement
 
 
-class InstallableDependencyResolver:
+@six.add_metaclass(ABCMeta)
+class InstallableDependencyResolver(object):
     """ Mix this into a ``DependencyResolver`` and implement to indicate
     the dependency resolver can attempt to install new dependencies.
     """
-    __metaclass__ = ABCMeta
 
     @abstractmethod
     def install_dependency(self, name, version, type, **kwds):
@@ -222,19 +232,19 @@ class InstallableDependencyResolver:
         """
 
 
-class Dependency(Dictifiable, object):
+@six.add_metaclass(ABCMeta)
+class Dependency(Dictifiable):
     dict_collection_visible_keys = ['dependency_type', 'exact', 'name', 'version', 'cacheable']
-    __metaclass__ = ABCMeta
     cacheable = False
 
     @abstractmethod
-    def shell_commands( self, requirement ):
+    def shell_commands(self):
         """
         Return shell commands to enable this dependency.
         """
 
     @abstractproperty
-    def exact( self ):
+    def exact(self):
         """ Return true if version information wasn't discarded to resolve
         the dependency.
         """
@@ -247,7 +257,7 @@ class Dependency(Dictifiable, object):
         return "Using dependency %s version %s of type %s" % (self.name, self.version, self.dependency_type)
 
 
-class NullDependency( Dependency ):
+class NullDependency(Dependency):
     dependency_type = None
     exact = True
 
@@ -262,7 +272,7 @@ class NullDependency( Dependency ):
         """
         return "Dependency %s not found." % self.name
 
-    def shell_commands( self, requirement ):
+    def shell_commands(self):
         return None
 
 
