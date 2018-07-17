@@ -417,6 +417,7 @@ class Configuration(object):
         self.external_chown_script = kwargs.get('external_chown_script', None)
         self.real_system_username = kwargs.get('real_system_username', 'user_email')
         self.environment_setup_file = kwargs.get('environment_setup_file', None)
+        self.use_modules = kwargs.get( 'use_modules', 'False' )
         self.use_heartbeat = string_as_bool(kwargs.get('use_heartbeat', 'False'))
         self.heartbeat_interval = int(kwargs.get('heartbeat_interval', 20))
         self.heartbeat_log = kwargs.get('heartbeat_log', None)
