@@ -6,7 +6,7 @@
          conversion); and (b) define a datatype-specific way to set converter parameters.
       -->
     <requirements>
-        <requirement type="package">samtools</requirement>
+        <requirement type="package" version="1.0">samtools</requirement>
     </requirements>
     <command>python '$__tool_directory__/sam_to_bam.py' '$input1' '$output'</command>
     <inputs>
