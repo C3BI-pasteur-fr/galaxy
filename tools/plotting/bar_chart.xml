@@ -36,7 +36,7 @@
     <data format="png" name="out_file1" />
   </outputs>
   <requirements>
-    <requirement type="package">gnuplot-py</requirement>
+    <requirement type="package" version="5.0.4">gnuplot</requirement>
   </requirements>
   <help>
 **What it does**

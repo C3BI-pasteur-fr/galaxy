@@ -1,6 +1,8 @@
 <tool id="solid_qual_boxplot" name="Draw quality score boxplot" version="1.0.0">
 	<description>for SOLiD data</description>
-	
+        <requirements>
+            <requirement type="package" version="5.0.4">gnuplot</requirement>
+        </requirements>
 	<command interpreter="bash">qualsolid_boxplot_graph.sh -t '$input.name' -i $input -o $output</command>
 	
 	<inputs>
