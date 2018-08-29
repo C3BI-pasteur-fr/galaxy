@@ -656,14 +656,25 @@ class Bcf(BaseBcf):
         dataset_symlink = os.path.join(os.path.dirname(index_file.file_name),
                                        '__dataset_%d_%s' % (dataset.id, os.path.basename(index_file.file_name)))
         os.symlink(dataset.file_name, dataset_symlink)
+	dataset_symlink_gz = dataset_symlink + '.gz'
         try:
-            pysam.bcftools.index(dataset_symlink)
-            shutil.move(dataset_symlink + '.csi', index_file.file_name)
+	    #PYSAM index need compressed bcf file but some tools give uncompressed bcf
+	    #PASTEUR PATCH
+	    with open(dataset_symlink, 'r') as f:
+	        header = f.read(3)
+	    if header == "BCF":
+	        pysam.bcftools.view('-Ob', dataset_symlink, '-o', dataset_symlink_gz)
+		shutil.move(dataset_symlink_gz + '.csi', index_file.file_name)
+	    else:
+                pysam.bcftools.index(dataset_symlink)
+                shutil.move(dataset_symlink + '.csi', index_file.file_name)
         except Exception as e:
             raise Exception('Error setting BCF metadata: %s' % (str(e)))
         finally:
             # Remove temp file and symlink
             os.remove(dataset_symlink)
+	    if os.path.exists(dataset_symlink_gz):
+	        os.remove(dataset_symlink_gz)
         dataset.metadata.bcf_index = index_file
 
 
