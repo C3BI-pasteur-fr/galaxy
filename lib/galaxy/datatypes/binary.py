@@ -663,7 +663,10 @@ class Bcf(BaseBcf):
 	    with open(dataset_symlink, 'r') as f:
 	        header = f.read(3)
 	    if header == "BCF":
-	        pysam.bcftools.view('-Ob', dataset_symlink, '-o', dataset_symlink_gz)
+	        #'pysam.bcftools.view('-Ob', dataset_symlink -o', dataset_symlink_gz) doesn't work with pysam 0.14.1! output stay stdout
+		gzview = pysam.bcftools.view('-Ob', dataset_symlink)
+		with open(dataset_symlink_gz, 'wb') as fb:
+		    fb.write(gzview)
 		shutil.move(dataset_symlink_gz + '.csi', index_file.file_name)
 	    else:
                 pysam.bcftools.index(dataset_symlink)
