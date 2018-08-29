@@ -667,6 +667,7 @@ class Bcf(BaseBcf):
 		gzview = pysam.bcftools.view('-Ob', dataset_symlink)
 		with open(dataset_symlink_gz, 'wb') as fb:
 		    fb.write(gzview)
+		pysam.bcftools.index(dataset_symlink_gz)
 		shutil.move(dataset_symlink_gz + '.csi', index_file.file_name)
 	    else:
                 pysam.bcftools.index(dataset_symlink)
