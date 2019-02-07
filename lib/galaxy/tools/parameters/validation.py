@@ -484,7 +484,12 @@ class MetadataInRangeValidator(Validator):
         if value:
             if not isinstance(value, model.DatasetInstance):
                 raise ValueError('A non-dataset value was provided.')
-            value_to_check = int(value.metadata.spec[self.metadata_name].param.to_string(value.metadata.get(self.metadata_name)))
+            try:
+                value_to_check = int(value.metadata.spec[self.metadata_name].param.to_string(value.metadata.get(self.metadata_name)))
+            except KeyError:
+                if self.message is None:
+                    self.message = '{} Metadata missing'.format(self.metadata_name)
+                raise ValueError(self.message)
             try:
                 float(value_to_check)
             except ValueError:
