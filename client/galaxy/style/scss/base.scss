@@ -12,6 +12,8 @@ $fa-font-path: "../images/fonts";
 
 // Galaxy specific variables
 @import "galaxy_variables.scss";
+// Pasteur theme import
+@import "theme/pasteur.scss";
 
 $white: #fff;
 $black: #000;
@@ -38,6 +40,9 @@ $black: #000;
 @import "tour.scss";
 @import "flex.scss";
 @import "charts.scss";
+
+// Pasteur theme import
+@import "theme/pasteur.scss";
 
 // Mixins
 @mixin user-select($select) {
