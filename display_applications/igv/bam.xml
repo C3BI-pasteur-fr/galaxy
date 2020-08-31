@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 <?xml version="1.0"?>
 <display id="igv_bam" version="1.0.0" name="display with IGV">
     <!-- Load links from file: one line to one link -->
