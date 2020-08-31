@@ -13,6 +13,7 @@ from galaxy.datatypes.sniff import (
     iter_headers
 )
 from galaxy.datatypes.tabular import Tabular
+from galaxy.util import unicodify
 
 log = logging.getLogger(__name__)
 
@@ -383,6 +384,7 @@ class LowerTriangleDistanceMatrix(DistanceMatrix):
                     else:
                         try:
                             sequence_count = int(''.join(line))
+                            assert sequence_count > 0
                         except ValueError:
                             return False
                 else:
@@ -444,6 +446,7 @@ class SquareDistanceMatrix(DistanceMatrix):
                     else:
                         try:
                             sequence_count = int(''.join(line))
+                            assert sequence_count > 0
                         except ValueError:
                             return False
                 else:
@@ -738,6 +741,10 @@ class LaneMask(Text):
         if len(headers) != 1 or len(headers[0]) != 1:
             return False
 
+        if len(headers[0][0]) < 1000:
+            # these filter files should be relatively big
+            return False
+
         if not re.match('^[01]+$', headers[0][0]):
             return False
 
@@ -933,7 +940,7 @@ class SffFlow(Tabular):
     MetadataElement(name="flow_order", default="TACG", no_value="TACG", desc="Total number of flow values", readonly=False)
     file_ext = 'mothur.sff.flow'
     """
-        http://www.mothur.org/wiki/Flow_file
+        https://mothur.org/wiki/flow_file/
         The first line is the total number of flow values - 800 for Titanium data. For GS FLX it would be 400.
         Following lines contain:
         - SequenceName
@@ -959,23 +966,25 @@ class SffFlow(Tabular):
         except Exception as e:
             log.warning("SffFlow set_meta %s" % e)
 
-    def make_html_table(self, dataset, skipchars=[]):
+    def make_html_table(self, dataset, skipchars=None):
         """Create HTML table, used for displaying peek"""
+        if skipchars is None:
+            skipchars = []
         try:
             out = '<table cellspacing="0" cellpadding="3">'
 
             # Generate column header
             out += '<tr>'
-            out += '<th>%d. Name</th>' % 1
-            out += '<th>%d. Flows</th>' % 2
+            out += '<th>1. Name</th>'
+            out += '<th>2. Flows</th>'
             for i in range(3, dataset.metadata.columns + 1):
                 base = dataset.metadata.flow_order[(i + 1) % 4]
-                out += '<th>%d. %d %s</th>' % (i - 2, base)
+                out += '<th>%d. %s</th>' % (i - 2, base)
             out += '</tr>'
             out += self.make_html_peek_rows(dataset, skipchars=skipchars)
             out += '</table>'
         except Exception as exc:
-            out = "Can't create peek %s" % str(exc)
+            out = "Can't create peek: %s" % unicodify(exc)
         return out
 
 

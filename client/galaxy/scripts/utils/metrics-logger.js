@@ -1,4 +1,3 @@
-/*global window, jQuery, console */
 /*=============================================================================
 TODO:
     while anon: logs saved to 'logs-null' - this will never post
@@ -27,6 +26,8 @@ TODO:
  *      > panel.metric( 'something weird with window', { window : window })
  *      !'Metrics logger could not stringify logArguments: ...'
  */
+import jQuery from "jquery";
+
 function MetricsLogger(options) {
     options = options || {};
     var self = this;
@@ -90,7 +91,7 @@ MetricsLogger.defaultOptions = {
     /** an (optional) function that should return an object; used to send additional data with the metrics */
     getPingData: undefined,
     /** an (optional) function that will handle the servers response after successfully posting messages */
-    onServerResponse: undefined
+    onServerResponse: undefined,
 };
 
 //----------------------------------------------------------------------------- set up
@@ -99,8 +100,10 @@ MetricsLogger.prototype._init = function _init(options) {
     var self = this;
     self.options = {};
     for (var k in MetricsLogger.defaultOptions) {
-        if (MetricsLogger.defaultOptions.hasOwnProperty(k)) {
-            self.options[k] = options.hasOwnProperty(k) ? options[k] : MetricsLogger.defaultOptions[k];
+        if (Object.prototype.hasOwnProperty.call(MetricsLogger.defaultOptions, k)) {
+            self.options[k] = Object.prototype.hasOwnProperty.call(options, k)
+                ? options[k]
+                : MetricsLogger.defaultOptions[k];
         }
     }
     self.options.logLevel = self._parseLevel(self.options.logLevel);
@@ -124,7 +127,7 @@ MetricsLogger.prototype._initCache = function _initCache() {
     try {
         this.cache = new LoggingCache({
             maxSize: this.options.maxCacheSize,
-            key: this.options.cacheKeyPrefix + this.userId
+            key: this.options.cacheKeyPrefix + this.userId,
         });
     } catch (err) {
         this._emitToConsole("warn", "MetricsLogger", ["Could not intitialize logging cache:", err]);
@@ -140,7 +143,7 @@ MetricsLogger.prototype._parseLevel = function _parseLevel(level) {
     }
     if (type === "string") {
         var upper = level.toUpperCase();
-        if (MetricsLogger.hasOwnProperty(upper)) {
+        if (Object.prototype.hasOwnProperty.call(MetricsLogger, upper)) {
             return MetricsLogger[upper];
         }
     }
@@ -177,7 +180,7 @@ MetricsLogger.prototype._addToCache = function _addToCache(level, namespace, log
         "_addToCache:",
         arguments,
         this.options.addTime,
-        this.cache.length()
+        this.cache.length(),
     ]);
     //this._emitToConsole( 'debug', 'MetricsLogger', [ '\t logArguments:', logArguments ]);
     var self = this;
@@ -192,7 +195,7 @@ MetricsLogger.prototype._addToCache = function _addToCache(level, namespace, log
         self._emitToConsole("warn", "MetricsLogger", [
             "Metrics logger could not stringify logArguments:",
             namespace,
-            logArguments
+            logArguments,
         ]);
         self._emitToConsole("error", "MetricsLogger", [err]);
     }
@@ -205,7 +208,7 @@ MetricsLogger.prototype._buildEntry = function _buildEntry(level, namespace, log
     var entry = {
         level: level,
         namespace: this.options.clientPrefix + namespace,
-        args: logArguments
+        args: logArguments,
     };
     if (this.options.addTime) {
         entry.time = new Date().toISOString();
@@ -231,12 +234,12 @@ MetricsLogger.prototype._postCache = function _postCache(options) {
     var postSize = options.count || self._postSize;
 
     var // do not splice - remove after *successful* post
-    entries = self.cache.get(postSize);
+        entries = self.cache.get(postSize);
 
     var entriesLength = entries.length;
 
     var // use the optional getPingData to add any extra info we may want to send
-    postData = typeof self.options.getPingData === "function" ? self.options.getPingData() : {};
+        postData = typeof self.options.getPingData === "function" ? self.options.getPingData() : {};
 
     //console.debug( postSize, entriesLength );
 
@@ -258,12 +261,12 @@ MetricsLogger.prototype._postCache = function _postCache(options) {
                 "_postCache error:",
                 xhr.readyState,
                 xhr.status,
-                xhr.responseJSON || xhr.responseText
+                xhr.responseJSON || xhr.responseText,
             ]);
             //TODO: still doesn't solve the problem that when cache == max, post will be tried on every emit
             //TODO: see _delayPost
         })
-        .done(response => {
+        .done((response) => {
             if (typeof self.options.onServerResponse === "function") {
                 self.options.onServerResponse(response);
             }
@@ -280,7 +283,7 @@ MetricsLogger.prototype._postCache = function _postCache(options) {
 MetricsLogger.prototype._delayPost = function _delayPost() {
     //TODO: this won't work between pages
     var self = this;
-    self._waiting = setTimeout(() => {
+    self._waiting = window.setTimeout(() => {
         self._waiting = null;
     }, self.options.delayPostInMs);
 };
@@ -382,13 +385,13 @@ function LoggingCache(options) {
 /** default options */
 LoggingCache.defaultOptions = {
     /** maximum number of entries to keep before discarding oldest */
-    maxSize: 5000
+    maxSize: 5000,
 };
 
 /** initialize with options */
 LoggingCache.prototype._init = function _init(options) {
     if (!this._hasStorage()) {
-        //TODO: fall back to jstorage
+        //TODO: fall back to local storage
         throw new Error("LoggingCache needs localStorage");
     }
     if (!options.key) {
@@ -490,5 +493,5 @@ LoggingCache.prototype.print = function print() {
 //=============================================================================
 export default {
     MetricsLogger: MetricsLogger,
-    LoggingCache: LoggingCache
+    LoggingCache: LoggingCache,
 };

@@ -1,14 +1,18 @@
 /**
     This class creates input elements. New input parameter types should be added to the types dictionary.
 */
+import $ from "jquery";
+import Backbone from "backbone";
+import { getGalaxyInstance } from "app";
 import Utils from "utils/utils";
 import Ui from "mvc/ui/ui-misc";
 import SelectContent from "mvc/ui/ui-select-content";
 import SelectLibrary from "mvc/ui/ui-select-library";
 import SelectFtp from "mvc/ui/ui-select-ftp";
-import SelectGenomeSpace from "mvc/ui/ui-select-genomespace";
 import RulesEdit from "mvc/ui/ui-rules-edit";
 import ColorPicker from "mvc/ui/ui-color-picker";
+import DataPicker from "mvc/ui/ui-data-picker";
+
 // create form view
 export default Backbone.Model.extend({
     /** Available parameter types */
@@ -25,6 +29,7 @@ export default Backbone.Model.extend({
         boolean: "_fieldBoolean",
         drill_down: "_fieldDrilldown",
         color: "_fieldColor",
+        group_tag: "_fieldSelect",
         hidden: "_fieldHidden",
         hidden_data: "_fieldHidden",
         baseurl: "_fieldHidden",
@@ -32,11 +37,12 @@ export default Backbone.Model.extend({
         ftpfile: "_fieldFtp",
         upload: "_fieldUpload",
         rules: "_fieldRulesEdit",
-        genomespacefile: "_fieldGenomeSpace"
+        data_dialog: "_fieldDialog",
     },
 
     /** Returns an input field for a given field type */
-    create: function(input_def) {
+    create: function (input_def) {
+        const Galaxy = getGalaxyInstance();
         var fieldClass = this.types[input_def.type];
         var field = typeof this[fieldClass] === "function" ? this[fieldClass].call(this, input_def) : null;
         if (!field) {
@@ -51,7 +57,7 @@ export default Backbone.Model.extend({
     },
 
     /** Data input field */
-    _fieldData: function(input_def) {
+    _fieldData: function (input_def) {
         return new SelectContent.View({
             id: `field-${input_def.id}`,
             extensions: input_def.extensions,
@@ -60,12 +66,12 @@ export default Backbone.Model.extend({
             type: input_def.type,
             flavor: input_def.flavor,
             data: input_def.options,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
     },
 
     /** Select/Checkbox/Radio options field */
-    _fieldSelect: function(input_def) {
+    _fieldSelect: function (input_def) {
         // show text field e.g. in workflow editor
         if (input_def.is_workflow) {
             return this._fieldText(input_def);
@@ -76,25 +82,30 @@ export default Backbone.Model.extend({
             input_def.error_text = "Missing columns in referenced dataset.";
         }
 
-        // identify available options
-        var data = input_def.data;
-        if (!data) {
-            data = [];
-            _.each(input_def.options, option => {
-                data.push({ label: option[0], value: option[1] });
-            });
-        }
-
         // pick selection display
         var classes = {
             checkboxes: Ui.Checkbox,
             radio: Ui.Radio,
-            radiobutton: Ui.RadioButton
+            radiobutton: Ui.RadioButton,
         };
         var SelectClass = classes[input_def.display] || Ui.Select;
-        var select = new SelectClass.View({
+        // use Select2 fields or regular select fields in workflow launch form?
+        // check select_type_workflow_threshold option
+        const Galaxy = getGalaxyInstance();
+        var searchable = true;
+        if (input_def.flavor == "workflow") {
+            if (Galaxy.config.select_type_workflow_threshold == -1) {
+                searchable = false;
+            } else if (Galaxy.config.select_type_workflow_threshold == 0) {
+                searchable = true;
+            } else if (Galaxy.config.select_type_workflow_threshold < input_def.options.length) {
+                searchable = false;
+            }
+        }
+        return new Ui.TextSelect({
             id: `field-${input_def.id}`,
-            data: data,
+            data: input_def.data,
+            options: input_def.options,
             display: input_def.display,
             error_text: input_def.error_text || "No options available",
             readonly: input_def.readonly,
@@ -102,13 +113,14 @@ export default Backbone.Model.extend({
             optional: input_def.optional,
             onchange: input_def.onchange,
             individual: input_def.individual,
-            searchable: input_def.flavor !== "workflow"
+            searchable: searchable,
+            textable: input_def.textable,
+            SelectClass: SelectClass,
         });
-        return input_def.textable ? new Ui.TextSelect({ select: select }) : select;
     },
 
     /** Drill down options field */
-    _fieldDrilldown: function(input_def) {
+    _fieldDrilldown: function (input_def) {
         // show text field e.g. in workflow editor
         if (input_def.is_workflow) {
             return this._fieldText(input_def);
@@ -120,14 +132,14 @@ export default Backbone.Model.extend({
             data: input_def.options,
             display: input_def.display,
             optional: input_def.optional,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
     },
 
     /** Text input field */
-    _fieldText: function(input_def) {
+    _fieldText: function (input_def) {
         // field replaces e.g. a select field
-        if (input_def.options && input_def.data) {
+        if (input_def.model_class === "SelectTagParameter" || (input_def.options && input_def.data)) {
             input_def.area = input_def.multiple;
             if (Utils.isEmpty(input_def.value)) {
                 input_def.value = null;
@@ -153,89 +165,92 @@ export default Backbone.Model.extend({
             readonly: input_def.readonly,
             placeholder: input_def.placeholder,
             datalist: input_def.datalist,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
     },
 
     /** Slider field */
-    _fieldSlider: function(input_def) {
+    _fieldSlider: function (input_def) {
         return new Ui.Slider.View({
             id: `field-${input_def.id}`,
             precise: input_def.type == "float",
             is_workflow: input_def.is_workflow,
             min: input_def.min,
             max: input_def.max,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
     },
 
     /** Hidden field */
-    _fieldHidden: function(input_def) {
+    _fieldHidden: function (input_def) {
         return new Ui.Hidden({
             id: `field-${input_def.id}`,
-            info: input_def.info
+            info: input_def.info,
         });
     },
 
     /** Boolean field */
-    _fieldBoolean: function(input_def) {
+    _fieldBoolean: function (input_def) {
         return new Ui.RadioButton.View({
             id: `field-${input_def.id}`,
-            data: [{ label: "Yes", value: "true" }, { label: "No", value: "false" }],
-            onchange: input_def.onchange
+            data: [
+                { label: "Yes", value: "true" },
+                { label: "No", value: "false" },
+            ],
+            onchange: input_def.onchange,
         });
     },
 
     /** Color picker field */
-    _fieldColor: function(input_def) {
+    _fieldColor: function (input_def) {
         return new ColorPicker({
             id: `field-${input_def.id}`,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
+        });
+    },
+
+    /** Data dialog picker field */
+    _fieldDialog: function (input_def) {
+        return new DataPicker({
+            id: `field-${input_def.id}`,
+            multiple: input_def.multiple,
+            onchange: input_def.onchange,
         });
     },
 
     /** Library dataset field */
-    _fieldLibrary: function(input_def) {
+    _fieldLibrary: function (input_def) {
         return new SelectLibrary.View({
             id: `field-${input_def.id}`,
             optional: input_def.optional,
             multiple: input_def.multiple,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
     },
 
     /** FTP file field */
-    _fieldFtp: function(input_def) {
+    _fieldFtp: function (input_def) {
         return new SelectFtp.View({
             id: `field-${input_def.id}`,
             optional: input_def.optional,
             multiple: input_def.multiple,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
     },
 
-    /** GenomeSpace file select field
-     */
-    _fieldGenomeSpace: function(input_def) {
-        return new SelectGenomeSpace.View({
-            id: `field-${input_def.id}`,
-            onchange: input_def.onchange
-        });
-    },
-
-    _fieldRulesEdit: function(input_def) {
+    _fieldRulesEdit: function (input_def) {
         return new RulesEdit.View({
             id: `field-${input_def.id}`,
             onchange: input_def.onchange,
-            target: input_def.target
+            target: input_def.target,
         });
     },
 
     /** Upload file field */
-    _fieldUpload: function(input_def) {
+    _fieldUpload: function (input_def) {
         return new Ui.Upload({
             id: `field-${input_def.id}`,
-            onchange: input_def.onchange
+            onchange: input_def.onchange,
         });
-    }
+    },
 });

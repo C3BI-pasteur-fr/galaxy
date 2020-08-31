@@ -1,4 +1,7 @@
+import _ from "underscore";
+import $ from "jquery";
 import _l from "utils/localization";
+import { getGalaxyInstance } from "app";
 
 //TODO: toastr is another possibility - I didn't see where I might add details, tho
 
@@ -32,24 +35,22 @@ var DETAILS_MSG = _l("The following information can assist the developers in fin
 
 /** private helper that builds the modal and handles adding details */
 function _errorModal(message, title, details) {
+    const Galaxy = getGalaxyInstance();
     // create and return the modal, adding details button only if needed
     Galaxy.modal.show({
         title: title,
         body: message,
         closing_events: true,
         buttons: {
-            Ok: function() {
+            Ok: function () {
                 Galaxy.modal.hide();
-            }
-        }
+            },
+        },
     });
     Galaxy.modal.$el.addClass("error-modal");
 
     if (details) {
-        Galaxy.modal
-            .$(".error-details")
-            .add(Galaxy.modal.$('button:contains("Details")'))
-            .remove();
+        Galaxy.modal.$(".error-details").add(Galaxy.modal.$('button:contains("Details")')).remove();
         $("<div/>")
             .addClass("error-details")
             .hide()
@@ -71,9 +72,10 @@ function errorModal(message, title, details) {
         return;
     }
 
+    const Galaxy = getGalaxyInstance();
     message = _l(message);
     title = _l(title) || _l("Error:");
-    if (window.Galaxy && Galaxy.modal) {
+    if (Galaxy && Galaxy.modal) {
         return _errorModal(message, title, details);
     }
 
@@ -108,6 +110,7 @@ function ajaxErrorModal(model, xhr, options, message, title) {
 
 /** build details which may help debugging the ajax call */
 function _ajaxDetails(model, xhr, options) {
+    const Galaxy = getGalaxyInstance();
     return {
         //TODO: still can't manage Raven id
         raven: _.result(window.Raven, "lastEventId"),
@@ -121,7 +124,7 @@ function _ajaxDetails(model, xhr, options) {
         data: _.result(Galaxy.lastAjax, "data"),
         // backbone stuff (auto-redacting email for user)
         model: _.result(model, "toJSON", `${model}`),
-        user: _.omit(_.result(Galaxy.user, "toJSON"), "email")
+        user: _.omit(_.result(Galaxy.user, "toJSON"), "email"),
     };
 }
 
@@ -130,5 +133,5 @@ export default {
     errorModal: errorModal,
     offlineErrorModal: offlineErrorModal,
     badGatewayErrorModal: badGatewayErrorModal,
-    ajaxErrorModal: ajaxErrorModal
+    ajaxErrorModal: ajaxErrorModal,
 };

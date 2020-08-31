@@ -5,7 +5,6 @@ import random
 import re
 import shlex
 import stat
-import string
 import tempfile
 import uuid
 from itertools import product
@@ -19,19 +18,22 @@ from galaxy import model, web
 from galaxy.containers import ContainerPort
 from galaxy.containers.docker_model import DockerVolume
 from galaxy.managers import api_keys
-from galaxy.util import string_as_bool_or_none
+from galaxy.util import (
+    string_as_bool_or_none,
+    unicodify
+)
 from galaxy.util.bunch import Bunch
 
 
 IS_OS_X = _platform == "darwin"
 CONTAINER_NAME_PREFIX = 'gie_'
-ENV_OVERRIDE_CAPITALIZE = frozenset([
+ENV_OVERRIDE_CAPITALIZE = frozenset({
     'notebook_username',
     'notebook_password',
     'dataset_hid',
     'dataset_filename',
     'additional_ids',
-])
+})
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ class InteractiveEnvironmentRequest(object):
             self.attr.proxy_prefix = '/'.join(
                 (
                     '',
-                    self.attr.galaxy_config.cookie_path.strip('/'),
+                    trans.cookie_path.strip('/'),
                     self.attr.galaxy_config.dynamic_proxy_prefix.strip('/'),
                     self.attr.viz_id,
                 )
@@ -196,7 +198,7 @@ class InteractiveEnvironmentRequest(object):
         }
 
         web_port = self.attr.galaxy_config.galaxy_infrastructure_web_port
-        conf_file['galaxy_web_port'] = web_port or self.attr.galaxy_config.guess_galaxy_port()
+        conf_file['galaxy_web_port'] = web_port
 
         if self.attr.viz_config.has_option("docker", "galaxy_url"):
             conf_file['galaxy_url'] = self.attr.viz_config.get("docker", "galaxy_url")
@@ -294,7 +296,22 @@ class InteractiveEnvironmentRequest(object):
         def _flag_opts(flag, opts):
             return [arg for pair in product((flag,), opts) for arg in pair]
 
+        def _check_uid_and_gid(cmd_inject):
+            """
+            Check and replace shell uid and gid using os
+            :param cmd_inject:
+            """
+            # --user="$(id -u):$(id -g)"
+            # https://docs.docker.com/engine/reference/run/#user
+            # -e USER_UID=$(id -u) -e USER_GID=$(id -g)
+            uid_gid_subs = {"$(id -u)": "{}".format(os.geteuid()), "$(id -g)": "{}".format(os.getgid())}
+            subs = sorted(uid_gid_subs)
+            regex = re.compile('|'.join(map(re.escape, subs)))
+            return regex.sub(lambda match: uid_gid_subs[match.group(0)], cmd_inject)
+
         command_inject = self.attr.viz_config.get("docker", "command_inject")
+        command_inject = _check_uid_and_gid(command_inject)
+
         # --name should really not be set, but we'll try to honor it anyway
         name = ['--name=%s' % self._get_name_for_run()] if '--name' not in command_inject else []
         env = self._get_env_for_run(env_override)
@@ -339,7 +356,7 @@ class InteractiveEnvironmentRequest(object):
                 envsets.append(item[2:])
             elif item.startswith('--env'):
                 envsets.append(item[5:])
-        return dict(map(lambda s: string.split(s, '=', 1), envsets))
+        return dict(_.split('=', 1) for _ in envsets)
 
     def container_run_args(self, image, env_override=None, volumes=None):
         if volumes is None:
@@ -413,10 +430,12 @@ class InteractiveEnvironmentRequest(object):
 
         log.info("Starting docker container for IE {0} with command [{1}]".format(
             self.attr.viz_id,
-            ' '.join([shlex_quote(x) for x in redacted_command])
+            ' '.join(shlex_quote(x) for x in redacted_command)
         ))
         p = Popen(raw_cmd, stdout=PIPE, stderr=PIPE, close_fds=True)
         stdout, stderr = p.communicate()
+        stdout = unicodify(stdout)
+        stderr = unicodify(stderr)
         if p.returncode != 0:
             log.error("Container Launch error\n\n%s\n%s" % (stdout, stderr))
             return None
@@ -429,7 +448,7 @@ class InteractiveEnvironmentRequest(object):
             host_port = self._find_port_mapping(port_mappings)[-1]
             log.debug("Container host/port: %s:%s", self.attr.docker_hostname, host_port)
 
-            # Now we configure our proxy_requst object and we manually specify
+            # Now we configure our proxy_request object and we manually specify
             # the port to map to and ensure the proxy is available.
             self.attr.proxy_request = self.trans.app.proxy_manager.setup_proxy(
                 self.trans,
@@ -525,7 +544,7 @@ class InteractiveEnvironmentRequest(object):
         raw_cmd = self.base_docker_cmd('inspect') + [container_id]
         log.info("Inspecting docker container {0} with command [{1}]".format(
             container_id,
-            ' '.join([shlex_quote(x) for x in raw_cmd])
+            ' '.join(shlex_quote(x) for x in raw_cmd)
         ))
 
         p = Popen(raw_cmd, stdout=PIPE, stderr=PIPE, close_fds=True)

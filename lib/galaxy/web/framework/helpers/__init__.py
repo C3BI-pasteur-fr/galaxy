@@ -13,7 +13,8 @@ from routes import url_for
 
 from galaxy.util import (
     hash_util,
-    unicodify
+    smart_str,
+    unicodify,
 )
 from galaxy.util.json import safe_dumps as dumps  # noqa: F401
 from .tags import (
@@ -70,6 +71,15 @@ def css(*args):
     return stylesheet_link(*urls)
 
 
+def dist_css(*args):
+    """
+    Transition function 'css' helper -- this is the modern way where all bundled
+    artifacts are in the unified 'dist'.
+    """
+    urls = (url_for("/static/dist/%s.css?v=%s" % (name, server_starttime)) for name in args)
+    return stylesheet_link(*urls)
+
+
 def js_helper(prefix, *args):
     """
     Take a prefix and list of javascript names and return appropriate
@@ -89,6 +99,14 @@ def js(*args):
     return js_helper('static/scripts/', *args)
 
 
+def dist_js(*args):
+    """
+    Transition function 'js' helper -- this is the modern way where all bundled
+    artifacts are in the unified 'dist'.
+    """
+    return js_helper('static/dist/', *args)
+
+
 def templates(*args):
     """
     Take a list of template names (no extension) and return appropriate
@@ -104,7 +122,7 @@ def md5(s):
     Return hex encoded md5 hash of string s
     """
     m = hash_util.md5()
-    m.update(s)
+    m.update(smart_str(s))
     return m.hexdigest()
 
 
@@ -122,3 +140,21 @@ def is_true(val):
     Returns true if input is a boolean and true or is a string and looks like a true value.
     """
     return val is True or val in ['True', 'true', 'T', 't']
+
+
+def to_js_bool(val):
+    """
+    Prints javascript boolean for passed value.
+    TODO: isn't there a standard python JSON parser we should
+    be using instead of all these manual conversions?
+    """
+    return iff(is_true(val), "true", "false")
+
+
+def js_nullable(val):
+    """
+    Prints javascript null instead of python None
+    TODO: isn't there a standard python JSON parser we should
+    be using instead of all these manual conversions?
+    """
+    return iff(val is None, "null", val)

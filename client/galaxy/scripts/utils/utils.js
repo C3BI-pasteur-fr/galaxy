@@ -2,11 +2,12 @@
  * Galaxy utilities comprises small functions, which at this point
  * do not require their own classes/files
  */
-import _l from "utils/localization";
-import * as _ from "underscore";
 
-/* global $ */
-/* global Galaxy */
+import _ from "underscore";
+import $ from "jquery";
+import { getAppRoot } from "onload/loadConfig";
+import { getGalaxyInstance } from "app";
+import _l from "utils/localization";
 
 /** Builds a basic iframe */
 export function iframe(src) {
@@ -35,15 +36,15 @@ export function linkify(inputText) {
     var replacePattern3;
 
     // URLs starting with http://, https://, or ftp://
-    replacePattern1 = /(\b(https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/gim;
+    replacePattern1 = /(\b(https?|ftp):\/\/[-A-Z0-9+&@#/%?=~_|!:,.;]*[-A-Z0-9+&@#/%=~_|])/gim;
     replacedText = inputText.replace(replacePattern1, '<a href="$1" target="_blank">$1</a>');
 
     // URLs starting with "www." (without // before it, or it'd re-link the ones done above).
-    replacePattern2 = /(^|[^\/])(www\.[\S]+(\b|$))/gim;
+    replacePattern2 = /(^|[^/])(www\.[\S]+(\b|$))/gim;
     replacedText = replacedText.replace(replacePattern2, '$1<a href="http://$2" target="_blank">$2</a>');
 
     // Change email addresses to mailto:: links.
-    replacePattern3 = /(([a-zA-Z0-9\-\_\.])+@[a-zA-Z\_]+?(\.[a-zA-Z]{2,6})+)/gim;
+    replacePattern3 = /(([a-zA-Z0-9\-_.])+@[a-zA-Z_]+?(\.[a-zA-Z]{2,6})+)/gim;
     replacedText = replacedText.replace(replacePattern3, '<a href="mailto:$1">$1</a>');
 
     return replacedText;
@@ -61,8 +62,8 @@ export function clone(obj) {
 export function isJSON(text) {
     return /^[\],:{}\s]*$/.test(
         text
-            .replace(/\\["\\\/bfnrtu]/g, "@")
-            .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, "]")
+            .replace(/\\["\\/bfnrtu]/g, "@")
+            .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?/g, "]")
             .replace(/(?:^|:|,)(?:\s*\[)+/g, "")
     );
 }
@@ -72,9 +73,7 @@ export function isJSON(text) {
  * @param{String}   content - Content to be sanitized
  */
 export function sanitize(content) {
-    return $("<div/>")
-        .text(content)
-        .html();
+    return $("<div/>").text(content).html();
 }
 
 /**
@@ -132,17 +131,17 @@ export function get(options) {
         request({
             url: options.url,
             data: options.data,
-            success: function(response) {
+            success: function (response) {
                 top.__utils__get__[cache_key] = response;
                 if (options.success) {
                     options.success(response);
                 }
             },
-            error: function(response, status) {
+            error: function (response, status) {
                 if (options.error) {
                     options.error(response, status);
                 }
-            }
+            },
         });
     }
 }
@@ -161,7 +160,7 @@ export function request(options) {
         contentType: "application/json",
         type: options.type || "GET",
         data: options.data || {},
-        url: options.url
+        url: options.url,
     };
     // encode data into url
     if (ajaxConfig.type == "GET" || ajaxConfig.type == "DELETE") {
@@ -172,13 +171,12 @@ export function request(options) {
         ajaxConfig.data = null;
     } else {
         ajaxConfig.dataType = "json";
-        ajaxConfig.url = ajaxConfig.url;
         ajaxConfig.data = JSON.stringify(ajaxConfig.data);
     }
 
     // make request
     $.ajax(ajaxConfig)
-        .done(response => {
+        .done((response) => {
             if (typeof response === "string") {
                 try {
                     response = response.replace("Infinity,", '"Infinity",');
@@ -191,7 +189,7 @@ export function request(options) {
                 options.success(response);
             }
         })
-        .fail(response => {
+        .fail((response) => {
             var response_text = null;
             try {
                 response_text = $.parseJSON(response.responseText);
@@ -228,7 +226,7 @@ export function cssGetAttribute(classname, name) {
  */
 export function cssLoadFile(url) {
     if (!$(`link[href^="${url}"]`).length) {
-        $(`<link href="${Galaxy.root}${url}" rel="stylesheet">`).appendTo("head");
+        $(`<link href="${getAppRoot()}${url}" rel="stylesheet">`).appendTo("head");
     }
 }
 
@@ -260,10 +258,10 @@ export function roundToDecimalPlaces(number, numPlaces) {
 
 // calculate on import
 var kb = 1024;
-
 var mb = kb * kb;
 var gb = mb * kb;
 var tb = gb * kb;
+
 /**
  * Format byte size to string with units
  * @param{Integer}   size           - Size in bytes
@@ -317,15 +315,11 @@ export function time() {
 export function appendScriptStyle(data) {
     // create a script tag inside head tag
     if (data.script && data.script !== "") {
-        $("<script/>", { type: "text/javascript" })
-            .text(data.script)
-            .appendTo("head");
+        $("<script/>", { type: "text/javascript" }).text(data.script).appendTo("head");
     }
     // create a style tag inside head tag
     if (data.styles && data.styles !== "") {
-        $("<style/>", { type: "text/css" })
-            .text(data.styles)
-            .appendTo("head");
+        $("<style/>", { type: "text/css" }).text(data.styles).appendTo("head");
     }
 }
 
@@ -333,20 +327,39 @@ export function appendScriptStyle(data) {
 export function getQueryString(key) {
     return decodeURIComponent(
         window.location.search.replace(
-            new RegExp(`^(?:.*[&\\?]${encodeURIComponent(key).replace(/[\.\+\*]/g, "\\$&")}(?:\\=([^&]*))?)?.*$`, "i"),
+            new RegExp(`^(?:.*[&\\?]${encodeURIComponent(key).replace(/[.+*]/g, "\\$&")}(?:\\=([^&]*))?)?.*$`, "i"),
             "$1"
         )
     );
 }
 
 export function setWindowTitle(title) {
+    const Galaxy = getGalaxyInstance();
     if (title) {
-        window.document.title = `Galaxy ${window.Galaxy.config.brand ? ` | ${window.Galaxy.config.brand}` : ""} | ${_l(
-            title
-        )}`;
+        window.document.title = `Galaxy ${Galaxy.config.brand ? ` | ${Galaxy.config.brand}` : ""} | ${_l(title)}`;
     } else {
-        window.document.title = `Galaxy ${window.Galaxy.config.brand ? ` | ${window.Galaxy.config.brand}` : ""}`;
+        window.document.title = `Galaxy ${Galaxy.config.brand ? ` | ${Galaxy.config.brand}` : ""}`;
     }
+}
+
+/**
+ * Calculate a 32 bit FNV-1a hash
+ * Found here: https://gist.github.com/vaiorabbit/5657561
+ * Ref.: http://isthe.com/chongo/tech/comp/fnv/
+ *
+ * @param {string} str the input value
+ * @returns {integer}
+ */
+export function hashFnv32a(str) {
+    var i;
+    var l;
+    var hval = 0x811c9dc5;
+
+    for (i = 0, l = str.length; i < l; i++) {
+        hval ^= str.charCodeAt(i);
+        hval += (hval << 1) + (hval << 4) + (hval << 7) + (hval << 8) + (hval << 24);
+    }
+    return hval >>> 0;
 }
 
 export default {
@@ -368,5 +381,5 @@ export default {
     linkify: linkify,
     appendScriptStyle: appendScriptStyle,
     getQueryString: getQueryString,
-    setWindowTitle: setWindowTitle
+    setWindowTitle: setWindowTitle,
 };

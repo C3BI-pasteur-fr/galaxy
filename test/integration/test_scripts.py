@@ -8,10 +8,13 @@ import tempfile
 import unittest
 
 import yaml
-from base import integration_util
-from base.populators import DatasetPopulator
 
-from galaxy.util import galaxy_directory
+from galaxy.util import (
+    galaxy_directory,
+    unicodify
+)
+from galaxy_test.base.populators import DatasetPopulator
+from galaxy_test.driver import integration_util
 
 
 def skip_unless_module(module):
@@ -64,7 +67,7 @@ class ScriptsIntegrationTestCase(integration_util.IntegrationTestCase):
         assert history_response.json()["purged"] is True, history_response.json()
 
     def test_pgcleanup(self):
-        self._skip_if_not_postgres()
+        self._skip_unless_postgres()
 
         script = "cleanup_datasets/pgcleanup.py"
         self._scripts_check_argparse_help(script)
@@ -113,7 +116,6 @@ class ScriptsIntegrationTestCase(integration_util.IntegrationTestCase):
         output = self._scripts_check_output(script, ["-c", config_file])
         assert "Complete" in output
 
-    @integration_util.skip_if_jenkins
     def test_grt_export(self):
         script = "grt/export.py"
         self._scripts_check_argparse_help(script)
@@ -131,7 +133,7 @@ class ScriptsIntegrationTestCase(integration_util.IntegrationTestCase):
         json_file = os.path.join(self.config_dir, json_files[0])
         with open(json_file, "r") as f:
             export = json.load(f)
-        assert export["version"] == 1
+        assert export["version"] == 3
 
     def test_admin_cleanup_datasets(self):
         self._scripts_check_argparse_help("cleanup_datasets/admin_cleanup_datasets.py")
@@ -157,16 +159,15 @@ class ScriptsIntegrationTestCase(integration_util.IntegrationTestCase):
         # TODO: test creating a smaller database - e.g. tool install database based on fresh
         # config file.
 
+    def test_galaxy_main(self):
+        self._scripts_check_argparse_help("galaxy-main")
+
     def test_runtime_stats(self):
-        self._skip_if_not_postgres()
+        self._skip_unless_postgres()
         self._scripts_check_argparse_help("runtime_stats.py")
 
-    def _skip_if_not_postgres(self):
-        if not self._app.config.database_connection.startswith("post"):
-            raise unittest.SkipTest("Test only valid for postgres")
-
     def _scripts_check_argparse_help(self, script):
-        # Test imports and argparse repsonse to --help with 0 exit code.
+        # Test imports and argparse response to --help with 0 exit code.
         output = self._scripts_check_output(script, ["--help"])
         # Test -h, --help in printed output message.
         assert "-h, --help" in output
@@ -177,13 +178,21 @@ class ScriptsIntegrationTestCase(integration_util.IntegrationTestCase):
         clean_env = {
             "PATH": os.environ.get("PATH", None),
         }  # Don't let testing environment variables interfere with config.
-        return subprocess.check_output(cmd, cwd=cwd, env=clean_env)
+        try:
+            return unicodify(subprocess.check_output(cmd, cwd=cwd, env=clean_env))
+        except Exception as e:
+            if isinstance(e, subprocess.CalledProcessError):
+                raise Exception("%s\nOutput was:\n%s" % (unicodify(e), unicodify(e.output)))
+            raise
 
     def write_config_file(self):
         config_dir = self.config_dir
         path = os.path.join(config_dir, "galaxy.yml")
         self._test_driver.temp_directories.extend([config_dir])
+        config = self._raw_config
+        # Update config dict with database_connection, which might be set through env variables
+        config['database_connection'] = self._app.config.database_connection
         with open(path, "w") as f:
-            yaml.dump({"galaxy": self._raw_config}, f)
+            yaml.dump({"galaxy": config}, f)
 
         return path

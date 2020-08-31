@@ -5,7 +5,6 @@ Galaxy supports the following authentication mechanisms:
 * [Galaxy Database](#galaxy-database) - Galaxy-specific login using e-mail address and password (the default);
 * [OIDC and OAuth2.0](#OIDC-and-OAuth2.0) - Login to Galaxy using your Google account, without having to create a Galaxy user;
 * [Authentication Framework](#authentication-framework) - A plugin-driven framework supporting LDAP/Active Directory and PAM;
-* [OpenID](#openid) - authentication with Galaxy as a relying party;
 * [Proxy Authentication](#proxy_authentication) - HTTP [remote user](http://httpd.apache.org/docs/current/mod/mod_cgi.html#env) provided by any front-end Web server.
 
 ## Galaxy Database
@@ -19,7 +18,7 @@ If deploying Galaxy using the default authentication option, user activation can
 ## OIDC and OAuth2.0
 Leveraging OpenID Connect (OIDC) protocol, we enable login to Galaxy without explicitly creating a Galaxy user. This feature is disabled by default. In short, to enable this feature, a Galaxy server admin has to take the following two steps: 
 
-1. Define the Galaxy instance on an OIDC identity provider. At the moment, we support Google. To set a Galaxy instance on Google, go to _credentials_ section at [developers console](https://console.developers.google.com/), and configure the instance. At the end, you'll receive _client ID_ and _client secret_ take a note of these two tokens. 
+1. Define the Galaxy instance on an OIDC identity provider. At the moment, we support Google and Okta. To set a Galaxy instance on Google, go to _credentials_ section at [developers console](https://console.developers.google.com/), and configure the instance. At the end, you'll receive _client ID_ and _client secret_ take a note of these two tokens. For Okta, create a new application in Okta, type _web_. At the end you should take note of the _client ID_ and _client secret_ tokens.
 
 2. Configure Galaxy. In the `galaxy.yml` file enable the OIDC service using the `enable_oidc` key and set the two configuration files (i.e., `oidc_config_file` and `oidc_backends_config_file`), based on the IdP information. 
 
@@ -37,16 +36,6 @@ within Galaxy allows users to use the Galaxy UI for logging in instead of relyin
 To configure one or more authentication plugins, simply copy ``config/auth_conf.xml.sample`` to ``config/auth_conf.xml``.
 The provided sample configuration file has numerous commented out examples and serves as the most up-to-date source
 of documentation on configuring these plugins.
-
-## OpenID
-
-[OpenID](https://en.wikipedia.org/wiki/OpenID) is becoming less popular and probably shouldn't be used the primary mechanism
-for authentication in Galaxy but it is an available option.
-
-Enabling OpenID requires you to edit Galaxy's configuration file and set `enable_openid` to `true`. This file is
-likely located in `config/galaxy.yml` and can be created by copying Galaxy's sample `config/galaxy.yml.sample`.
-
-Enabling this option enables OpenID and causes the OpenID form to be displayed on the login screen.
 
 ## Remote User Authentication
 

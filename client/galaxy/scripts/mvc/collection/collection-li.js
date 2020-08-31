@@ -1,32 +1,30 @@
-import LIST_ITEM from "mvc/list/list-item";
-import DATASET_LI from "mvc/dataset/dataset-li";
+import _ from "underscore";
+import $ from "jquery";
+import { ListItemView, FoldoutListItemView } from "mvc/list/list-item";
+import { DatasetListItemView } from "mvc/dataset/dataset-li";
 import BASE_MVC from "mvc/base-mvc";
 import _l from "utils/localization";
 
-//==============================================================================
-var FoldoutListItemView = LIST_ITEM.FoldoutListItemView;
-
-var ListItemView = LIST_ITEM.ListItemView;
 /** @class Read only view for DatasetCollection.
  */
 var DCListItemView = FoldoutListItemView.extend(
     /** @lends DCListItemView.prototype */ {
         className: `${FoldoutListItemView.prototype.className} dataset-collection`,
-        id: function() {
+        id: function () {
             return ["dataset_collection", this.model.get("id")].join("-");
         },
 
         /** override to add linkTarget */
-        initialize: function(attributes) {
+        initialize: function (attributes) {
             this.linkTarget = attributes.linkTarget || "_blank";
             this.hasUser = attributes.hasUser;
             FoldoutListItemView.prototype.initialize.call(this, attributes);
         },
 
         /** event listeners */
-        _setUpListeners: function() {
+        _setUpListeners: function () {
             FoldoutListItemView.prototype._setUpListeners.call(this);
-            this.listenTo(this.model, "change", function(model, options) {
+            this.listenTo(this.model, "change", function (model, options) {
                 // if the model has changed deletion status render it entirely
                 if (_.has(model.changed, "deleted")) {
                     this.render();
@@ -41,31 +39,31 @@ var DCListItemView = FoldoutListItemView.extend(
 
         // ......................................................................... rendering
         /** render a subtitle to show the user what sort of collection this is */
-        _renderSubtitle: function() {
+        _renderSubtitle: function () {
             return $(this.templates.subtitle(this.model.toJSON(), this));
         },
 
         // ......................................................................... foldout
         /** override to add linktarget to sub-panel */
-        _getFoldoutPanelOptions: function() {
+        _getFoldoutPanelOptions: function () {
             var options = FoldoutListItemView.prototype._getFoldoutPanelOptions.call(this);
             return _.extend(options, {
                 linkTarget: this.linkTarget,
-                hasUser: this.hasUser
+                hasUser: this.hasUser,
             });
         },
 
         /** override to not catch sub-panel selectors */
-        $selector: function() {
+        $selector: function () {
             return this.$("> .selector");
         },
 
         // ......................................................................... misc
         /** String representation */
-        toString: function() {
+        toString: function () {
             var modelString = this.model ? `${this.model}` : "(no model)";
             return `DCListItemView(${modelString})`;
-        }
+        },
     }
 );
 
@@ -80,14 +78,14 @@ DCListItemView.prototype.templates = (() => {
             _l("There was an error getting the data for this collection"),
             ": <%- model.error %>",
             "</div>",
-            "<% } %>"
+            "<% } %>",
         ]),
         purged: BASE_MVC.wrapTemplate([
             "<% if( model.purged ){ %>",
             '<div class="purged-msg warningmessagesmall">',
             _l("This collection has been deleted and removed from disk"),
             "</div>",
-            "<% } %>"
+            "<% } %>",
         ]),
         deleted: BASE_MVC.wrapTemplate([
             // deleted not purged
@@ -95,8 +93,8 @@ DCListItemView.prototype.templates = (() => {
             '<div class="deleted-msg warningmessagesmall">',
             _l("This collection has been deleted"),
             "</div>",
-            "<% } %>"
-        ])
+            "<% } %>",
+        ]),
     });
 
     // use element identifier
@@ -107,7 +105,7 @@ DCListItemView.prototype.templates = (() => {
             '<span class="name"><%- collection.element_identifier || collection.name %></span>',
             "</div>",
             '<div class="subtitle"></div>',
-            "</div>"
+            "</div>",
         ],
         "collection"
     );
@@ -126,7 +124,7 @@ DCListItemView.prototype.templates = (() => {
             '<% } else if( collection.collection_type === "list:list" ){ %>',
             _l("a list of <%- countText %>dataset lists"),
             "<% } %>",
-            "</div>"
+            "</div>",
         ],
         "collection"
     );
@@ -134,7 +132,7 @@ DCListItemView.prototype.templates = (() => {
     return _.extend({}, FoldoutListItemView.prototype.templates, {
         warnings: warnings,
         titleBar: titleBarTemplate,
-        subtitle: subtitleTemplate
+        subtitle: subtitleTemplate,
     });
 })();
 
@@ -147,7 +145,7 @@ var DCEListItemView = ListItemView.extend(
         className: `${ListItemView.prototype.className} dataset-collection-element`,
 
         /** set up */
-        initialize: function(attributes) {
+        initialize: function (attributes) {
             if (attributes.logger) {
                 this.logger = this.model.logger = attributes.logger;
             }
@@ -157,10 +155,10 @@ var DCEListItemView = ListItemView.extend(
 
         // ......................................................................... misc
         /** String representation */
-        toString: function() {
+        toString: function () {
             var modelString = this.model ? `${this.model}` : "(no model)";
             return `DCEListItemView(${modelString})`;
-        }
+        },
     }
 );
 
@@ -175,13 +173,13 @@ DCEListItemView.prototype.templates = (() => {
             '<span class="name"><%- element.element_identifier %></span>',
             "</div>",
             '<div class="subtitle"></div>',
-            "</div>"
+            "</div>",
         ],
         "element"
     );
 
     return _.extend({}, ListItemView.prototype.templates, {
-        titleBar: titleBarTemplate
+        titleBar: titleBarTemplate,
     });
 })();
 
@@ -189,36 +187,36 @@ DCEListItemView.prototype.templates = (() => {
 /** @class Read only view for a DatasetCollectionElement that is also an DatasetAssociation
  *      (a dataset contained in a dataset collection).
  */
-var DatasetDCEListItemView = DATASET_LI.DatasetListItemView.extend(
+var DatasetDCEListItemView = DatasetListItemView.extend(
     /** @lends DatasetDCEListItemView.prototype */ {
-        className: `${DATASET_LI.DatasetListItemView.prototype.className} dataset-collection-element`,
+        className: `${DatasetListItemView.prototype.className} dataset-collection-element`,
 
         /** set up */
-        initialize: function(attributes) {
+        initialize: function (attributes) {
             if (attributes.logger) {
                 this.logger = this.model.logger = attributes.logger;
             }
             this.log("DatasetDCEListItemView.initialize:", attributes);
-            DATASET_LI.DatasetListItemView.prototype.initialize.call(this, attributes);
+            DatasetListItemView.prototype.initialize.call(this, attributes);
         },
 
         /** In this override, only get details if in the ready state.
          *  Note: fetch with no 'change' event triggering to prevent automatic rendering.
          */
-        _fetchModelDetails: function() {
+        _fetchModelDetails: function () {
             var view = this;
             if (view.model.inReadyState() && !view.model.hasDetails()) {
                 return view.model.fetch({ silent: true });
             }
-            return jQuery.when();
+            return $.when();
         },
 
         // ......................................................................... misc
         /** String representation */
-        toString: function() {
+        toString: function () {
             var modelString = this.model ? `${this.model}` : "(no model)";
             return `DatasetDCEListItemView(${modelString})`;
-        }
+        },
     }
 );
 
@@ -234,13 +232,13 @@ DatasetDCEListItemView.prototype.templates = (() => {
             '<div class="title">',
             '<span class="name"><%- element.element_identifier %></span>',
             "</div>",
-            "</div>"
+            "</div>",
         ],
         "element"
     );
 
-    return _.extend({}, DATASET_LI.DatasetListItemView.prototype.templates, {
-        titleBar: titleBarTemplate
+    return _.extend({}, DatasetListItemView.prototype.templates, {
+        titleBar: titleBarTemplate,
     });
 })();
 
@@ -253,7 +251,7 @@ var NestedDCDCEListItemView = DCListItemView.extend(
         className: `${DCListItemView.prototype.className} dataset-collection-element`,
 
         /** In this override, add the state as a class for use with state-based CSS */
-        _swapNewRender: function($newRender) {
+        _swapNewRender: function ($newRender) {
             DCListItemView.prototype._swapNewRender.call(this, $newRender);
             var state = this.model.get("state") || "ok";
             this.$el.addClass(`state-${state}`);
@@ -262,10 +260,10 @@ var NestedDCDCEListItemView = DCListItemView.extend(
 
         // ......................................................................... misc
         /** String representation */
-        toString: function() {
+        toString: function () {
             var modelString = this.model ? `${this.model}` : "(no model)";
             return `NestedDCDCEListItemView(${modelString})`;
-        }
+        },
     }
 );
 
@@ -274,5 +272,5 @@ export default {
     DCListItemView: DCListItemView,
     DCEListItemView: DCEListItemView,
     DatasetDCEListItemView: DatasetDCEListItemView,
-    NestedDCDCEListItemView: NestedDCDCEListItemView
+    NestedDCDCEListItemView: NestedDCDCEListItemView,
 };

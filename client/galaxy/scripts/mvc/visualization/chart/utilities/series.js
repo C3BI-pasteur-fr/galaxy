@@ -1,16 +1,12 @@
-import * as _ from "underscore";
+import _ from "underscore";
 import * as d3 from "d3";
-
-// TODO: This d3 must(?) just be global because various charts use different
-// versions, and we want to use whichever one that is.  I think.  I hope.
-/* global d3 */
 
 /** Get domain boundaries value */
 function getDomains(groups, keys) {
     function _apply(operator, key) {
         let value;
-        for (let group_index in groups) {
-            let value_sub = d3[operator](groups[group_index].values, function(d) {
+        for (const group_index in groups) {
+            const value_sub = d3[operator](groups[group_index].values, function (d) {
                 return d[key];
             });
             value = value === undefined ? value_sub : Math[operator](value, value_sub);
@@ -22,7 +18,7 @@ function getDomains(groups, keys) {
         var key = keys[index];
         result[key] = {
             min: _apply("min", key),
-            max: _apply("max", key)
+            max: _apply("max", key),
         };
     }
     return result;
@@ -38,11 +34,11 @@ function makeSeries(groups, keys) {
             var point = [];
             if (keys) {
                 for (var key_index in keys) {
-                    let column_index = keys[key_index];
+                    const column_index = keys[key_index];
                     point.push(group.values[value_index][column_index]);
                 }
             } else {
-                for (let column_index in group.values[value_index]) {
+                for (const column_index in group.values[value_index]) {
                     point.push(group.values[value_index][column_index]);
                 }
             }
@@ -57,13 +53,13 @@ function makeSeries(groups, keys) {
 function makeCategories(groups, column_keys) {
     var array = {};
     var data_columns = groups[0].__data_columns;
-    _.each(column_keys, function(key) {
+    _.each(column_keys, function (key) {
         if (data_columns[key].is_label) {
             array[key] = [];
         }
     });
     if (groups && groups[0]) {
-        _.each(groups[0].values, function(value_dict) {
+        _.each(groups[0].values, function (value_dict) {
             for (var key in array) {
                 array[key].push(String(value_dict[key]));
             }
@@ -75,8 +71,8 @@ function makeCategories(groups, column_keys) {
 
 /** Apply default mapping index all values contained in label columns (for all groups) */
 function mapCategories(array, groups) {
-    _.each(groups, function(group) {
-        _.each(group.values, function(value_dict, i) {
+    _.each(groups, function (group) {
+        _.each(group.values, function (value_dict, i) {
             for (var key in array) {
                 value_dict[key] = parseInt(i);
             }
@@ -90,7 +86,7 @@ function makeUniqueCategories(groups, with_index) {
     var array = {};
     var counter = {};
     var data_columns = groups[0].__data_columns;
-    _.each(data_columns, function(column_def, key) {
+    _.each(data_columns, function (column_def, key) {
         if (column_def.is_label) {
             categories[key] = {};
             array[key] = [];
@@ -113,12 +109,12 @@ function makeUniqueCategories(groups, with_index) {
         }
     }
     // convert group values into category indeces
-    for (let i in groups) {
-        let group = groups[i];
-        for (let j in group.values) {
-            let value_dict = group.values[j];
-            for (let key in categories) {
-                let value = String(value_dict[key]);
+    for (const i in groups) {
+        const group = groups[i];
+        for (const j in group.values) {
+            const value_dict = group.values[j];
+            for (const key in categories) {
+                const value = String(value_dict[key]);
                 value_dict[key] = categories[key][value];
             }
         }
@@ -126,7 +122,7 @@ function makeUniqueCategories(groups, with_index) {
     return {
         categories: categories,
         array: array,
-        counter: counter
+        counter: counter,
     };
 }
 
@@ -137,17 +133,17 @@ function makeTickFormat(options) {
     var categories = options.categories;
     var formatter = options.formatter;
     if (type == "hide") {
-        formatter(function() {
+        formatter(function () {
             return "";
         });
     } else if (type == "auto") {
         if (categories) {
-            formatter(function(value) {
+            formatter(function (value) {
                 return categories[value] || "";
             });
         }
     } else {
-        var d3format = function(d) {
+        var d3format = function (d) {
             switch (type) {
                 case "s":
                     var prefix = d3.formatPrefix(d);
@@ -157,7 +153,7 @@ function makeTickFormat(options) {
             }
         };
         if (categories) {
-            formatter(function(value) {
+            formatter(function (value) {
                 var label = categories[value];
                 if (label) {
                     if (isNaN(label)) {
@@ -174,7 +170,7 @@ function makeTickFormat(options) {
                 }
             });
         } else {
-            formatter(function(value) {
+            formatter(function (value) {
                 return d3format(value);
             });
         }
@@ -214,11 +210,7 @@ function addZoom(options) {
         d3zoom.scale(1);
         d3zoom.translate([0, 0]);
     }
-    d3zoom
-        .x(xScale)
-        .y(yScale)
-        .scaleExtent([1, scaleExtent])
-        .on("zoom", zoomed);
+    d3zoom.x(xScale).y(yScale).scaleExtent([1, scaleExtent]).on("zoom", zoomed);
     svg.call(d3zoom).on("dblclick.zoom", unzoomed);
     return d3zoom;
 }
@@ -230,5 +222,5 @@ export default {
     getDomains: getDomains,
     mapCategories: mapCategories,
     makeTickFormat: makeTickFormat,
-    addZoom: addZoom
+    addZoom: addZoom,
 };

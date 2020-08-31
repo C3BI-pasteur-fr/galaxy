@@ -1,6 +1,5 @@
+import _ from "underscore";
 import BASE_MVC from "mvc/base-mvc";
-
-var logNamespace = "history";
 
 // ============================================================================
 /** session storage for individual history preferences */
@@ -11,11 +10,11 @@ var HistoryPrefs = BASE_MVC.SessionStorageModel.extend(
             //TODO:?? expandedIds to array?
             expandedIds: {},
             show_deleted: false,
-            show_hidden: false
+            show_hidden: false,
         },
 
         /** add an hda id to the hash of expanded hdas */
-        addExpanded: function(model) {
+        addExpanded: function (model) {
             //TODO: use type_id and not model
             var current = this.get("expandedIds");
             current[model.id] = model.get("id");
@@ -23,25 +22,25 @@ var HistoryPrefs = BASE_MVC.SessionStorageModel.extend(
         },
 
         /** remove an hda id from the hash of expanded hdas */
-        removeExpanded: function(model) {
+        removeExpanded: function (model) {
             var current = this.get("expandedIds");
             delete current[model.id];
             this.save("expandedIds", current);
         },
 
-        isExpanded: function(contentId) {
+        isExpanded: function (contentId) {
             return _.result(this.get("expandedIds"), contentId, false);
         },
 
-        allExpanded: function() {
+        allExpanded: function () {
             return _.values(this.get("expandedIds"));
         },
 
-        clearExpanded: function() {
+        clearExpanded: function () {
             this.set("expandedIds", {});
         },
 
-        includeDeleted: function(val) {
+        includeDeleted: function (val) {
             // moving the invocation here so other components don't need to know the key
             // TODO: change this key later
             if (!_.isUndefined(val)) {
@@ -50,7 +49,7 @@ var HistoryPrefs = BASE_MVC.SessionStorageModel.extend(
             return this.get("show_deleted");
         },
 
-        includeHidden: function(val) {
+        includeHidden: function (val) {
             // TODO: change this key later
             if (!_.isUndefined(val)) {
                 this.set("show_hidden", val);
@@ -58,9 +57,9 @@ var HistoryPrefs = BASE_MVC.SessionStorageModel.extend(
             return this.get("show_hidden");
         },
 
-        toString: function() {
+        toString: function () {
             return `HistoryPrefs(${this.id})`;
-        }
+        },
     },
     {
         // ........................................................................ class vars
@@ -79,7 +78,7 @@ var HistoryPrefs = BASE_MVC.SessionStorageModel.extend(
         /** return the existing storage for the history with the given id (or create one if it doesn't exist) */
         get: function get(historyId) {
             return new HistoryPrefs({
-                id: HistoryPrefs.historyStorageKey(historyId)
+                id: HistoryPrefs.historyStorageKey(historyId),
             });
         },
 
@@ -90,11 +89,11 @@ var HistoryPrefs = BASE_MVC.SessionStorageModel.extend(
                     sessionStorage.removeItem(key);
                 }
             }
-        }
+        },
     }
 );
 
 //==============================================================================
 export default {
-    HistoryPrefs: HistoryPrefs
+    HistoryPrefs: HistoryPrefs,
 };

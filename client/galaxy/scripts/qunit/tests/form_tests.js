@@ -1,31 +1,34 @@
-/* global define */
+/**
+ * mvc/tool/tool-form is unused.
+ */
+
+/* global QUnit */
+import $ from "jquery";
 import testApp from "qunit/test-app";
 import InputElement from "mvc/form/form-input";
 import Ui from "mvc/ui/ui-misc";
 import FormData from "mvc/form/form-data";
 import ToolForm from "mvc/tool/tool-form";
 import Utils from "utils/utils";
+import { getAppRoot } from "onload/loadConfig";
 
 QUnit.module("Form test", {
-    beforeEach: function() {
+    beforeEach: function () {
         testApp.create();
         $.fx.off = true;
     },
-    afterEach: function() {
+    afterEach: function () {
         testApp.destroy();
         $.fx.off = false;
-    }
+    },
 });
 
-QUnit.test("tool-form", function(assert) {
-    // Huh? The following seems to be needed by tool-form.js - once the global usage
-    // is cleaned up in that module this can be deleted I assume.
-    window.parent.Galaxy = window.Galaxy;
-
+QUnit.test("tool-form", function (assert) {
     var toolform = new ToolForm.View({ id: "test" });
-    var form = toolform.form;
     $("body").prepend(toolform.$el);
     window.fakeserver.respond();
+
+    var form = toolform.form;
     var output = "";
     for (var property in assert) {
         output += property + ": ; ";
@@ -35,7 +38,7 @@ QUnit.test("tool-form", function(assert) {
         "Title correct"
     );
     var tour_ids = [];
-    $("[tour_id]").each(function() {
+    $("[tour_id]").each(function () {
         tour_ids.push($(this).attr("tour_id"));
     });
     assert.ok(
@@ -48,7 +51,7 @@ QUnit.test("tool-form", function(assert) {
         "Created data correct"
     );
     var mapped_ids = [];
-    form.data.matchModel(form.model.attributes, function(input, id) {
+    form.data.matchModel(form.model.attributes, function (input, id) {
         mapped_ids.push($("#" + id).attr("tour_id"));
     });
     assert.ok(
@@ -57,12 +60,9 @@ QUnit.test("tool-form", function(assert) {
     );
     var dropdown = form.$("#menu > .dropdown-menu");
     assert.ok(dropdown.children().length == 2, "Found two menu items");
-    dropdown
-        .find(".fa-info-circle")
-        .parent()
-        .click();
+    dropdown.find(".fa-info-circle").parent().click();
     assert.ok(
-        form.$(".ui-message").html() ===
+        form.$(".alert").html() ===
             '<span>This tool requires req_name_a (Version req_version_a) and req_name_b (Version req_version_b). Click <a target="_blank" href="https://galaxyproject.org/tools/requirements/">here</a> for more information.</span>',
         "Check requirements message"
     );
@@ -71,7 +71,7 @@ QUnit.test("tool-form", function(assert) {
     assert.ok(!$add.attr("disabled"), "Adding new repeat possible");
     $add.click();
     assert.ok($add.attr("disabled"), "Adding new repeat has been disabled");
-    form.$(".form-repeat-delete").each(function(i, d) {
+    form.$(".form-repeat-delete").each(function (i, d) {
         assert.ok($(d).css("display") == "block", "Delete buttons " + i + " enabled");
     });
     assert.ok(
@@ -88,15 +88,15 @@ QUnit.test("tool-form", function(assert) {
     );
 });
 
-QUnit.test("data", function(assert) {
+QUnit.test("data", function (assert) {
     var visits = [];
     Utils.get({
-        url: Galaxy.root + "api/tools/test/build",
-        success: function(response) {
-            FormData.visitInputs(response.inputs, function(node, name, context) {
+        url: getAppRoot() + "api/tools/test/build",
+        success: function (response) {
+            FormData.visitInputs(response.inputs, function (node, name, context) {
                 visits.push({ name: name, node: node });
             });
-        }
+        },
     });
     window.fakeserver.respond();
     assert.ok(
@@ -106,11 +106,11 @@ QUnit.test("data", function(assert) {
     );
 });
 
-QUnit.test("input", function(assert) {
+QUnit.test("input", function (assert) {
     var input = new InputElement(
         {},
         {
-            field: new Ui.Input({})
+            field: new Ui.Input({}),
         }
     );
     $("body").prepend(input.$el);
@@ -138,22 +138,12 @@ QUnit.test("input", function(assert) {
     assert.ok(input.$field.css("display") == "none", "Input field hidden");
     input.model.set("disabled", false);
     assert.ok(input.$field.css("display") == "block", "Input field shown, again");
+    var colorElement = input.$field.children().first();
+    var oldColor = colorElement.css("color");
     input.model.set("color", "red");
-    assert.ok(
-        input.$field
-            .children()
-            .first()
-            .css("color") == "rgb(255, 0, 0)",
-        "Shows correct new color"
-    );
+    assert.ok(colorElement.css("color") == "rgb(255, 0, 0)", "Shows correct new color");
     input.model.set("color", null);
-    assert.ok(
-        input.$field
-            .children()
-            .first()
-            .css("color") == "rgb(73, 80, 87)",
-        "Shows correct old color"
-    );
+    assert.ok(colorElement.css("color") == oldColor, "Shows correct old color");
     input.model.set("collapsible_value", "_collapsible_value");
     assert.ok(input.$collapsible.css("display") == "block", "Collapsible field");
     assert.ok(input.$collapsible_text.html() == "_label", "Title content available");

@@ -144,7 +144,7 @@ def wrap_with_safe_string(value, no_wrap_classes=None):
             return safe_class(value, safe_string_wrapper_function=__do_wrap)
         for this_type in __WRAP_SEQUENCES__ + __WRAP_SETS__:
             if isinstance(value, this_type):
-                return this_type(map(__do_wrap, value))
+                return this_type(list(map(__do_wrap, value)))
         for this_type in __WRAP_MAPPINGS__:
             if isinstance(value, this_type):
                 # Wrap both key and value
@@ -223,9 +223,11 @@ class SafeStringWrapper(object):
         # We need to define a __new__ since, we are subclassing from e.g. immutable str, which internally sets data
         # that will be used when other + this (this + other is handled by __add__)
         try:
-            return super(SafeStringWrapper, cls).__new__(cls, sanitize_lists_to_string(arg[0], valid_characters=VALID_CHARACTERS, character_map=CHARACTER_MAP))
-        except Exception as e:
-            log.warning("Could not provide an argument to %s.__new__: %s; will try without arguments.", cls, e)
+            sanitized_value = sanitize_lists_to_string(arg[0], valid_characters=VALID_CHARACTERS, character_map=CHARACTER_MAP)
+            return super(SafeStringWrapper, cls).__new__(cls, sanitized_value)
+        except TypeError:
+            # Class to be wrapped takes no parameters.
+            # This is pefectly normal for mutable types.
             return super(SafeStringWrapper, cls).__new__(cls)
 
     def __init__(self, value, safe_string_wrapper_function=wrap_with_safe_string):

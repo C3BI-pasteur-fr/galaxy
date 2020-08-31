@@ -1,18 +1,18 @@
 """
 SLURM job control via the DRMAA API.
 """
-import logging
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 
 from galaxy import model
 from galaxy.jobs.runners.drmaa import DRMAAJobRunner
+from galaxy.util import commands
+from galaxy.util.custom_logging import get_logger
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 __all__ = ('SlurmJobRunner', )
 
@@ -28,7 +28,10 @@ SLURM_MEMORY_LIMIT_EXCEEDED_MSG = 'slurmstepd: error: Exceeded job memory limit'
 SLURM_MEMORY_LIMIT_EXCEEDED_PARTIAL_WARNINGS = [': Exceeded job memory limit at some point.',
                                                 ': Exceeded step memory limit at some point.']
 SLURM_MEMORY_LIMIT_SCAN_SIZE = 16 * 1024 * 1024  # 16MB
-SLURM_UNABLE_TO_ADD_TASK_TO_MEMORY_CG_MSG_RE = re.compile(r"""slurmstepd: error: task/cgroup: unable to add task\[pid=\d+\] to memory cg '\(null\)'$""")
+SLURM_CGROUP_RE = re.compile(r"""slurmstepd: .*cgroup.*$""")
+SLURM_TOP_WARNING_RES = (
+    SLURM_CGROUP_RE,
+)
 
 # These messages are returned to the user
 OUT_OF_MEMORY_MSG = 'This job was terminated because it used more memory than it was allocated.'
@@ -45,14 +48,13 @@ class SlurmJobRunner(DRMAAJobRunner):
             if cluster:
                 cmd.extend(['-M', cluster])
             cmd.extend(['-j', job_id])
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = p.communicate()
-            if p.returncode != 0:
-                stderr = stderr.strip()
-                if stderr == 'SLURM accounting storage is disabled':
+            try:
+                stdout = commands.execute(cmd)
+            except commands.CommandLineException as e:
+                if e.stderr.strip() == 'SLURM accounting storage is disabled':
                     log.warning('SLURM accounting storage is not properly configured, unable to run sacct')
                     return
-                raise Exception('`%s` returned %s, stderr: %s' % (' '.join(cmd), p.returncode, stderr))
+                raise e
             # First line is for 'job_id'
             # Second line is for 'job_id.batch' (only available after the batch job is complete)
             # Following lines are for the steps 'job_id.0', 'job_id.1', ... (but Galaxy does not use steps)
@@ -70,18 +72,16 @@ class SlurmJobRunner(DRMAAJobRunner):
                 job_id = ajs.job_id
                 cluster = None
             cmd.extend(['show', 'job', job_id])
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = p.communicate()
-            if p.returncode != 0:
-                # Will need to be more clever here if this message is not consistent
-                if stderr == 'slurm_load_jobs error: Invalid job id specified\n':
+            try:
+                stdout = commands.execute(cmd).strip()
+            except commands.CommandLineException as e:
+                if e.stderr == 'slurm_load_jobs error: Invalid job id specified\n':
                     # The job may be old, try to get its state with sacct
                     job_state = _get_slurm_state_with_sacct(job_id, cluster)
                     if job_state:
                         return job_state
                     return 'NOT_FOUND'
-                raise Exception('`%s` returned %s, stderr: %s' % (' '.join(cmd), p.returncode, stderr))
-            stdout = stdout.strip()
+                raise e
             # stdout is a single line in format "key1=value1 key2=value2 ..."
             job_info_keys = []
             job_info_values = []
@@ -154,13 +154,7 @@ class SlurmJobRunner(DRMAAJobRunner):
                     return
             if drmaa_state == self.drmaa_job_states.DONE:
                 with open(ajs.error_file, 'r') as rfh:
-                    first_line = rfh.readline()
-                    if SLURM_UNABLE_TO_ADD_TASK_TO_MEMORY_CG_MSG_RE.match(first_line):
-                        with tempfile.NamedTemporaryFile('w', delete=False) as wfh:
-                            shutil.copyfileobj(rfh, wfh)
-                            wf_name = wfh.name
-                        shutil.move(wf_name, ajs.error_file)
-                        log.debug('(%s/%s) Job completed, removing SLURM spurious warning: "%s"', ajs.job_wrapper.get_id_tag(), ajs.job_id, first_line)
+                    _remove_spurious_top_lines(rfh, ajs)
                 with open(ajs.error_file, 'r+') as f:
                     if os.path.getsize(ajs.error_file) > SLURM_MEMORY_LIMIT_SCAN_SIZE:
                         f.seek(-SLURM_MEMORY_LIMIT_SCAN_SIZE, os.SEEK_END)
@@ -201,3 +195,32 @@ class SlurmJobRunner(DRMAAJobRunner):
             log.exception('Error reading end of %s:', efile_path)
 
         return False
+
+
+def _remove_spurious_top_lines(rfh, ajs, maxlines=3):
+    bad = []
+    putback = None
+    for i in range(maxlines):
+        line = rfh.readline()
+        log.trace('checking line: %s', line)
+        for pattern in SLURM_TOP_WARNING_RES:
+            if pattern.match(line):
+                bad.append(line)
+                # found a match, stop checking REs and check next line
+                break
+        else:
+            if bad:
+                # no match found on this line so line is now a good line, but previous bad lines are found, so it needs to be put back
+                putback = line
+            # no match on this line, stop looking
+            break
+        # check next line
+    if bad:
+        with tempfile.NamedTemporaryFile('w', delete=False) as wfh:
+            if putback is not None:
+                wfh.write(putback)
+            shutil.copyfileobj(rfh, wfh)
+            wf_name = wfh.name
+        shutil.move(wf_name, ajs.error_file)
+        for line in bad:
+            log.debug('(%s/%s) Job completed, removing SLURM spurious warning: "%s"', ajs.job_wrapper.get_id_tag(), ajs.job_id, line)

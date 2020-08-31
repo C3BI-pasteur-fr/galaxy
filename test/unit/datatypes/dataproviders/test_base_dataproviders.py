@@ -98,8 +98,9 @@ class Test_BaseDataProvider(BaseTestCase):
         """
         def non_iterator_dprov(source):
             return self.provider_class(source)
+        # two objects without __iter__ method: build in function and int
         self.assertRaises(exceptions.InvalidDataProviderSource,
-            non_iterator_dprov, 'one two three')
+            non_iterator_dprov, sum)
         self.assertRaises(exceptions.InvalidDataProviderSource,
             non_iterator_dprov, 40)
 
@@ -258,7 +259,7 @@ class Test_LimitedOffsetDataProvider(Test_FilteredDataProvider):
             (3, 2, result_data[2:3], 1, 1, 1),
         ]
         for test in test_data:
-            log.debug('limit_offset_combo: %s', ', '.join([str(e) for e in test]))
+            log.debug('limit_offset_combo: %s', ', '.join(str(e) for e in test))
             limit_offset_combo(*test)
 
     def test_limit_with_offset_and_filter(self):
@@ -282,7 +283,7 @@ class Test_LimitedOffsetDataProvider(Test_FilteredDataProvider):
             (1, 2, result_data[2:3], 0, 0, 0),
         ]
         for test in test_data:
-            log.debug('limit_offset_combo: %s', ', '.join([str(e) for e in test]))
+            log.debug('limit_offset_combo: %s', ', '.join(str(e) for e in test))
             limit_offset_combo(*test)
 
 

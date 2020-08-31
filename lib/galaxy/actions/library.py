@@ -28,7 +28,7 @@ def validate_server_directory_upload(trans, server_dir):
     if server_dir in [None, 'None', '']:
         raise RequestParameterInvalidException("Invalid or unspecified server_dir parameter")
 
-    if trans.user_is_admin():
+    if trans.user_is_admin:
         import_dir = trans.app.config.library_import_dir
         import_dir_desc = 'library_import_dir'
         if not import_dir:
@@ -45,8 +45,8 @@ def validate_server_directory_upload(trans, server_dir):
     unsafe = None
     if safe_relpath(server_dir):
         username = trans.user.username if trans.app.config.user_library_import_check_permissions else None
-        if import_dir_desc == 'user_library_import_dir' and safe_contains(import_dir, full_dir, whitelist=trans.app.config.user_library_import_symlink_whitelist, username=username):
-            for unsafe in unsafe_walk(full_dir, whitelist=[import_dir] + trans.app.config.user_library_import_symlink_whitelist):
+        if import_dir_desc == 'user_library_import_dir' and safe_contains(import_dir, full_dir, whitelist=trans.app.config.user_library_import_symlink_whitelist):
+            for unsafe in unsafe_walk(full_dir, whitelist=[import_dir] + trans.app.config.user_library_import_symlink_whitelist, username=username):
                 log.error('User attempted to import a path that resolves to a path outside of their import dir: %s -> %s', unsafe, os.path.realpath(unsafe))
     else:
         log.error('User attempted to import a directory path that resolves to a path outside of their import dir: %s -> %s', server_dir, os.path.realpath(full_dir))
@@ -61,7 +61,7 @@ def validate_path_upload(trans):
     if not trans.app.config.allow_library_path_paste:
         raise ConfigDoesNotAllowException('"allow_path_paste" is not set to True in the Galaxy configuration file')
 
-    if not trans.user_is_admin():
+    if not trans.user_is_admin:
         raise AdminRequiredException('Uploading files via filesystem paths can only be performed by administrators')
 
 
@@ -75,6 +75,11 @@ class LibraryActions(object):
         cntrller = 'api'
         tool_id = 'upload1'
         message = None
+        file_type = kwd.get('file_type')
+        try:
+            upload_common.validate_datatype_extension(datatypes_registry=trans.app.datatypes_registry, ext=file_type)
+        except RequestParameterInvalidException as e:
+            return (400, util.unicodify(e))
         tool = trans.app.toolbox.get_tool(tool_id)
         state = tool.new_state(trans)
         populate_state(trans, tool.inputs, kwd, state.inputs)
@@ -126,15 +131,15 @@ class LibraryActions(object):
         return output
 
     def _get_server_dir_uploaded_datasets(self, trans, params, full_dir, import_dir_desc, library_bunch, response_code, message):
-            dir_response = self._get_server_dir_files(params, full_dir, import_dir_desc)
-            files = dir_response[0]
-            if not files:
-                return dir_response
-            uploaded_datasets = []
-            for file in files:
-                name = os.path.basename(file)
-                uploaded_datasets.append(self._make_library_uploaded_dataset(trans, params, name, file, 'server_dir', library_bunch))
-            return uploaded_datasets, 200, None
+        dir_response = self._get_server_dir_files(params, full_dir, import_dir_desc)
+        files = dir_response[0]
+        if not files:
+            return dir_response
+        uploaded_datasets = []
+        for file in files:
+            name = os.path.basename(file)
+            uploaded_datasets.append(self._make_library_uploaded_dataset(trans, params, name, file, 'server_dir', library_bunch))
+        return uploaded_datasets, 200, None
 
     def _get_server_dir_files(self, params, full_dir, import_dir_desc):
         files = []
@@ -164,7 +169,7 @@ class LibraryActions(object):
                 if os.path.isfile(path):
                     files.append(path)
         except Exception as e:
-            message = "Unable to get file list for configured %s, error: %s" % (import_dir_desc, str(e))
+            message = "Unable to get file list for configured %s, error: %s" % (import_dir_desc, util.unicodify(e))
             response_code = 500
             return None, response_code, message
         if not files:
@@ -248,7 +253,8 @@ class LibraryActions(object):
         uploaded_dataset.dbkey = params.get('dbkey', None)
         uploaded_dataset.to_posix_lines = params.get('to_posix_lines', None)
         uploaded_dataset.space_to_tab = params.get('space_to_tab', None)
-        uploaded_dataset.tag_using_filenames = params.get('tag_using_filenames', True)
+        uploaded_dataset.tag_using_filenames = params.get('tag_using_filenames', False)
+        uploaded_dataset.tags = params.get('tags', None)
         uploaded_dataset.purge_source = getattr(trans.app.config, 'ftp_upload_purge', True)
         if in_folder:
             uploaded_dataset.in_folder = in_folder
@@ -262,7 +268,7 @@ class LibraryActions(object):
         return uploaded_dataset
 
     def _create_folder(self, trans, parent_id, library_id, **kwd):
-        is_admin = trans.user_is_admin()
+        is_admin = trans.user_is_admin
         current_user_roles = trans.get_current_user_roles()
         try:
             parent_folder = trans.sa_session.query(trans.app.model.LibraryFolder).get(trans.security.decode_id(parent_id))

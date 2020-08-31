@@ -1,7 +1,6 @@
-import * as Backbone from "backbone";
-import * as _ from "underscore";
-
-/* global Galaxy */
+import _ from "underscore";
+import Backbone from "backbone";
+import { getAppRoot } from "onload/loadConfig";
 
 //==============================================================================
 /** @class Model for a saved Galaxy visualization.
@@ -17,19 +16,19 @@ export var Visualization = Backbone.Model.extend(
 
         /** default attributes for a model */
         defaults: {
-            config: {}
+            config: {},
         },
 
         /** override urlRoot to handle prefix */
-        urlRoot: function() {
+        urlRoot: function () {
             var apiUrl = "api/visualizations";
-            return Galaxy.root + apiUrl;
+            return getAppRoot() + apiUrl;
         },
 
         /** Set up the model, determine if accessible, bind listeners
          *  @see Backbone.Model#initialize
          */
-        initialize: function(data) {
+        initialize: function (data) {
             //this.log( this + '.initialize', data, this.attributes );
 
             // munge config sub-object here since bbone won't handle defaults with this
@@ -42,7 +41,7 @@ export var Visualization = Backbone.Model.extend(
 
         /** set up any event listeners
          */
-        _setUpListeners: function() {
+        _setUpListeners: function () {
             //this.on( 'change', function(){
             //    console.info( 'change:', arguments );
             //});
@@ -50,7 +49,7 @@ export var Visualization = Backbone.Model.extend(
 
         // ........................................................................ config
         /** override set to properly allow update and trigger change when setting the sub-obj 'config' */
-        set: function(key, val) {
+        set: function (key, val) {
             //TODO: validate config is object
             if (key === "config") {
                 var oldConfig = this.get("config");
@@ -66,13 +65,13 @@ export var Visualization = Backbone.Model.extend(
 
         // ........................................................................ misc
         /** String representation */
-        toString: function() {
+        toString: function () {
             var idAndTitle = this.get("id") || "";
             if (this.get("title")) {
                 idAndTitle += `:${this.get("title")}`;
             }
             return `Visualization(${idAndTitle})`;
-        }
+        },
     }
 );
 
@@ -89,14 +88,14 @@ export var VisualizationCollection = Backbone.Collection.extend(
         //// comment this out to suppress log output
         //logger              : console,
 
-        url: function() {
-            return `${Galaxy.root}api/visualizations`;
+        url: function () {
+            return `${getAppRoot()}api/visualizations`;
         },
 
         /** Set up.
          *  @see Backbone.Collection#initialize
          */
-        initialize: function(models, options) {
+        initialize: function (models, options) {
             options = options || {};
             //this._setUpListeners();
         },
@@ -107,14 +106,14 @@ export var VisualizationCollection = Backbone.Collection.extend(
         // ........................................................................ common queries
         // ........................................................................ ajax
         // ........................................................................ misc
-        set: function(models, options) {
+        set: function (models, options) {
             // arrrrrrrrrrrrrrrrrg...
             // override to get a correct/smarter merge when incoming data is partial (e.g. stupid backbone)
             //  w/o this partial models from the server will fill in missing data with model defaults
             //  and overwrite existing data on the client
             // see Backbone.Collection.set and _prepareModel
             var collection = this;
-            models = _.map(models, model => {
+            models = _.map(models, (model) => {
                 var existing = collection.get(model.id);
                 if (!existing) {
                     return model;
@@ -130,8 +129,8 @@ export var VisualizationCollection = Backbone.Collection.extend(
         },
 
         /** String representation. */
-        toString: function() {
+        toString: function () {
             return ["VisualizationCollection(", [this.historyId, this.length].join(), ")"].join("");
-        }
+        },
     }
 );

@@ -1,28 +1,35 @@
 /** This class handles job submissions to the Galaxy API. */
-import * as _ from "underscore";
+import _ from "underscore";
+import { getAppRoot } from "onload/loadConfig";
 import Utils from "utils/utils";
-
-/* global Galaxy */
+import { getGalaxyInstance } from "app";
 
 /** Time to wait before refreshing to check if job has completed */
 const WAITTIME = 1000;
 
 /** build job dictionary */
-var requestCharts = function(chart, module) {
+var requestCharts = function (chart, module) {
     var settings_string = "";
     var columns_string = "";
     var group_index = 0;
     for (var key in chart.settings.attributes) {
         var settings_value = chart.settings.get(key);
-        _.each([[" ", "&#32;"], [",", "&#44;"], [":", "&#58;"]], function(pair) {
-            settings_value = settings_value.replace(new RegExp(pair[0], "g"), pair[1]);
-        });
+        _.each(
+            [
+                [" ", "&#32;"],
+                [",", "&#44;"],
+                [":", "&#58;"],
+            ],
+            function (pair) {
+                settings_value = settings_value.replace(new RegExp(pair[0], "g"), pair[1]);
+            }
+        );
         settings_string += key + ":" + settings_value + ", ";
     }
     settings_string = settings_string.substring(0, settings_string.length - 2);
-    chart.groups.each(function(group) {
+    chart.groups.each(function (group) {
         group_index++;
-        _.each(group.get("__data_columns"), function(data_columns, name) {
+        _.each(group.get("__data_columns"), function (data_columns, name) {
             columns_string += name + "_" + group_index + ":" + (parseInt(group.get(name)) + 1) + ", ";
         });
     });
@@ -32,26 +39,26 @@ var requestCharts = function(chart, module) {
         inputs: {
             input: {
                 id: chart.get("dataset_id"),
-                src: "hda"
+                src: "hda",
             },
             module: module,
             columns: columns_string,
-            settings: settings_string
-        }
+            settings: settings_string,
+        },
     };
 };
 
 /** Submit job request to charts tool */
-var request = function(chart, parameters, success, error) {
+var request = function (chart, parameters, success, error) {
     chart.state("wait", "Requesting job results...");
     if (chart.get("modified") && chart.get("dataset_id_job")) {
         Utils.request({
             type: "PUT",
-            url: Galaxy.root + "api/histories/none/contents/" + chart.get("dataset_id_job"),
+            url: getAppRoot() + "api/histories/none/contents/" + chart.get("dataset_id_job"),
             data: { deleted: true },
             success: () => {
                 refreshHdas();
-            }
+            },
         });
         chart.set("dataset_id_job", null);
         chart.set("modified", false);
@@ -62,9 +69,9 @@ var request = function(chart, parameters, success, error) {
         chart.state("wait", "Sending job request...");
         Utils.request({
             type: "POST",
-            url: Galaxy.root + "api/tools",
+            url: getAppRoot() + "api/tools",
             data: parameters,
-            success: function(response) {
+            success: function (response) {
                 if (!response.outputs || response.outputs.length === 0) {
                     chart.state("failed", "Job submission failed. No response.");
                     if (error) {
@@ -82,7 +89,7 @@ var request = function(chart, parameters, success, error) {
                     wait(chart, success, error);
                 }
             },
-            error: function(response) {
+            error: function (response) {
                 var message = "";
                 if (response && response.message && response.message.data && response.message.data.input) {
                     message = response.message.data.input + ".";
@@ -97,18 +104,18 @@ var request = function(chart, parameters, success, error) {
                 if (error) {
                     error();
                 }
-            }
+            },
         });
     }
 };
 
 /** Request job details */
-var wait = function(chart, success, error) {
+var wait = function (chart, success, error) {
     Utils.request({
         type: "GET",
-        url: Galaxy.root + "api/datasets/" + chart.get("dataset_id_job"),
+        url: getAppRoot() + "api/datasets/" + chart.get("dataset_id_job"),
         data: {},
-        success: function(dataset) {
+        success: function (dataset) {
             var ready = false;
             switch (dataset.state) {
                 case "ok":
@@ -132,16 +139,17 @@ var wait = function(chart, success, error) {
                     );
             }
             if (!ready) {
-                window.setTimeout(function() {
+                window.setTimeout(function () {
                     wait(chart, success, error);
                 }, WAITTIME);
             }
-        }
+        },
     });
 };
 
 /** Refresh history panel */
-var refreshHdas = function() {
+var refreshHdas = function () {
+    const Galaxy = getGalaxyInstance();
     if (Galaxy && Galaxy.currHistoryPanel) {
         Galaxy.currHistoryPanel.refreshContents();
     }

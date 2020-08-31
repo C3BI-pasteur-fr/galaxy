@@ -3,10 +3,10 @@
     <requirements>
         <requirement type="package" version="2">ssaha2</requirement>
     </requirements>
-    <command interpreter="python">
-        #if   str($fastq_output) == "fastq_false"  #sff_extract.py $clip --seq_file=$out_file3 --qual_file=$out_file4 --xml_file=$out_file2 $input
-        #elif str($fastq_output) == "fastq_true"   #sff_extract.py $clip --fastq --seq_file=$out_file1 --xml_file=$out_file2 $input
-        #end if#
+    <command>
+#if   str($fastq_output) == "fastq_false"  #python  '$__tool_directory__/sff_extract.py' $clip --seq_file='$out_file3' --qual_file='$out_file4' --xml_file='$out_file2' '$input'
+#elif str($fastq_output) == "fastq_true"   #python '$__tool_directory__/sff_extract.py' $clip --fastq --seq_file='$out_file1' --xml_file='$out_file2' '$input'
+#end if#
     </command>
     <inputs>
         <param format="sff" name="input" type="data" label="Extract from this dataset"/>

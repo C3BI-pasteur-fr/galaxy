@@ -260,6 +260,9 @@ class HistorySerializer(sharable.SharableModelSerializer, deletable.PurgableSeri
 
             'contents_states': self.serialize_contents_states,
             'contents_active': self.serialize_contents_active,
+            #  TODO: Use base manager's serialize_id for user_id (and others)
+            #  after refactoring hierarchy here?
+            'user_id'       : lambda i, k, **c: self.app.security.encode_id(i.user_id) if i.user_id is not None else None
         })
 
     # remove this
@@ -390,4 +393,6 @@ class HistoryFilters(sharable.SharableModelFilters, deletable.PurgableFiltersMix
             # history specific
             'name'          : {'op': ('eq', 'contains', 'like')},
             'genome_build'  : {'op': ('eq', 'contains', 'like')},
+            'create_time'   : {'op': ('le', 'ge', 'gt', 'lt'), 'val': self.parse_date},
+            'update_time'   : {'op': ('le', 'ge', 'gt', 'lt'), 'val': self.parse_date},
         })

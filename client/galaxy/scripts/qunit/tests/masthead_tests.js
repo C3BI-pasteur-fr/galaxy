@@ -1,19 +1,18 @@
+/* global QUnit */
+import $ from "jquery";
 import testApp from "qunit/test-app";
 import Masthead from "layout/masthead";
-
-/* global QUnit */
-/* global $ */
+import { getAppRoot } from "onload";
+import { getGalaxyInstance } from "app";
 
 QUnit.module("Masthead test", {
-    beforeEach: function() {
+    beforeEach: function () {
         testApp.create();
         this.masthead = new Masthead.View({
             brand: "brand",
             use_remote_user: "use_remote_user",
             remote_user_logout_href: "remote_user_logout_href",
             lims_doc_url: "lims_doc_url",
-            biostar_url: "biostar_url",
-            biostar_url_redirect: "biostar_url_redirect",
             support_url: "support_url",
             search_url: "search_url",
             mailing_lists: "mailing_lists",
@@ -22,24 +21,25 @@ QUnit.module("Masthead test", {
             citation_url: "citation_url",
             terms_url: "terms_url",
             logo_url: "logo_url",
-            logo_src: "../../../static/images/galaxyIcon_noText.png",
+            logo_src: "../../../static/favicon.png",
             is_admin_user: "is_admin_user",
             active_view: "analysis",
-            ftp_upload_dir: "ftp_upload_dir",
             ftp_upload_site: "ftp_upload_site",
             datatypes_disable_auto: true,
             allow_user_creation: true,
             enable_cloud_launch: true,
-            user_requests: true
+            user_requests: true,
         });
-        $("body").append(this.masthead.render().$el);
+        this.container = this.masthead.render().$el;
+        $("body").append(this.container);
     },
-    afterEach: function() {
+    afterEach: function () {
         testApp.destroy();
-    }
+        this.container.remove();
+    },
 });
 
-QUnit.test("tabs", function(assert) {
+QUnit.test("tabs", function (assert) {
     var tab = this.masthead.collection.findWhere({ id: "analysis" });
     var $tab = $("#analysis");
     var $toggle = $tab.find(".nav-link");
@@ -48,16 +48,12 @@ QUnit.test("tabs", function(assert) {
     assert.ok(tab && $tab.length == 1, "Found analysis tab");
     tab.set("title", "Analyze");
     assert.ok($toggle.html() == "Analyze", "Correct title");
-    assert.ok(tab.get("target") == "_parent", "Correct initial target");
-    tab.set("target", "_target");
-    assert.ok($toggle.attr("target") == "_target", "Correct test target");
     assert.ok($toggle.css("visibility") == "visible", "Tab visible");
     tab.set("visible", false);
     assert.ok($toggle.css("visibility") == "hidden", "Tab hidden");
     tab.set("visible", true);
     assert.ok($toggle.css("visibility") == "visible", "Tab visible, again");
-    // TODO: cleanup global usage so window.Galaxy isn't needed here.
-    assert.ok($toggle.attr("href") == window.Galaxy.root, "Correct initial url");
+    assert.ok($toggle.attr("href") == getAppRoot(), "Correct initial url");
     tab.set("url", "_url");
     assert.ok($toggle.attr("href") == "/_url", "Correct test url");
     tab.set("url", "http://_url");
@@ -108,7 +104,7 @@ QUnit.test("tabs", function(assert) {
     assert.ok($item.length === 0, "All menu items removed");
     tab.set("menu", [
         { title: "_menu_title_0", url: "_menu_url_0", target: "_menu_target_0" },
-        { title: "_menu_title_1", url: "_menu_url_1", target: "_menu_target_1" }
+        { title: "_menu_title_1", url: "_menu_url_1", target: "_menu_target_1" },
     ]);
     $item = $menu.find("a");
     assert.ok($item.length == 2, "Two menu items added");
@@ -123,6 +119,6 @@ QUnit.test("tabs", function(assert) {
     assert.ok(!$toggle.hasClass("toggle"), "Untoggled before click");
     $toggle.trigger("click");
     assert.ok($toggle.hasClass("toggle"), "Toggled after click");
-    // TODO: cleanup global usage so window.Galaxy isn't needed here.
-    assert.ok(window.Galaxy.frame.active, "Scratchbook is active");
+    let galaxy = getGalaxyInstance();
+    assert.ok(galaxy.frame.active, "Scratchbook is active");
 });

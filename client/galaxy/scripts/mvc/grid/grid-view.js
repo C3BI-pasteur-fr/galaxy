@@ -1,12 +1,16 @@
-import * as Backbone from "backbone";
-import * as _ from "underscore";
+import Backbone from "backbone";
+import _ from "underscore";
+import $ from "jquery";
+import { getGalaxyInstance } from "app";
 import Utils from "utils/utils";
 import GridModel from "mvc/grid/grid-model";
 import Templates from "mvc/grid/grid-template";
 import PopupMenu from "mvc/ui/popup-menu";
 import LoadingIndicator from "ui/loading-indicator";
+import { init_refresh_on_change } from "onload/globalInits/init_refresh_on_change";
+import store from "../../store";
+import slugify from "slugify";
 
-/* global $ */
 // This is necessary so that, when nested arrays are used in ajax/post/get methods, square brackets ('[]') are
 // not appended to the identifier of a nested array.
 $.ajaxSettings.traditional = true;
@@ -17,21 +21,27 @@ export default Backbone.View.extend({
     grid: null,
 
     // Initialize
-    initialize: function(grid_config) {
+    initialize: function (grid_config) {
         this.grid = new GridModel();
         this.title = grid_config.title;
         this.active_tab = grid_config.active_tab;
         var self = this;
-        window.add_tag_to_grid_filter = (tag_name, tag_value) => {
-            // Put tag name and value together.
-            var tag = tag_name + (tag_value !== undefined && tag_value !== "" ? `:${tag_value}` : "");
-            var advanced_search = $("#advanced-search").is(":visible");
-            if (!advanced_search) {
-                $("#standard-search").slideToggle("fast");
-                $("#advanced-search").slideToggle("fast");
+
+        // Subscribe to changes in the store, currently just storing
+        // tag changes from the tagging components, but that will change
+        // when we rework the grid. This subscription ties this older grid
+        // code to the new vue components
+        store.watch(
+            (state) => state.gridSearch.searchTags,
+            (newTags) => {
+                const tagArray = Array.from(newTags);
+                self.grid.add_filter("tags", tagArray, false);
+                self.openAdvancedSearch();
+                self.render_filter_button("tags", tagArray);
+                self.go_page_one();
+                self.execute();
             }
-            self.add_filter_condition("tags", tag);
-        };
+        );
 
         if (grid_config.url_base && !grid_config.items) {
             LoadingIndicator.markViewAsLoading(this);
@@ -41,11 +51,11 @@ export default Backbone.View.extend({
             });
             $.ajax({
                 url: `${grid_config.url_base}?${$.param(url_data)}`,
-                success: function(response) {
+                success: function (response) {
                     response.embedded = grid_config.embedded;
                     response.filters = grid_config.filters || {};
                     self.init_grid(response);
-                }
+                },
             });
         } else {
             // set element
@@ -57,24 +67,33 @@ export default Backbone.View.extend({
         if (grid_config.use_panels) {
             $("#center").css({
                 padding: "10px",
-                overflow: "auto"
+                overflow: "auto",
             });
         }
     },
 
+    openAdvancedSearch: function () {
+        var isOpen = $("#advanced-search").is(":visible");
+        if (!isOpen) {
+            $("#standard-search").slideToggle("fast");
+            $("#advanced-search").slideToggle("fast");
+        }
+    },
+
     // refresh frames
-    handle_refresh: function(refresh_frames) {
+    handle_refresh: function (refresh_frames) {
         if (refresh_frames) {
             if ($.inArray("history", refresh_frames) > -1) {
-                if (window.top.Galaxy && window.top.Galaxy.currHistoryPanel) {
-                    window.top.Galaxy.currHistoryPanel.loadCurrentHistory();
+                const Galaxy = getGalaxyInstance();
+                if (Galaxy && Galaxy.currHistoryPanel) {
+                    Galaxy.currHistoryPanel.loadCurrentHistory();
                 }
             }
         }
     },
 
     // Initialize
-    init_grid: function(grid_config) {
+    init_grid: function (grid_config) {
         this.grid.set(grid_config);
 
         // get options
@@ -88,11 +107,14 @@ export default Backbone.View.extend({
 
         // strip protocol and domain
         var url = this.grid.get("url_base");
-        url = url.replace(/^.*\/\/[^\/]+/, "");
+        url = url.replace(/^.*\/\/[^/]+/, "");
         this.grid.set("url_base", url);
 
         // append main template
         this.$el.html(Templates.grid(options));
+
+        // add a class identifier for styling purposes
+        this.$el.addClass(this.getRootClassName(grid_config));
 
         // update div contents
         this.$el.find("#grid-table-header").html(Templates.header(options));
@@ -116,50 +138,48 @@ export default Backbone.View.extend({
 
         // attach global event handler
         // TODO: redundant (the onload/standard page handlers do this) - but needed because these are constructed after page ready
-        if (window.init_refresh_on_change) {
-            window.init_refresh_on_change();
-        }
+        init_refresh_on_change();
     },
 
     // Initialize grid controls
-    init_grid_controls: function() {
+    init_grid_controls: function () {
         // link
         var self = this;
 
         // Initialize grid operation button.
-        this.$el.find(".operation-button").each(function() {
+        this.$el.find(".operation-button").each(function () {
             $(this).off();
-            $(this).click(function() {
+            $(this).click(function () {
                 self.submit_operation(this);
                 return false;
             });
         });
 
         // Initialize text filters to select text on click and use normal font when user is typing.
-        this.$el.find("input[type=text]").each(function() {
+        this.$el.find("input[type=text]").each(function () {
             $(this).off();
             $(this)
-                .click(function() {
+                .click(function () {
                     $(this).select();
                 })
-                .keyup(function() {
+                .keyup(function () {
                     $(this).css("font-style", "normal");
                 });
         });
 
         // Initialize sort links.
-        this.$el.find(".sort-link").each(function() {
+        this.$el.find(".sort-link").each(function () {
             $(this).off();
-            $(this).click(function() {
+            $(this).click(function () {
                 self.set_sort_condition($(this).attr("sort_key"));
                 return false;
             });
         });
 
         // Initialize text filters.
-        this.$el.find(".text-filter-form").each(function() {
+        this.$el.find(".text-filter-form").each(function () {
             $(this).off();
-            $(this).submit(function() {
+            $(this).submit(function () {
                 var column_key = $(this).attr("column_key");
                 var text_input_obj = $(`#input-${column_key}-filter`);
                 var text_input = text_input_obj.val();
@@ -170,13 +190,11 @@ export default Backbone.View.extend({
         });
 
         // Initialize categorical filters.
-        this.$el.find(".text-filter-val > a").each(function() {
+        this.$el.find(".text-filter-val > a").each(function () {
             $(this).off();
-            $(this).click(function() {
+            $(this).click(function () {
                 // Remove visible element.
-                $(this)
-                    .parent()
-                    .remove();
+                $(this).parent().remove();
 
                 // Remove filter condition.
                 self.remove_filter_condition($(this).attr("filter_key"), $(this).attr("filter_val"));
@@ -187,16 +205,16 @@ export default Backbone.View.extend({
         });
 
         // Initialize categorical filters.
-        this.$el.find(".categorical-filter > a").each(function() {
+        this.$el.find(".categorical-filter > a").each(function () {
             $(this).off();
-            $(this).click(function() {
+            $(this).click(function () {
                 self.set_categorical_filter($(this).attr("filter_key"), $(this).attr("filter_val"));
                 return false;
             });
         });
 
         // Initialize standard, advanced search toggles.
-        this.$el.find(".advanced-search-toggle").each(function() {
+        this.$el.find(".advanced-search-toggle").each(function () {
             $(this).off();
             $(this).click(() => {
                 self.$el.find("#standard-search").slideToggle("fast");
@@ -213,16 +231,16 @@ export default Backbone.View.extend({
     },
 
     // Initialize grid elements.
-    init_grid_elements: function() {
+    init_grid_elements: function () {
         // Initialize grid selection checkboxes.
-        this.$el.find(".grid").each(function() {
+        this.$el.find(".grid").each(function () {
             var checkboxes = $(this).find("input.grid-row-select-checkbox");
             var check_count = $(this).find("span.grid-selected-count");
             var update_checked = () => {
                 check_count.text($(checkboxes).filter(":checked").length);
             };
 
-            $(checkboxes).each(function() {
+            $(checkboxes).each(function () {
                 $(this).change(update_checked);
             });
             update_checked();
@@ -238,8 +256,8 @@ export default Backbone.View.extend({
         //
         // add page click events
         //
-        this.$el.find(".page-link-grid > a").each(function() {
-            $(this).click(function() {
+        this.$el.find(".page-link-grid > a").each(function () {
+            $(this).click(function () {
                 self.set_page($(this).attr("page_num"));
                 return false;
             });
@@ -248,11 +266,11 @@ export default Backbone.View.extend({
         //
         // add inbound/outbound events
         //
-        this.$el.find(".use-target").each(function() {
-            $(this).click(function() {
+        this.$el.find(".use-target").each(function () {
+            $(this).click(function () {
                 self.execute({
                     href: $(this).attr("href"),
-                    target: $(this).attr("target")
+                    target: $(this).attr("target"),
                 });
                 return false;
             });
@@ -268,14 +286,14 @@ export default Backbone.View.extend({
         _.each(options.items, (item, index) => {
             var button = self.$(`#grid-${item.encode_id}-popup`).off();
             var popup = new PopupMenu(button);
-            _.each(options.operations, operation => {
+            _.each(options.operations, (operation) => {
                 self.add_operation(popup, operation, item);
             });
         });
     },
 
     /** Add an operation to the items menu */
-    add_operation: function(popup, operation, item) {
+    add_operation: function (popup, operation, item) {
         var self = this;
         var settings = item.operation_config[operation.label];
         if (settings.allowed && operation.allow_popup) {
@@ -284,7 +302,7 @@ export default Backbone.View.extend({
                 href: settings.url_args,
                 target: settings.target,
                 confirmation_text: operation.confirm,
-                func: function(e) {
+                func: function (e) {
                     e.preventDefault();
                     var label = $(e.target).html();
                     if (operation.onclick) {
@@ -292,13 +310,13 @@ export default Backbone.View.extend({
                     } else {
                         self.execute(this.findItemByHtml(label));
                     }
-                }
+                },
             });
         }
     },
 
     // Add a condition to the grid filter; this adds the condition and refreshes the grid.
-    add_filter_condition: function(name, value) {
+    add_filter_condition: function (name, value) {
         // Do nothing is value is empty.
         if (value === "") {
             return false;
@@ -307,10 +325,18 @@ export default Backbone.View.extend({
         // Add condition to grid.
         this.grid.add_filter(name, value, true);
 
+        this.render_filter_button(name, value);
+
+        // execute
+        this.go_page_one();
+        this.execute();
+    },
+
+    render_filter_button: function (name, value) {
         // Add button that displays filter and provides a button to delete it.
         var t = $(Templates.filter_element(name, value));
         var self = this;
-        t.click(function() {
+        t.click(function () {
             // Remove visible element.
             $(this).remove();
 
@@ -321,16 +347,17 @@ export default Backbone.View.extend({
         // append to container
         var container = this.$el.find(`#${name}-filtering-criteria`);
         container.append(t);
-
-        // execute
-        this.go_page_one();
-        this.execute();
     },
 
     // Remove a condition to the grid filter; this adds the condition and refreshes the grid.
-    remove_filter_condition: function(name, value) {
+    remove_filter_condition: function (name, value) {
         // Remove filter condition.
         this.grid.remove_filter(name, value);
+
+        // update vuex if the one criteria we're currently tracking changes
+        if (name == "tags") {
+            store.dispatch("removeSearchTag", { text: value });
+        }
 
         // Execute
         this.go_page_one();
@@ -338,7 +365,7 @@ export default Backbone.View.extend({
     },
 
     // Set sort condition for grid.
-    set_sort_condition: function(col_key) {
+    set_sort_condition: function (col_key) {
         // Set new sort condition. New sort is col_key if sorting new column; if reversing sort on
         // currently sorted column, sort is reversed.
         var cur_sort = this.grid.get("sort_key");
@@ -367,13 +394,13 @@ export default Backbone.View.extend({
     },
 
     // Set new value for categorical filter.
-    set_categorical_filter: function(name, new_value) {
+    set_categorical_filter: function (name, new_value) {
         // Update filter hyperlinks to reflect new filter value.
         var category_filter = this.grid.get("categorical_filters")[name];
 
         var cur_value = this.grid.get("filters")[name];
         var self = this;
-        this.$el.find(`.${name}-filter`).each(function() {
+        this.$el.find(`.${name}-filter`).each(function () {
             var text = $.trim($(this).text());
             var filter = category_filter[text];
             var filter_value = filter[name];
@@ -387,7 +414,7 @@ export default Backbone.View.extend({
                 // Add hyperlink for this filter since grid will no longer be using this filter. It is assumed that
                 // this element has a single child, a hyperlink/anchor.
                 $(this).empty();
-                var t = $(`<a href="#">${text}</a>`);
+                var t = $(`<a href="javascript:void(0)" role="button">${text}</a>`);
                 t.click(() => {
                     self.set_categorical_filter(name, filter_value);
                 });
@@ -403,23 +430,21 @@ export default Backbone.View.extend({
     },
 
     // Set page to view.
-    set_page: function(new_page) {
+    set_page: function (new_page) {
         // Update page hyperlink to reflect new page.
         var self = this;
-        this.$el.find(".page-link").each(function() {
+        this.$el.find(".page-link").each(function () {
             var id = $(this).attr("id");
 
             var // Id has form 'page-link-<page_num>
-            page_num = parseInt(id.split("-")[2], 10);
+                page_num = parseInt(id.split("-")[2], 10);
 
             var cur_page = self.grid.get("cur_page");
             var text;
             if (page_num === new_page) {
                 // Remove link to page since grid will be on this page. It is assumed that
                 // this element has a single child, a hyperlink/anchor with text.
-                text = $(this)
-                    .children()
-                    .text();
+                text = $(this).children().text();
                 $(this).empty();
                 $(this).addClass("inactive-link");
                 $(this).text(text);
@@ -429,7 +454,7 @@ export default Backbone.View.extend({
                 text = $(this).text();
                 $(this).empty();
                 $(this).removeClass("inactive-link");
-                var t = $(`<a href="#">${text}</a>`);
+                var t = $(`<a href="javascript:void(0)" role="button">${text}</a>`);
                 t.click(() => {
                     self.set_page(page_num);
                 });
@@ -446,7 +471,7 @@ export default Backbone.View.extend({
     },
 
     // confirmation/submission of operation request
-    submit_operation: function(operation_button, confirmation_text) {
+    submit_operation: function (operation_button, confirmation_text) {
         // identify operation
         var operation_name = $(operation_button).val();
 
@@ -458,7 +483,7 @@ export default Backbone.View.extend({
 
         // Check to see if there's grid confirmation text for this operation
         var operation = _.findWhere(this.grid.attributes.operations, {
-            label: operation_name
+            label: operation_name,
         });
         if (operation && !confirmation_text) {
             confirmation_text = operation.confirm || "";
@@ -466,7 +491,7 @@ export default Backbone.View.extend({
 
         // collect ids
         var item_ids = [];
-        this.$el.find("input[name=id]:checked").each(function() {
+        this.$el.find("input[name=id]:checked").each(function () {
             item_ids.push($(this).val());
         });
 
@@ -474,29 +499,29 @@ export default Backbone.View.extend({
         var options = {
             operation: operation_name,
             id: item_ids,
-            confirmation_text: confirmation_text
+            confirmation_text: confirmation_text,
         };
         if (operation.target == "top" || operation.target == "center") {
             options = _.extend(options, {
                 href: operation.href,
-                target: operation.target
+                target: operation.target,
             });
         }
         this.execute(options);
         return true;
     },
 
-    check_all_items: function() {
+    check_all_items: function () {
         var check = this.$(".grid-row-select-checkbox");
         var state = this.$("#check_all").prop("checked");
-        _.each(check, c => {
+        _.each(check, (c) => {
             $(c).prop("checked", state);
         });
         this.init_grid_elements();
     },
 
     // Go back to page one; this is useful when a filter is applied.
-    go_page_one: function() {
+    go_page_one: function () {
         // Need to go back to page 1 if not showing all.
         var cur_page = this.grid.get("cur_page");
         if (cur_page !== null && cur_page !== undefined && cur_page !== "all") {
@@ -507,7 +532,7 @@ export default Backbone.View.extend({
     //
     // execute operations and hyperlink requests
     //
-    execute: function(options) {
+    execute: function (options) {
         // get url
         var id = null;
         var href = null;
@@ -562,7 +587,7 @@ export default Backbone.View.extend({
             // Update grid.
             this.grid.set({
                 operation: operation,
-                item_ids: id
+                item_ids: id,
             });
 
             // Do operation. If operation cannot be performed asynchronously, redirect to location.
@@ -592,7 +617,7 @@ export default Backbone.View.extend({
     },
 
     // go to url
-    go_to: function(target, href) {
+    go_to: function (target, href) {
         // get slide status
         var advanced_search = this.$el.find("#advanced-search").is(":visible");
         this.grid.set("advanced_search", advanced_search);
@@ -605,7 +630,7 @@ export default Backbone.View.extend({
         // clear grid of transient request attributes.
         this.grid.set({
             operation: undefined,
-            item_ids: undefined
+            item_ids: undefined,
         });
         switch (target) {
             case "center":
@@ -620,7 +645,7 @@ export default Backbone.View.extend({
     },
 
     // Update grid.
-    update_grid: function() {
+    update_grid: function () {
         // If there's an operation, do POST; otherwise, do GET.
         var method = this.grid.get("operation") ? "POST" : "GET";
 
@@ -631,10 +656,10 @@ export default Backbone.View.extend({
             type: method,
             url: self.grid.get("url_base"),
             data: self.grid.get_url_data(),
-            error: function() {
+            error: function () {
                 alert("Grid refresh failed");
             },
-            success: function(response_text) {
+            success: function (response_text) {
                 // backup
                 var embedded = self.grid.get("embedded");
                 var insert = self.grid.get("insert");
@@ -654,13 +679,20 @@ export default Backbone.View.extend({
                 // Hide loading overlay.
                 self.$el.find(".loading-elt-overlay").hide();
             },
-            complete: function() {
+            complete: function () {
                 // Clear grid of transient request attributes.
                 self.grid.set({
                     operation: undefined,
-                    item_ids: undefined
+                    item_ids: undefined,
                 });
-            }
+            },
         });
-    }
+    },
+
+    // Generates a class name at the root of the view that we can
+    // use for conditional styling in the various kinds of grids
+    // instead of acres of if/then statements in javascript
+    getRootClassName({ title = "grid" }) {
+        return slugify(title).toLowerCase();
+    },
 });

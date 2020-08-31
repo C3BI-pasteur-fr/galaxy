@@ -1,10 +1,14 @@
 import gzip
+import io
 import re
 import sys
 import tarfile
 import zipfile
 
-from six import StringIO
+from six import (
+    BytesIO,
+    StringIO
+)
 from six.moves import filter
 
 from galaxy import util
@@ -21,33 +25,35 @@ else:
     import bz2
 
 HTML_CHECK_LINES = 100
+CHUNK_SIZE = 2 ** 15  # 32Kb
+HTML_REGEXPS = (
+    re.compile(r"<A\s+[^>]*HREF[^>]+>", re.I),
+    re.compile(r"<IFRAME[^>]*>", re.I),
+    re.compile(r"<FRAMESET[^>]*>", re.I),
+    re.compile(r"<META[\W][^>]*>", re.I),
+    re.compile(r"<SCRIPT[^>]*>", re.I),
+)
 
 
-def check_html(file_path, chunk=None):
-    if chunk is None:
-        temp = open(file_path, "U")
-    elif hasattr(chunk, "splitlines"):
-        temp = chunk.splitlines()
+def check_html(name, file_path=True):
+    """
+    Returns True if the file/string contains HTML code.
+    """
+    # Handles files if file_path is True or text if file_path is False
+    if file_path:
+        temp = io.open(name, "r", encoding='utf-8')
     else:
-        temp = chunk
-    regexp1 = re.compile("<A\s+[^>]*HREF[^>]+>", re.I)
-    regexp2 = re.compile("<IFRAME[^>]*>", re.I)
-    regexp3 = re.compile("<FRAMESET[^>]*>", re.I)
-    regexp4 = re.compile("<META[\W][^>]*>", re.I)
-    regexp5 = re.compile("<SCRIPT[^>]*>", re.I)
-    lineno = 0
-    # TODO: Potentially reading huge lines into string here, this should be
-    # reworked.
-    for line in temp:
-        lineno += 1
-        matches = regexp1.search(line) or regexp2.search(line) or regexp3.search(line) or regexp4.search(line) or regexp5.search(line)
-        if matches:
-            if chunk is None:
-                temp.close()
-            return True
-        if HTML_CHECK_LINES and (lineno > HTML_CHECK_LINES):
-            break
-    if chunk is None:
+        temp = StringIO(util.unicodify(name))
+    try:
+        for _ in range(HTML_CHECK_LINES):
+            line = temp.readline(CHUNK_SIZE)
+            if not line:
+                break
+            if any(regexp.search(line) for regexp in HTML_REGEXPS):
+                return True
+    except UnicodeDecodeError:
+        return False
+    finally:
         temp.close()
     return False
 
@@ -55,9 +61,9 @@ def check_html(file_path, chunk=None):
 def check_binary(name, file_path=True):
     # Handles files if file_path is True or text if file_path is False
     if file_path:
-        temp = open(name, "U")
+        temp = open(name, "rb")
     else:
-        temp = StringIO(name)
+        temp = BytesIO(name)
     try:
         return util.is_binary(temp.read(1024))
     finally:
@@ -68,9 +74,8 @@ def check_gzip(file_path, check_content=True):
     # This method returns a tuple of booleans representing ( is_gzipped, is_valid )
     # Make sure we have a gzipped file
     try:
-        temp = open(file_path, "U")
-        magic_check = temp.read(2)
-        temp.close()
+        with open(file_path, "rb") as temp:
+            magic_check = temp.read(2)
         if magic_check != util.gzip_magic:
             return (False, False)
     except Exception:
@@ -79,7 +84,8 @@ def check_gzip(file_path, check_content=True):
     # If the file is Bam, it should already have been detected as such, so we'll just check
     # for sff format.
     try:
-        header = gzip.open(file_path).read(4)
+        with gzip.open(file_path, 'rb') as fh:
+            header = fh.read(4)
         if header == b'.sff':
             return (True, True)
     except Exception:
@@ -88,21 +94,18 @@ def check_gzip(file_path, check_content=True):
     if not check_content:
         return (True, True)
 
-    CHUNK_SIZE = 2 ** 15  # 32Kb
-    gzipped_file = gzip.GzipFile(file_path, mode='rb')
-    chunk = gzipped_file.read(CHUNK_SIZE)
-    gzipped_file.close()
+    with gzip.open(file_path, mode='rb') as gzipped_file:
+        chunk = gzipped_file.read(CHUNK_SIZE)
     # See if we have a compressed HTML file
-    if check_html(file_path, chunk=chunk):
+    if check_html(chunk, file_path=False):
         return (True, False)
     return (True, True)
 
 
 def check_bz2(file_path, check_content=True):
     try:
-        temp = open(file_path, "U")
-        magic_check = temp.read(3)
-        temp.close()
+        with open(file_path, "rb") as temp:
+            magic_check = temp.read(3)
         if magic_check != util.bz2_magic:
             return (False, False)
     except Exception:
@@ -111,12 +114,10 @@ def check_bz2(file_path, check_content=True):
     if not check_content:
         return (True, True)
 
-    CHUNK_SIZE = 2 ** 15  # reKb
-    bzipped_file = bz2.BZ2File(file_path, mode='rb')
-    chunk = bzipped_file.read(CHUNK_SIZE)
-    bzipped_file.close()
+    with bz2.BZ2File(file_path, mode='rb') as bzipped_file:
+        chunk = bzipped_file.read(CHUNK_SIZE)
     # See if we have a compressed HTML file
-    if check_html(file_path, chunk=chunk):
+    if check_html(chunk, file_path=False):
         return (True, False)
     return (True, True)
 
@@ -128,12 +129,11 @@ def check_zip(file_path, check_content=True, files=1):
     if not check_content:
         return (True, True)
 
-    CHUNK_SIZE = 2 ** 15  # 32Kb
     chunk = None
     for filect, member in enumerate(iter_zip(file_path)):
         handle, name = member
         chunk = handle.read(CHUNK_SIZE)
-        if chunk and check_html(file_path, chunk):
+        if chunk and check_html(chunk, file_path=False):
             return (True, False)
         if filect >= files:
             break

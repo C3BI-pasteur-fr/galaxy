@@ -1,29 +1,33 @@
+import _ from "underscore";
+import $ from "jquery";
+import { getAppRoot } from "onload/loadConfig";
 import Utils from "utils/utils";
-import NodeView from "mvc/workflow/workflow-view-node";
-var Node = Backbone.Model.extend({
-    initialize: function(app, attr) {
+import { NodeView } from "./workflow-view-node";
+
+export class Node {
+    constructor(app, attr = {}) {
         this.app = app;
         this.element = attr.element;
         this.input_terminals = {};
         this.output_terminals = {};
-        this.errors = {};
+        this.errors = null;
         this.workflow_outputs = [];
-    },
-    getWorkflowOutput: function(outputName) {
+    }
+    getWorkflowOutput(outputName) {
         return _.findWhere(this.workflow_outputs, {
-            output_name: outputName
+            output_name: outputName,
         });
-    },
-    isWorkflowOutput: function(outputName) {
+    }
+    isWorkflowOutput(outputName) {
         return this.getWorkflowOutput(outputName) !== undefined;
-    },
-    removeWorkflowOutput: function(outputName) {
+    }
+    removeWorkflowOutput(outputName) {
         while (this.isWorkflowOutput(outputName)) {
             const target = this.getWorkflowOutput(outputName);
             this.workflow_outputs.splice(_.indexOf(this.workflow_outputs, target), 1);
         }
-    },
-    addWorkflowOutput: function(outputName, label) {
+    }
+    addWorkflowOutput(outputName, label) {
         if (!this.isWorkflowOutput(outputName)) {
             var output = { output_name: outputName };
             if (label) {
@@ -33,8 +37,12 @@ var Node = Backbone.Model.extend({
             return true;
         }
         return false;
-    },
-    labelWorkflowOutput: function(outputName, label) {
+    }
+    markWorkflowOutput(outputName) {
+        var callout = $(this.element).find(`.callout-terminal.${outputName.replace(/(?=[()])/g, "\\")}`);
+        callout.find("icon").addClass("mark-terminal-active");
+    }
+    labelWorkflowOutput(outputName, label) {
         var changed = false;
         var oldLabel = null;
         if (this.isWorkflowOutput(outputName)) {
@@ -46,16 +54,33 @@ var Node = Backbone.Model.extend({
             changed = this.addWorkflowOutput(outputName, label);
         }
         if (changed) {
-            this.app.workflow.updateOutputLabel(oldLabel, label);
+            this.app.updateOutputLabel(oldLabel, label);
             this.markChanged();
             this.nodeView.redrawWorkflowOutputs();
         }
         return changed;
-    },
-    connectedOutputTerminals: function() {
+    }
+    changeOutputDatatype(outputName, datatype) {
+        const output_terminal = this.output_terminals[outputName];
+        const output = this.nodeView.outputViews[outputName].output;
+        output_terminal.force_datatype = datatype;
+        output.force_datatype = datatype;
+        if (datatype) {
+            this.post_job_actions["ChangeDatatypeAction" + outputName] = {
+                action_arguments: { newtype: datatype },
+                action_type: "ChangeDatatypeAction",
+                output_name: outputName,
+            };
+        } else {
+            delete this.post_job_actions["ChangeDatatypeAction" + outputName];
+        }
+        this.markChanged();
+        output_terminal.destroyInvalidConnections();
+    }
+    connectedOutputTerminals() {
         return this._connectedTerminals(this.output_terminals);
-    },
-    _connectedTerminals: function(terminals) {
+    }
+    _connectedTerminals(terminals) {
         var connectedTerminals = [];
         $.each(terminals, (_, t) => {
             if (t.connectors.length > 0) {
@@ -63,8 +88,8 @@ var Node = Backbone.Model.extend({
             }
         });
         return connectedTerminals;
-    },
-    hasConnectedOutputTerminals: function() {
+    }
+    hasConnectedOutputTerminals() {
         // return this.connectedOutputTerminals().length > 0; <- optimized this
         var outputTerminals = this.output_terminals;
         for (var outputName in outputTerminals) {
@@ -73,11 +98,11 @@ var Node = Backbone.Model.extend({
             }
         }
         return false;
-    },
-    connectedMappedInputTerminals: function() {
+    }
+    connectedMappedInputTerminals() {
         return this._connectedMappedTerminals(this.input_terminals);
-    },
-    hasConnectedMappedInputTerminals: function() {
+    }
+    hasConnectedMappedInputTerminals() {
         // return this.connectedMappedInputTerminals().length > 0; <- optimized this
         var inputTerminals = this.input_terminals;
         for (var inputName in inputTerminals) {
@@ -87,11 +112,11 @@ var Node = Backbone.Model.extend({
             }
         }
         return false;
-    },
-    _connectedMappedTerminals: function(terminals) {
+    }
+    _connectedMappedTerminals(terminals) {
         var mapped_outputs = [];
         $.each(terminals, (_, t) => {
-            var mapOver = t.mapOver();
+            var mapOver = t.mapOver;
             if (mapOver.isCollection) {
                 if (t.connectors.length > 0) {
                     mapped_outputs.push(t);
@@ -99,94 +124,94 @@ var Node = Backbone.Model.extend({
             }
         });
         return mapped_outputs;
-    },
-    mappedInputTerminals: function() {
+    }
+    mappedInputTerminals() {
         return this._mappedTerminals(this.input_terminals);
-    },
-    _mappedTerminals: function(terminals) {
+    }
+    _mappedTerminals(terminals) {
         var mappedTerminals = [];
         $.each(terminals, (_, t) => {
-            var mapOver = t.mapOver();
+            var mapOver = t.mapOver;
             if (mapOver.isCollection) {
                 mappedTerminals.push(t);
             }
         });
         return mappedTerminals;
-    },
-    hasMappedOverInputTerminals: function() {
+    }
+    hasMappedOverInputTerminals() {
         var found = false;
-        _.each(this.input_terminals, t => {
-            var mapOver = t.mapOver();
+        _.each(this.input_terminals, (t) => {
+            var mapOver = t.mapOver;
             if (mapOver.isCollection) {
                 found = true;
             }
         });
         return found;
-    },
-    redraw: function() {
+    }
+    redraw() {
         $.each(this.input_terminals, (_, t) => {
             t.redraw();
         });
         $.each(this.output_terminals, (_, t) => {
             t.redraw();
         });
-    },
-    clone: function() {
+    }
+    clone() {
         var copiedData = {
             name: this.name,
             label: this.label,
             annotation: this.annotation,
-            post_job_actions: this.post_job_actions
+            post_job_actions: this.post_job_actions,
         };
-        var node = this.app.workflow.create_node(this.type, this.name, this.content_id);
-
+        var node = this.app.create_node(this.type, this.name, this.content_id);
         Utils.request({
             type: "POST",
-            url: `${Galaxy.root}api/workflows/build_module`,
+            url: `${getAppRoot()}api/workflows/build_module`,
             data: {
                 type: this.type,
                 tool_id: this.content_id,
-                tool_state: this.tool_state
+                tool_state: this.tool_state,
             },
-            success: data => {
+            success: (data) => {
                 var newData = Object.assign({}, data, copiedData);
                 node.init_field_data(newData);
                 node.update_field_data(newData);
-                this.app.workflow.activate_node(node);
-            }
+                this.app.activate_node(node);
+            },
         });
-    },
-    destroy: function() {
+    }
+    destroy() {
         $.each(this.input_terminals, (k, t) => {
             t.destroy();
         });
         $.each(this.output_terminals, (k, t) => {
             t.destroy();
         });
-        this.app.workflow.remove_node(this);
+        this.app.remove_node(this);
         $(this.element).remove();
-    },
-    make_active: function() {
-        $(this.element).addClass("toolForm-active");
-    },
-    make_inactive: function() {
+    }
+    make_active() {
+        $(this.element).addClass("node-active");
+    }
+    make_inactive() {
         // Keep inactive nodes stacked from most to least recently active
         // by moving element to the end of parent's node list
         var element = this.element.get(0);
-        (p => {
+        ((p) => {
             p.removeChild(element);
             p.appendChild(element);
         })(element.parentNode);
         // Remove active class
-        $(element).removeClass("toolForm-active");
-    },
-    set_tool_version: function() {
+        $(element).removeClass("node-active");
+    }
+    set_tool_version() {
         if (this.type === "tool" && this.config_form) {
             this.tool_version = this.config_form.version;
             this.content_id = this.config_form.id;
         }
-    },
-    init_field_data: function(data) {
+    }
+    init_field_data(data) {
+        //console.debug("init_field_data: ", data);
         if (data.type) {
             this.type = data.type;
         }
@@ -202,27 +227,33 @@ var Node = Backbone.Model.extend({
         this.uuid = data.uuid;
         this.workflow_outputs = data.workflow_outputs ? data.workflow_outputs : [];
         var node = this;
-        var nodeView = new NodeView({
-            el: this.element[0],
-            node: node
+        var nodeView = new NodeView(this.app, {
+            $el: this.element,
+            node: node,
         });
         node.nodeView = nodeView;
-        $.each(data.data_inputs, (i, input) => {
+        $.each(data.inputs, (i, input) => {
             nodeView.addDataInput(input);
         });
-        if (data.data_inputs.length > 0 && data.data_outputs.length > 0) {
+
+        if (data.inputs.length > 0 && data.outputs.length > 0) {
             nodeView.addRule();
         }
-        $.each(data.data_outputs, (i, output) => {
+        $.each(data.outputs, (i, output) => {
             nodeView.addDataOutput(output);
         });
         nodeView.render();
-        this.app.workflow.node_changed(this, true);
-    },
-    update_field_data: function(data) {
+        this.app.node_changed(this);
+    }
+    update_field_data(data) {
         var node = this;
         var nodeView = node.nodeView;
-        // remove unused output views and remove pre-existing output views from data.data_outputs,
+        if ("post_job_actions" in data) {
+            // Won't be present in response for data inputs
+            var pja_in = data.post_job_actions;
+            this.post_job_actions = pja_in ? pja_in : {};
+        }
+        // remove unused output views and remove pre-existing output views from data.outputs,
         // so that these are not added twice.
         var unused_outputs = [];
         // nodeView.outputViews contains pre-existing outputs,
@@ -230,9 +261,9 @@ var Node = Backbone.Model.extend({
         // Now we gather the unused outputs
         $.each(nodeView.outputViews, (i, output_view) => {
             var cur_name = output_view.output.name;
-            var data_names = data.data_outputs;
+            var data_names = data.outputs;
             var cur_name_in_data_outputs = false;
-            _.each(data_names, data_name => {
+            _.each(data_names, (data_name) => {
                 if (data_name.name == cur_name) {
                     cur_name_in_data_outputs = true;
                 }
@@ -241,15 +272,14 @@ var Node = Backbone.Model.extend({
                 unused_outputs.push(cur_name);
             }
         });
-
         // Remove the unused outputs
-        _.each(unused_outputs, unused_output => {
-            _.each(nodeView.outputViews[unused_output].terminalElement.terminal.connectors, x => {
+        _.each(unused_outputs, (unused_output) => {
+            _.each(nodeView.outputViews[unused_output].terminalElement.terminal.connectors, (x) => {
                 if (x) {
                     x.destroy(); // Removes the noodle connectors
                 }
             });
-            nodeView.outputViews[unused_output].remove(); // removes the rendered output
+            nodeView.outputViews[unused_output].$el.remove(); // removes the rendered output
             delete nodeView.outputViews[unused_output]; // removes the reference to the output
             delete node.output_terminals[unused_output]; // removes the output terminal
         });
@@ -258,13 +288,24 @@ var Node = Backbone.Model.extend({
                 node.workflow_outputs.splice(i, 1); // removes output from list of workflow outputs
             }
         });
-        $.each(data.data_outputs, (i, output) => {
+        $.each(data.outputs, (i, output) => {
             if (!nodeView.outputViews[output.name]) {
                 nodeView.addDataOutput(output); // add data output if it does not yet exist
             } else {
                 // the output already exists, but the output formats may have changed.
                 // Therefore we update the datatypes and destroy invalid connections.
                 node.output_terminals[output.name].datatypes = output.extensions;
+                const changeOutputDatatype = node.post_job_actions["ChangeOutputDatatype" + output.name];
+                if (changeOutputDatatype) {
+                    node.output_terminals[output.name].force_datatype =
+                        changeOutputDatatype.action_arguments["newtype"];
+                } else {
+                    node.output_terminals[output.name].force_datatype = null;
+                }
+                if (node.type == "parameter_input") {
+                    node.output_terminals[output.name].attributes.type = output.type;
+                }
+                node.output_terminals[output.name].optional = output.optional;
                 node.output_terminals[output.name].destroyInvalidConnections();
             }
         });
@@ -274,23 +315,17 @@ var Node = Backbone.Model.extend({
         this.errors = data.errors;
         this.annotation = data.annotation;
         this.label = data.label;
-        if ("post_job_actions" in data) {
-            // Won't be present in response for data inputs
-            var pja_in = data.post_job_actions;
-            this.post_job_actions = pja_in ? pja_in : {};
-        }
-        node.nodeView.renderToolErrors();
+        node.nodeView.renderErrors();
         // Update input rows
-        var old_body = nodeView.$("div.inputs");
+        var old_body = nodeView.$el.find("div.inputs");
         var new_body = nodeView.newInputsDiv();
         var newTerminalViews = {};
-        _.each(data.data_inputs, input => {
-            var terminalView = node.nodeView.addDataInput(input, new_body);
-            newTerminalViews[input.name] = terminalView;
+        _.each(data.inputs, (input) => {
+            newTerminalViews[input.name] = node.nodeView.addDataInput(input, new_body);
         });
         // Cleanup any leftover terminals
-        _.each(_.difference(_.values(nodeView.terminalViews), _.values(newTerminalViews)), unusedView => {
-            unusedView.el.terminal.destroy();
+        _.each(_.difference(_.values(nodeView.terminalViews), _.values(newTerminalViews)), (unusedView) => {
+            unusedView.terminal.destroy();
         });
         nodeView.terminalViews = newTerminalViews;
         node.nodeView.render();
@@ -298,8 +333,9 @@ var Node = Backbone.Model.extend({
         // type (not really valid right?) but adding special logic here for
         // data collection input parameters that can have their collection
         // change.
-        if (data.data_outputs.length == 1 && "collection_type" in data.data_outputs[0]) {
-            nodeView.updateDataOutput(data.data_outputs[0]);
+        var data_outputs = data.outputs;
+        if (data_outputs.length == 1 && "collection_type" in data_outputs[0]) {
+            nodeView.updateDataOutput(data_outputs[0]);
         }
         old_body.replaceWith(new_body);
         if ("workflow_outputs" in data) {
@@ -309,17 +345,8 @@ var Node = Backbone.Model.extend({
         // If active, reactivate with new config_form
         this.markChanged();
         this.redraw();
-    },
-    error: function(text) {
-        var b = $(this.element).find(".toolFormBody");
-        b.find("div").remove();
-        var tmp = `<div style='color: red; text-style: italic;'>${text}</div>`;
-        this.config_form = tmp;
-        b.html(tmp);
-        this.app.workflow.node_changed(this);
-    },
-    markChanged: function() {
-        this.app.workflow.node_changed(this);
     }
-});
-export default Node;
+    markChanged() {
+        this.app.node_changed(this);
+    }
+}

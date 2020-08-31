@@ -1,8 +1,5 @@
 import logging
 
-from mercurial import hg
-from mercurial import ui
-
 log = logging.getLogger(__name__)
 
 
@@ -12,10 +9,10 @@ class Metadata(object):
         self.type = None
 
     def get_changesets_for_setting_metadata(self, app, repository):
-        repo = hg.repository(ui.ui(), repository.repo_path(app))
+        repo = repository.hg_repo
         return repo.changelog
 
-    def is_valid_for_type(self, app, repository, revisions_to_check=None):
+    def is_valid_for_type(self, repository, revisions_to_check=None):
         raise Exception("Unimplemented Method")
 
 
@@ -25,5 +22,5 @@ class TipOnly(Metadata):
         self.type = None
 
     def get_changesets_for_setting_metadata(self, app, repository):
-        repo = hg.repository(ui.ui(), repository.repo_path(app))
+        repo = repository.hg_repo
         return [repo.changelog.tip()]

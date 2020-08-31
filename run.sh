@@ -39,6 +39,7 @@ then
     export GALAXY_CONFIG_OVERRIDE_TOOL_CONFIG_FILE="test/functional/tools/samples_tool_conf.xml"
     export GALAXY_CONFIG_ENABLE_BETA_WORKFLOW_MODULES="true"
     export GALAXY_CONFIG_OVERRIDE_ENABLE_BETA_TOOL_FORMATS="true"
+    export GALAXY_CONFIG_INTERACTIVETOOLS_ENABLE="true"
     export GALAXY_CONFIG_OVERRIDE_WEBHOOKS_DIR="test/functional/webhooks"
 fi
 
@@ -82,6 +83,7 @@ if [ "$run_server" = "python" -a -n "$GALAXY_RUN_ALL" ]; then
                 fi
                 # Search for all pids in the logs and tail for the last one
                 latest_pid=$(grep '^Starting server in PID [0-9]\+\.$' "../logs/$server.log" | sed 's/^Starting server in PID \([0-9]\+\).$/\1/' | tail -n 1)
+
                 # If they're equivalent, then the current pid file agrees with our logs
                 # and we've succesfully started
                 [ -n "$latest_pid" ] && [ "$latest_pid" -eq "$current_pid_in_file" ] && break
@@ -91,7 +93,7 @@ if [ "$run_server" = "python" -a -n "$GALAXY_RUN_ALL" ]; then
         fi
     done
 else
-    echo "Executing: $run_server $server_args $pid_log_paster_args"
+    echo "Executing: $run_server $server_args"
     # args are properly quoted so use eval
-    eval $run_server $server_args $pid_log_paster_args
+    eval $run_server $server_args
 fi

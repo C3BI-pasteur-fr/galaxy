@@ -29,6 +29,7 @@ class BaseWrapperTestCase(UsesApp):
         job.id = 345
         job.tool_id = TEST_TOOL_ID
         job.user = User()
+        job.object_store_id = "foo"
         self.model_objects = {Job: {345: job}}
         self.app.model.context = MockContext(self.model_objects)
 
@@ -51,9 +52,9 @@ class BaseWrapperTestCase(UsesApp):
 
     def test_version_path(self):
         wrapper = self._wrapper()
-        version_path = wrapper.get_version_string_path()
-        expected_path = os.path.join(self.test_directory, "new_files", "GALAXY_VERSION_STRING_345")
-        self.assertEquals(version_path, expected_path)
+        version_path = wrapper.get_version_string_path_legacy()
+        expected_path = os.path.join(self.test_directory, "working", "COMMAND_VERSION")
+        self.assertEqual(version_path, expected_path)
 
     def test_prepare_sets_command_line(self):
         with self._prepared_wrapper() as wrapper:
@@ -162,6 +163,7 @@ class MockTool(object):
         self.tool_dir = "/path/to/tools"
         self.dependencies = []
         self.requires_galaxy_python_environment = False
+        self.id = 'mock_id'
 
     def build_dependency_shell_commands(self, job_directory):
         return TEST_DEPENDENCIES_COMMANDS
@@ -189,6 +191,9 @@ class MockObjectStore(object):
 
     def create(self, *args, **kwds):
         pass
+
+    def exists(self, *args, **kwargs):
+        return True
 
     def get_filename(self, *args, **kwds):
         if kwds.get("base_dir", "") == "job_work":

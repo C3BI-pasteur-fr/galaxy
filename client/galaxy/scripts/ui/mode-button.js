@@ -52,7 +52,7 @@ function ModeButton(element, options) {
 ModeButton.prototype.DATA_KEY = "mode-button";
 /** default options */
 ModeButton.prototype.defaults = {
-    switchModesOnClick: true
+    switchModesOnClick: true,
 };
 
 // ---- private interface
@@ -130,7 +130,9 @@ ModeButton.prototype.getMode = function getMode(modeKey) {
 ModeButton.prototype.hasMode = function hasMode(modeKey) {
     try {
         return !!this.getMode(modeKey);
-    } catch (err) {}
+    } catch (err) {
+        console.debug(err);
+    }
     return false;
 };
 /** set the current mode to the mode with the given name */
@@ -163,7 +165,7 @@ $.fn.modeButton = function $modeButton(options) {
 
     //TODO: does map still work with jq multi selection (i.e. $( '.class-for-many-btns' ).modeButton)?
     if ($.type(options) === "object") {
-        return this.map(function() {
+        return this.map(function () {
             var $this = $(this);
             $this.data("mode-button", new ModeButton($this, options));
             return this;

@@ -48,7 +48,7 @@
     </style>
 </%def>
 
-    
+
 <%def name="center_panel()">
     ${self.body()}
 </%def>
@@ -67,33 +67,33 @@
     </div>
     <p />
     %endif
-    
+
     <%
         #
         # Setup and variables needed for page.
         #
-    
+
         # Get class name strings.
-        item_class_name = get_class_display_name( item.__class__ ) 
+        item_class_name = get_class_display_name( item.__class__ )
         item_class_name_lc = item_class_name.lower()
         item_class_plural_name = get_class_plural_display_name( item.__class__ )
         item_class_plural_name_lc = item_class_plural_name.lower()
         item_controller = get_controller_name(item)
-        
+
         # Get item name.
         item_name = get_item_name(item)
     %>
-    
-    <div class="toolForm">
-        <div class="toolFormTitle">Share ${item_class_name} '${item_name | h}' with Another User</div>
-            <div class="toolFormBody">
+
+    <div class="card">
+        <div class="card-header">Share ${item_class_name} '${item_name | h}' with Another User</div>
+            <div class="card-body">
                 <form action="${h.url_for(controller=item_controller, action='share', id=trans.security.encode_id( item.id ) )}" method="POST">
                     <div class="form-row">
                         <label>
                             Email address of user to share with
                         </label>
                         <div style="float: left; width: 100%;  margin-right: 10px;">
-                            %if trans.app.config.expose_user_email or trans.app.config.expose_user_name or trans.user_is_admin():
+                            %if trans.app.config.expose_user_email or trans.app.config.expose_user_name or trans.user_is_admin:
                             <input type="hidden" id="email_select" name="email" >
                             </input>
                             %else:
@@ -108,7 +108,11 @@
                         <input type="submit" value="Share"></input>
                     </div>
                     <div class="form-row">
-                        <a href="${h.url_for(controller=item_controller, action="sharing", id=trans.security.encode_id( item.id ) )}">Back to ${item_class_name}'s Sharing Home</a>
+                        %if item_class_name == "Workflow":
+                        <a href="${h.url_for(controller="", action="workflow/sharing", id=trans.security.encode_id( item.id ) )}">Back to ${item_class_name}'s Sharing Home</a>
+                        %else:
+                        <a href="${h.url_for(controller="", action="%s/sharing" % item_class_plural_name_lc, id=trans.security.encode_id( item.id ) )}">Back to ${item_class_name}'s Sharing Home</a>
+                        %endif
                     </div>
                 </form>
             </div>
@@ -189,7 +193,7 @@
             });
             // If there aren't any users with matching object labels, then
             // display a "default" entry with whatever text they're entering.
-            // id is set to term as that will be used in 
+            // id is set to term as that will be used in
             if(matches.length == 0){
                 return {id: term, text:term};
             }else{

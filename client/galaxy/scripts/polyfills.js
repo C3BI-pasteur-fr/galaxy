@@ -3,6 +3,9 @@
     and polyfill for non-standard features.
  */
 
+import "@babel/polyfill";
+import _ from "underscore";
+
 (() => {
     /* TODO: move to modernizr or something besides us doing this...
      * These are across all of our apps (reports, tool shed), but:
@@ -10,18 +13,19 @@
      * So, analysis-polyfills.js, reports-polyfills.js (or analysis/polyfills)
      */
     "use strict";
-    /*globals window, clearTimeout */
 
     // ------------------------------------------------------------------ polyfills
     // console protection needed in some versions of IE (at this point (IE>=9), shouldn't be needed)
     window.console = window.console || {
-        log: function() {},
-        debug: function() {},
-        info: function() {},
-        warn: function() {},
-        error: function() {},
-        assert: function() {}
+        log: function () {},
+        debug: function () {},
+        info: function () {},
+        warn: function () {},
+        error: function () {},
+        assert: function () {},
     };
+
+    console.debug("Polyfills are running");
 
     // phantomjs: does not have the native extend fn assign
     Object.assign = Object.assign || _.extend;
@@ -46,33 +50,35 @@
         };
 
     if (!window.cancelAnimationFrame)
-        window.cancelAnimationFrame = id => {
-            clearTimeout(id);
+        window.cancelAnimationFrame = (id) => {
+            window.clearTimeout(id);
         };
 
     // ------------------------------------------------------------------ can't/won't polyfill
     var features = [
         {
             name: "canvas",
-            compatible: function() {
+            compatible: function () {
                 return window.CanvasRenderingContext2D;
-            }
+            },
         },
         {
             name: "sessionStorage",
-            compatible: function() {
+            compatible: function () {
                 try {
                     return window.sessionStorage.length >= 0;
-                } catch (err) {}
+                } catch (err) {
+                    console.debug(err);
+                }
                 return false;
-            }
-        }
+            },
+        },
     ];
     // build a list of feature names for features that were not found
-    var incompatibilities = features.filter(feature => !feature.compatible()).map(feature => feature.name);
+    var incompatibilities = features.filter((feature) => !feature.compatible()).map((feature) => feature.name);
 
     // if there are needed features missing, follow the index link to the static incompat warning
-    if (!!incompatibilities.length) {
+    if (incompatibilities.length) {
         var root = document.querySelectorAll('link[rel="index"]').item(0);
         if (root) {
             window.location = `${root.href}static/incompatible-browser.html`;

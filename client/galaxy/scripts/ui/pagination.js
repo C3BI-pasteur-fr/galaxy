@@ -1,8 +1,4 @@
-//import $ from "jquery";
-// TODO:  This manipulates whatever jquery is available -- needs restructuring,
-// or removal (jquery plugins are a bad design choice for us at this point)
-// It is *only* used in the scatterplot viz, so this is safe.
-/* global $ */
+import $ from "jquery";
 
 /** Builds (twitter bootstrap styled) pagination controls.
  *  If the totalDataSize is not null, a horizontal list of page buttons is displayed.
@@ -30,7 +26,7 @@ Pagination.prototype.defaults = {
     /** the total number of data (null == unknown) */
     totalDataSize: null,
     /** size of current data on current page */
-    currDataSize: null
+    currDataSize: null,
 };
 
 /** init the control, calc numPages if possible, and render
@@ -130,7 +126,7 @@ Pagination.prototype._renderPages = function __renderPages() {
 
     var $paginationContainer = $("<ul/>").addClass("pagination pagination-page-list");
 
-    var page$LiClick = function(ev) {
+    var page$LiClick = function (ev) {
         pagination.goToPage($(this).data("page"));
     };
 
@@ -212,7 +208,7 @@ $.fn.extend({
 
         // if passed an object - use that as an options map to create pagination for each selected
         if ($.type(options) === "object") {
-            return this.map(function() {
+            return this.map(function () {
                 Pagination.create($(this), options);
                 return this;
             });
@@ -238,5 +234,5 @@ $.fn.extend({
         }
         // if there is no control already set, return undefined
         return undefined;
-    }
+    },
 });

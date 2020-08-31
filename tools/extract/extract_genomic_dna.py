@@ -19,7 +19,7 @@ import tempfile
 import bx.seq.nib
 import bx.seq.twobit
 from bx.cookbook import doc_optparse
-from bx.intervals.io import Comment, Header
+from bx.tabular.io import Comment, Header
 
 from galaxy.datatypes.util import gff_util
 from galaxy.tools.util.galaxyops import parse_cols_arg
@@ -212,7 +212,7 @@ def __main__():
                 nibs[chrom] = nib = bx.seq.nib.NibFile(open("%s/%s.nib" % (seq_path, chrom)))
             try:
                 sequence = nib.get(start, end - start)
-            except Exception as e:
+            except Exception:
                 warning = "Unable to fetch the sequence from '%d' to '%d' for build '%s'. " % (start, end - start, dbkey)
                 warnings.append(warning)
                 if not invalid_lines:
@@ -222,7 +222,7 @@ def __main__():
                 continue
         elif seq_path and os.path.isfile(seq_path):
             if not(twobitfile):
-                twobitfile = bx.seq.twobit.TwoBitFile(open(seq_path))
+                twobitfile = bx.seq.twobit.TwoBitFile(open(seq_path, 'rb'))
             try:
                 if options.gff and interpret_features:
                     # Create sequence from intervals within a feature.

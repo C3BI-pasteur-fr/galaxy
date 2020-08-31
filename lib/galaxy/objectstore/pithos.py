@@ -26,7 +26,7 @@ from galaxy.util import (
     umask_fix_perms,
 )
 from galaxy.util.path import safe_relpath
-from ..objectstore import ObjectStore
+from ..objectstore import ConcreteObjectStore
 
 NO_KAMAKI_ERROR_MESSAGE = (
     "ObjectStore configured, but no kamaki.clients dependency available."
@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 
 def parse_config_xml(config_xml):
     """Parse and validate config_xml, return dict for convenience
-    :param config_xml: (xml.etree.ElementTree.Element) root of XML subtree
+    :param config_xml: (lxml.etree.Element) root of XML subtree
     :returns: (dict) according to syntax
     :raises: various XML parse errors
     """
@@ -79,30 +79,39 @@ def parse_config_xml(config_xml):
     return r
 
 
-class PithosObjectStore(ObjectStore):
+class PithosObjectStore(ConcreteObjectStore):
     """
     Object store that stores objects as items in a Pithos+ container.
     Cache is ignored for the time being.
     """
+    store_type = 'pithos'
 
-    def __init__(self, config, config_xml):
+    def __init__(self, config, config_dict):
+        super(PithosObjectStore, self).__init__(config, config_dict)
+        self.staging_path = self.config.file_path
+        log.info('Parse config_xml for pithos object store')
+        self.config_dict = config_dict
+        log.debug(self.config_dict)
+
+        self._initialize()
+
+    def _initialize(self):
         if KamakiClient is None:
             raise Exception(NO_KAMAKI_ERROR_MESSAGE)
-        super(PithosObjectStore, self).__init__(config)
-        self.staging_path = self.config.file_path
-        self.transfer_progress = 0
-        log.info('Parse config_xml for pithos object store')
-        self.config_dict = parse_config_xml(config_xml)
-        log.debug(self.config_dict)
 
         log.info('Authenticate Synnefo account')
         self._authenticate()
         log.info('Initialize Pithos+ client')
         self._init_pithos()
 
-        log.info('Define extra_dirs')
-        self.extra_dirs = dict(
-            (e['type'], e['path']) for e in self.config_dict['extra_dirs'])
+    @classmethod
+    def parse_xml(clazz, config_xml):
+        return parse_config_xml(config_xml)
+
+    def to_dict(self):
+        as_dict = super(PithosObjectStore, self).to_dict()
+        as_dict.update(self.config_dict)
+        return as_dict
 
     def _authenticate(self):
         auth = self.config_dict['auth']
@@ -154,7 +163,7 @@ class PithosObjectStore(ObjectStore):
             # alt_name can contain parent directory references, but S3 will not
             # follow them, so if they are valid we normalize them out
             alt_name = os.path.normpath(alt_name)
-        rel_path = os.path.join(*directory_hash_id(obj.id))
+        rel_path = os.path.join(*directory_hash_id(self._get_object_id(obj)))
         if extra_dir is not None:
             if extra_dir_at_root:
                 rel_path = os.path.join(extra_dir, rel_path)
@@ -163,7 +172,7 @@ class PithosObjectStore(ObjectStore):
 
         # for JOB_WORK directory
         if obj_dir:
-            rel_path = os.path.join(rel_path, str(obj.id))
+            rel_path = os.path.join(rel_path, str(self._get_object_id(obj)))
         if base_dir:
             base = self.extra_dirs.get(base_dir)
             return os.path.join(base, rel_path)
@@ -172,7 +181,7 @@ class PithosObjectStore(ObjectStore):
         rel_path = '{0}/'.format(rel_path)
 
         if not dir_only:
-            an = alt_name if alt_name else 'dataset_{0}.dat'.format(obj.id)
+            an = alt_name if alt_name else 'dataset_{0}.dat'.format(self._get_object_id(obj))
             rel_path = os.path.join(rel_path, an)
         return rel_path
 
@@ -212,7 +221,7 @@ class PithosObjectStore(ObjectStore):
 
     # No need to overwrite "shutdown"
 
-    def exists(self, obj, **kwargs):
+    def _exists(self, obj, **kwargs):
         """Check if file exists, fix if file in cache and not on Pithos+
         :returns: weather the file exists remotely or in cache
         """
@@ -244,9 +253,9 @@ class PithosObjectStore(ObjectStore):
             return True
         return False
 
-    def create(self, obj, **kwargs):
+    def _create(self, obj, **kwargs):
         """Touch a file (aka create empty), if it doesn't exist"""
-        if not self.exists(obj, **kwargs):
+        if not self._exists(obj, **kwargs):
             # Pull out locally used fields
             extra_dir = kwargs.get('extra_dir', None)
             extra_dir_at_root = kwargs.get('extra_dir_at_root', False)
@@ -254,7 +263,7 @@ class PithosObjectStore(ObjectStore):
             alt_name = kwargs.get('alt_name', None)
 
             # Construct hashed path
-            rel_path = os.path.join(*directory_hash_id(obj.id))
+            rel_path = os.path.join(*directory_hash_id(self._get_object_id(obj)))
 
             # Optionally append extra_dir
             if extra_dir is not None:
@@ -274,23 +283,23 @@ class PithosObjectStore(ObjectStore):
             else:
                 rel_path = os.path.join(
                     rel_path,
-                    alt_name if alt_name else 'dataset_{0}.dat'.format(obj.id))
+                    alt_name if alt_name else 'dataset_{0}.dat'.format(self._get_object_id(obj)))
                 new_file = os.path.join(self.staging_path, rel_path)
                 open(new_file, 'w').close()
                 self.pithos.upload_from_string(rel_path, '')
 
-    def empty(self, obj, **kwargs):
+    def _empty(self, obj, **kwargs):
         """
         :returns: weather the object has content
         :raises ObjectNotFound:
         """
-        if not self.exists(obj, **kwargs):
+        if not self._exists(obj, **kwargs):
             raise ObjectNotFound(
                 'objectstore.empty, object does not exist: {obj}, '
                 'kwargs: {kwargs}'.format(obj=obj, kwargs=kwargs))
-        return bool(self.size(obj, **kwargs))
+        return bool(self._size(obj, **kwargs))
 
-    def size(self, obj, **kwargs):
+    def _size(self, obj, **kwargs):
         """
         :returns: The size of the object, or 0 if it doesn't exist (sorry for
             that, not our fault, the ObjectStore interface is like that some
@@ -312,7 +321,7 @@ class PithosObjectStore(ObjectStore):
             return 0
         return int(file['content-length'])
 
-    def delete(self, obj, **kwargs):
+    def _delete(self, obj, **kwargs):
         """Delete the object
         :returns: weather the object was deleted
         """
@@ -338,13 +347,13 @@ class PithosObjectStore(ObjectStore):
                 self.pithos.del_object(path)
         except OSError:
             log.exception(
-                '{0} delete error'.format(self.get_filename(obj, **kwargs)))
+                '{0} delete error'.format(self._get_filename(obj, **kwargs)))
         except ClientError as ce:
             log.exception('Could not delete {path} from Pithos, {err}'.format(
                 path=path, err=ce))
         return False
 
-    def get_data(self, obj, start=0, count=-1, **kwargs):
+    def _get_data(self, obj, start=0, count=-1, **kwargs):
         """Fetch (e.g., download) data
         :param start: Chunk of data starts here
         :param count: Fetch at most as many data, fetch all if negative
@@ -360,7 +369,7 @@ class PithosObjectStore(ObjectStore):
         data_file.close()
         return content
 
-    def get_filename(self, obj, **kwargs):
+    def _get_filename(self, obj, **kwargs):
         """Get the expected filename with absolute path"""
         base_dir = kwargs.get('base_dir', None)
         dir_only = kwargs.get('dir_only', False)
@@ -377,22 +386,22 @@ class PithosObjectStore(ObjectStore):
             return cache_path
         if self._in_cache(path):
             return cache_path
-        elif self.exists(obj, **kwargs):
+        elif self._exists(obj, **kwargs):
             if not dir_only:
                 self._pull_into_cache(path)
                 return cache_path
         raise ObjectNotFound(
             'objectstore.get_filename, no cache_path: {obj}, '
-            'kwargs: {kwargs}'.format(obj, kwargs))
+            'kwargs: {kwargs}'.format(obj=obj, kwargs=kwargs))
 
-    def update_from_file(self, obj, **kwargs):
+    def _update_from_file(self, obj, **kwargs):
         """Update the store when a file is updated"""
         if kwargs.get('create'):
-            self.create(obj, **kwargs)
-        if not self.exists(obj, **kwargs):
+            self._create(obj, **kwargs)
+        if not self._exists(obj, **kwargs):
             raise ObjectNotFound(
                 'objectstore.update_from_file, object does not exist: {obj}, '
-                'kwargs: {kwargs}'.format(obj, kwargs))
+                'kwargs: {kwargs}'.format(obj=obj, kwargs=kwargs))
 
         path = self._construct_path(obj, **kwargs)
         cache_path = self._get_cache_path(path)
@@ -411,11 +420,11 @@ class PithosObjectStore(ObjectStore):
             with open(cache_path) as f:
                 self.pithos.upload_object(obj, f)
 
-    def get_object_url(self, obj, **kwargs):
+    def _get_object_url(self, obj, **kwargs):
         """
         :returns: URL for direct access, None if no object
         """
-        if self.exists(obj, **kwargs):
+        if self._exists(obj, **kwargs):
             path = self._construct_path(obj, **kwargs)
             try:
                 return self.pithos.publish_object(path)
@@ -425,7 +434,7 @@ class PithosObjectStore(ObjectStore):
                 log.exception('Kamaki: {0}'.format(ce))
         return None
 
-    def get_store_usage_percent(self):
+    def _get_store_usage_percent(self):
         """
         :returns: percentage indicating how full the store is
         """

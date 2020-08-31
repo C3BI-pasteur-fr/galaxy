@@ -11,6 +11,7 @@ from six.moves.urllib.parse import quote_plus
 
 from galaxy import util
 from galaxy.datatypes import metadata
+from galaxy.datatypes.data import DatatypeValidation
 from galaxy.datatypes.metadata import MetadataElement
 from galaxy.datatypes.sniff import (
     build_sniff_from_prefix,
@@ -19,7 +20,7 @@ from galaxy.datatypes.sniff import (
 )
 from galaxy.datatypes.tabular import Tabular
 from galaxy.datatypes.util.gff_util import parse_gff3_attributes, parse_gff_attributes
-from galaxy.web import url_for
+from galaxy.util import compression_utils
 from . import (
     data,
     dataproviders
@@ -83,62 +84,59 @@ class Interval(Tabular):
         if dataset.has_data():
             empty_line_count = 0
             num_check_lines = 100  # only check up to this many non empty lines
-            for i, line in enumerate(open(dataset.file_name)):
-                line = line.rstrip('\r\n')
-                if line:
-                    if (first_line_is_header or line[0] == '#'):
-                        self.init_meta(dataset)
-                        line = line.strip('#')
-                        elems = line.split('\t')
-                        for meta_name, header_list in alias_spec.items():
-                            for header_val in header_list:
-                                if header_val in elems:
-                                    # found highest priority header to meta_name
-                                    setattr(dataset.metadata, meta_name, elems.index(header_val) + 1)
-                                    break  # next meta_name
-                        break  # Our metadata is set, so break out of the outer loop
+            with compression_utils.get_fileobj(dataset.file_name) as in_fh:
+                for i, line in enumerate(in_fh):
+                    line = line.rstrip('\r\n')
+                    if line:
+                        if (first_line_is_header or line[0] == '#'):
+                            self.init_meta(dataset)
+                            line = line.strip('#')
+                            elems = line.split('\t')
+                            for meta_name, header_list in alias_spec.items():
+                                for header_val in header_list:
+                                    if header_val in elems:
+                                        # found highest priority header to meta_name
+                                        setattr(dataset.metadata, meta_name, elems.index(header_val) + 1)
+                                        break  # next meta_name
+                            break  # Our metadata is set, so break out of the outer loop
+                        else:
+                            # Header lines in Interval files are optional. For example, BED is Interval but has no header.
+                            # We'll make a best guess at the location of the metadata columns.
+                            elems = line.split('\t')
+                            if len(elems) > 2:
+                                if overwrite or not dataset.metadata.element_is_set('chromCol'):
+                                    dataset.metadata.chromCol = 1
+                                try:
+                                    int(elems[1])
+                                    if overwrite or not dataset.metadata.element_is_set('startCol'):
+                                        dataset.metadata.startCol = 2
+                                except Exception:
+                                    pass  # Metadata default will be used
+                                try:
+                                    int(elems[2])
+                                    if overwrite or not dataset.metadata.element_is_set('endCol'):
+                                        dataset.metadata.endCol = 3
+                                except Exception:
+                                    pass  # Metadata default will be used
+                                # we no longer want to guess that this column is the 'name', name must now be set manually for interval files
+                                # we will still guess at the strand, as we can make a more educated guess
+                                # if len( elems ) > 3:
+                                #    try:
+                                #        int( elems[3] )
+                                #    except Exception:
+                                #        if overwrite or not dataset.metadata.element_is_set( 'nameCol' ):
+                                #            dataset.metadata.nameCol = 4
+                                if len(elems) < 6 or elems[5] not in data.valid_strand:
+                                    if overwrite or not dataset.metadata.element_is_set('strandCol'):
+                                        dataset.metadata.strandCol = 0
+                                else:
+                                    if overwrite or not dataset.metadata.element_is_set('strandCol'):
+                                        dataset.metadata.strandCol = 6
+                                break
+                            if (i - empty_line_count) > num_check_lines:
+                                break  # Our metadata is set or we examined 100 non-empty lines, so break out of the outer loop
                     else:
-                        # Header lines in Interval files are optional. For example, BED is Interval but has no header.
-                        # We'll make a best guess at the location of the metadata columns.
-                        metadata_is_set = False
-                        elems = line.split('\t')
-                        if len(elems) > 2:
-                            for str in data.col1_startswith:
-                                if line.lower().startswith(str):
-                                    if overwrite or not dataset.metadata.element_is_set('chromCol'):
-                                        dataset.metadata.chromCol = 1
-                                    try:
-                                        int(elems[1])
-                                        if overwrite or not dataset.metadata.element_is_set('startCol'):
-                                            dataset.metadata.startCol = 2
-                                    except Exception:
-                                        pass  # Metadata default will be used
-                                    try:
-                                        int(elems[2])
-                                        if overwrite or not dataset.metadata.element_is_set('endCol'):
-                                            dataset.metadata.endCol = 3
-                                    except Exception:
-                                        pass  # Metadata default will be used
-                                    # we no longer want to guess that this column is the 'name', name must now be set manually for interval files
-                                    # we will still guess at the strand, as we can make a more educated guess
-                                    # if len( elems ) > 3:
-                                    #    try:
-                                    #        int( elems[3] )
-                                    #    except Exception:
-                                    #        if overwrite or not dataset.metadata.element_is_set( 'nameCol' ):
-                                    #            dataset.metadata.nameCol = 4
-                                    if len(elems) < 6 or elems[5] not in data.valid_strand:
-                                        if overwrite or not dataset.metadata.element_is_set('strandCol'):
-                                            dataset.metadata.strandCol = 0
-                                    else:
-                                        if overwrite or not dataset.metadata.element_is_set('strandCol'):
-                                            dataset.metadata.strandCol = 6
-                                    metadata_is_set = True
-                                    break
-                        if metadata_is_set or (i - empty_line_count) > num_check_lines:
-                            break  # Our metadata is set or we examined 100 non-empty lines, so break out of the outer loop
-                else:
-                    empty_line_count += 1
+                        empty_line_count += 1
 
     def displayable(self, dataset):
         try:
@@ -171,40 +169,36 @@ class Interval(Tabular):
             start = sys.maxsize
             end = 0
             max_col = max(chrom_col, start_col, end_col)
-            fh = open(dataset.file_name)
-            while True:
-                line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                # Stop if at end of file
-                if not line:
-                    break
-                # Skip comment lines
-                if not line.startswith('#'):
-                    try:
-                        fields = line.rstrip().split('\t')
-                        if len(fields) > max_col:
-                            if chrom is None or chrom == fields[chrom_col]:
-                                start = min(start, int(fields[start_col]))
-                                end = max(end, int(fields[end_col]))
-                                # Set chrom last, in case start and end are not integers
-                                chrom = fields[chrom_col]
-                            viewport_feature_count -= 1
-                    except Exception:
-                        # Most likely a non-integer field has been encountered
-                        # for start / stop. Just ignore and make sure we finish
-                        # reading the line and decrementing the counters.
-                        pass
-                # Make sure we are at the next new line
-                readline_count = VIEWPORT_MAX_READS_PER_LINE
-                while line.rstrip('\n\r') == line:
-                    assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
-                    line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                    if not line:
-                        break  # EOF
-                    readline_count -= 1
-                max_line_count -= 1
-                if not viewport_feature_count or not max_line_count:
-                    # exceeded viewport or total line count to check
-                    break
+            with compression_utils.get_fileobj(dataset.file_name) as fh:
+                for line in util.iter_start_of_line(fh, VIEWPORT_READLINE_BUFFER_SIZE):
+                    # Skip comment lines
+                    if not line.startswith('#'):
+                        try:
+                            fields = line.rstrip().split('\t')
+                            if len(fields) > max_col:
+                                if chrom is None or chrom == fields[chrom_col]:
+                                    start = min(start, int(fields[start_col]))
+                                    end = max(end, int(fields[end_col]))
+                                    # Set chrom last, in case start and end are not integers
+                                    chrom = fields[chrom_col]
+                                viewport_feature_count -= 1
+                        except Exception:
+                            # Most likely a non-integer field has been encountered
+                            # for start / stop. Just ignore and make sure we finish
+                            # reading the line and decrementing the counters.
+                            pass
+                    # Make sure we are at the next new line
+                    readline_count = VIEWPORT_MAX_READS_PER_LINE
+                    while line.rstrip('\n\r') == line:
+                        assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
+                        line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
+                        if not line:
+                            break  # EOF
+                        readline_count -= 1
+                    max_line_count -= 1
+                    if not viewport_feature_count or not max_line_count:
+                        # exceeded viewport or total line count to check
+                        break
             if chrom is not None:
                 return (chrom, str(start), str(end))  # Necessary to return strings?
         except Exception:
@@ -214,11 +208,11 @@ class Interval(Tabular):
 
     def as_ucsc_display_file(self, dataset, **kwd):
         """Returns file contents with only the bed data"""
-        with tempfile.NamedTemporaryFile(delete=False) as fh:
+        with tempfile.NamedTemporaryFile(delete=False, mode='w') as fh:
             c, s, e, t, n = dataset.metadata.chromCol, dataset.metadata.startCol, dataset.metadata.endCol, dataset.metadata.strandCol or 0, dataset.metadata.nameCol or 0
             c, s, e, t, n = int(c) - 1, int(s) - 1, int(e) - 1, int(t) - 1, int(n) - 1
             if t >= 0:  # strand column (should) exists
-                for i, elems in enumerate(util.file_iter(dataset.file_name)):
+                for i, elems in enumerate(compression_utils.file_iter(dataset.file_name)):
                     strand = "+"
                     name = "region_%i" % i
                     if n >= 0 and n < len(elems):
@@ -228,17 +222,17 @@ class Interval(Tabular):
                     tmp = [elems[c], elems[s], elems[e], name, '0', strand]
                     fh.write('%s\n' % '\t'.join(tmp))
             elif n >= 0:  # name column (should) exists
-                for i, elems in enumerate(util.file_iter(dataset.file_name)):
+                for i, elems in enumerate(compression_utils.file_iter(dataset.file_name)):
                     name = "region_%i" % i
                     if n >= 0 and n < len(elems):
                         name = elems[n]
                     tmp = [elems[c], elems[s], elems[e], name]
                     fh.write('%s\n' % '\t'.join(tmp))
             else:
-                for elems in util.file_iter(dataset.file_name):
+                for elems in compression_utils.file_iter(dataset.file_name):
                     tmp = [elems[c], elems[s], elems[e]]
                     fh.write('%s\n' % '\t'.join(tmp))
-            return open(fh.name)
+            return compression_utils.get_fileobj(fh.name, mode='rb')
 
     def display_peek(self, dataset):
         """Returns formated html of peek"""
@@ -264,22 +258,21 @@ class Interval(Tabular):
         # Accumulate links for valid sites
         ret_val = []
         for site_name, site_url in valid_sites:
-            internal_url = url_for(controller='dataset', dataset_id=dataset.id,
-                                   action='display_at', filename='ucsc_' + site_name)
+            internal_url = app.url_for(controller='dataset', dataset_id=dataset.id,
+                                       action='display_at', filename='ucsc_' + site_name)
             display_url = quote_plus("%s%s/display_as?id=%i&display_app=%s&authz_method=display_at" %
-                                     (base_url, url_for(controller='root'), dataset.id, type))
+                                     (base_url, app.url_for(controller='root'), dataset.id, type))
             redirect_url = quote_plus("%sdb=%s&position=%s:%s-%s&hgt.customText=%%s" %
                                       (site_url, dataset.dbkey, chrom, start, stop))
             link = '%s?redirect_url=%s&display_url=%s' % (internal_url, redirect_url, display_url)
             ret_val.append((site_name, link))
         return ret_val
 
-    def validate(self, dataset):
+    def validate(self, dataset, **kwd):
         """Validate an interval file using the bx GenomicIntervalReader"""
-        errors = list()
         c, s, e, t = dataset.metadata.chromCol, dataset.metadata.startCol, dataset.metadata.endCol, dataset.metadata.strandCol
         c, s, e, t = int(c) - 1, int(s) - 1, int(e) - 1, int(t) - 1
-        with open(dataset.file_name, "r") as infile:
+        with compression_utils.get_fileobj(dataset.file_name, "r") as infile:
             reader = GenomicIntervalReader(
                 infile,
                 chrom_col=c,
@@ -291,9 +284,9 @@ class Interval(Tabular):
                 try:
                     next(reader)
                 except ParseError as e:
-                    errors.append(e)
+                    return DatatypeValidation.invalid(util.unicodify(e))
                 except StopIteration:
-                    return errors
+                    return DatatypeValidation.valid()
 
     def repair_methods(self, dataset):
         """Return options for removing errors along with a description"""
@@ -371,7 +364,7 @@ class BedGraph(Interval):
             Returns file contents as is with no modifications.
             TODO: this is a functional stub and will need to be enhanced moving forward to provide additional support for bedgraph.
         """
-        return open(dataset.file_name)
+        return open(dataset.file_name, 'rb')
 
     def get_estimated_display_viewport(self, dataset, chrom_col=0, start_col=1, end_col=2):
         """
@@ -403,26 +396,20 @@ class Bed(Interval):
         i = 0
         if dataset.has_data():
             for i, line in enumerate(open(dataset.file_name)):
-                metadata_set = False
                 line = line.rstrip('\r\n')
                 if line and not line.startswith('#'):
                     elems = line.split('\t')
                     if len(elems) > 2:
-                        for startswith in data.col1_startswith:
-                            if line.lower().startswith(startswith):
-                                if len(elems) > 3:
-                                    if overwrite or not dataset.metadata.element_is_set('nameCol'):
-                                        dataset.metadata.nameCol = 4
-                                if len(elems) < 6:
-                                    if overwrite or not dataset.metadata.element_is_set('strandCol'):
-                                        dataset.metadata.strandCol = 0
-                                else:
-                                    if overwrite or not dataset.metadata.element_is_set('strandCol'):
-                                        dataset.metadata.strandCol = 6
-                                metadata_set = True
-                                break
-                if metadata_set:
-                    break
+                        if len(elems) > 3:
+                            if overwrite or not dataset.metadata.element_is_set('nameCol'):
+                                dataset.metadata.nameCol = 4
+                        if len(elems) < 6:
+                            if overwrite or not dataset.metadata.element_is_set('strandCol'):
+                                dataset.metadata.strandCol = 0
+                        else:
+                            if overwrite or not dataset.metadata.element_is_set('strandCol'):
+                                dataset.metadata.strandCol = 6
+                        break
             Tabular.set_meta(self, dataset, overwrite=overwrite, skip=i)
 
     def as_ucsc_display_file(self, dataset, **kwd):
@@ -459,7 +446,7 @@ class Bed(Interval):
             break
 
         try:
-            return open(dataset.file_name)
+            return open(dataset.file_name, 'rb')
         except Exception:
             return "This item contains no content"
 
@@ -480,7 +467,7 @@ class Bed(Interval):
         >>> fname = get_test_fname( 'test_tab.bed' )
         >>> Bed().sniff( fname )
         True
-        >>> fname = get_test_fname( 'interval1.bed' )
+        >>> fname = get_test_fname( 'interv1.bed' )
         >>> Bed().sniff( fname )
         True
         >>> fname = get_test_fname( 'complete.bed' )
@@ -494,75 +481,67 @@ class Bed(Interval):
             for hdr in headers:
                 if hdr[0] == '':
                     continue
-                valid_col1 = False
                 if len(hdr) < 3 or len(hdr) > 12:
                     return False
-                for str in data.col1_startswith:
-                    if hdr[0].lower().startswith(str):
-                        valid_col1 = True
-                        break
-                if valid_col1:
+                try:
+                    int(hdr[1])
+                    int(hdr[2])
+                except Exception:
+                    return False
+                if len(hdr) > 4:
+                    # hdr[3] is a string, 'name', which defines the name of the BED line - difficult to test for this.
+                    # hdr[4] is an int, 'score', a score between 0 and 1000.
                     try:
-                        int(hdr[1])
-                        int(hdr[2])
+                        if int(hdr[4]) < 0 or int(hdr[4]) > 1000:
+                            return False
                     except Exception:
                         return False
-                    if len(hdr) > 4:
-                        # hdr[3] is a string, 'name', which defines the name of the BED line - difficult to test for this.
-                        # hdr[4] is an int, 'score', a score between 0 and 1000.
+                if len(hdr) > 5:
+                    # hdr[5] is strand
+                    if hdr[5] not in data.valid_strand:
+                        return False
+                if len(hdr) > 6:
+                    # hdr[6] is thickStart, the starting position at which the feature is drawn thickly.
+                    try:
+                        int(hdr[6])
+                    except Exception:
+                        return False
+                if len(hdr) > 7:
+                    # hdr[7] is thickEnd, the ending position at which the feature is drawn thickly
+                    try:
+                        int(hdr[7])
+                    except Exception:
+                        return False
+                if len(hdr) > 8:
+                    # hdr[8] is itemRgb, an RGB value of the form R,G,B (e.g. 255,0,0).  However, this could also be an int (e.g., 0)
+                    try:
+                        int(hdr[8])
+                    except Exception:
                         try:
-                            if int(hdr[4]) < 0 or int(hdr[4]) > 1000:
-                                return False
+                            hdr[8].split(',')
                         except Exception:
                             return False
-                    if len(hdr) > 5:
-                        # hdr[5] is strand
-                        if hdr[5] not in data.valid_strand:
-                            return False
-                    if len(hdr) > 6:
-                        # hdr[6] is thickStart, the starting position at which the feature is drawn thickly.
-                        try:
-                            int(hdr[6])
-                        except Exception:
-                            return False
-                    if len(hdr) > 7:
-                        # hdr[7] is thickEnd, the ending position at which the feature is drawn thickly
-                        try:
-                            int(hdr[7])
-                        except Exception:
-                            return False
-                    if len(hdr) > 8:
-                        # hdr[8] is itemRgb, an RGB value of the form R,G,B (e.g. 255,0,0).  However, this could also be an int (e.g., 0)
-                        try:
-                            int(hdr[8])
-                        except Exception:
-                            try:
-                                hdr[8].split(',')
-                            except Exception:
-                                return False
-                    if len(hdr) > 9:
-                        # hdr[9] is blockCount, the number of blocks (exons) in the BED line.
-                        try:
-                            block_count = int(hdr[9])
-                        except Exception:
-                            return False
-                    if len(hdr) > 10:
-                        # hdr[10] is blockSizes - A comma-separated list of the block sizes.
-                        # Sometimes the blosck_sizes and block_starts lists end in extra commas
-                        try:
-                            block_sizes = hdr[10].rstrip(',').split(',')
-                        except Exception:
-                            return False
-                    if len(hdr) > 11:
-                        # hdr[11] is blockStarts - A comma-separated list of block starts.
-                        try:
-                            block_starts = hdr[11].rstrip(',').split(',')
-                        except Exception:
-                            return False
-                        if len(block_sizes) != block_count or len(block_starts) != block_count:
-                            return False
-                else:
-                    return False
+                if len(hdr) > 9:
+                    # hdr[9] is blockCount, the number of blocks (exons) in the BED line.
+                    try:
+                        block_count = int(hdr[9])
+                    except Exception:
+                        return False
+                if len(hdr) > 10:
+                    # hdr[10] is blockSizes - A comma-separated list of the block sizes.
+                    # Sometimes the blosck_sizes and block_starts lists end in extra commas
+                    try:
+                        block_sizes = hdr[10].rstrip(',').split(',')
+                    except Exception:
+                        return False
+                if len(hdr) > 11:
+                    # hdr[11] is blockStarts - A comma-separated list of block starts.
+                    try:
+                        block_starts = hdr[11].rstrip(',').split(',')
+                    except Exception:
+                        return False
+                    if len(block_sizes) != block_count or len(block_starts) != block_count:
+                        return False
             return True
         except Exception:
             return False
@@ -625,10 +604,10 @@ class _RemoteCallMixin(object):
         the data available, followed by redirecting to the remote site with a
         link back to the available information.
         """
-        internal_url = "%s" % url_for(controller='dataset', dataset_id=dataset.id, action='display_at', filename='%s_%s' % (type, site_name))
+        internal_url = "%s" % app.url_for(controller='dataset', dataset_id=dataset.id, action='display_at', filename='%s_%s' % (type, site_name))
         base_url = app.config.get("display_at_callback", base_url)
         display_url = quote_plus("%s%s/display_as?id=%i&display_app=%s&authz_method=display_at" %
-                                 (base_url, url_for(controller='root'), dataset.id, type))
+                                 (base_url, app.url_for(controller='root'), dataset.id, type))
         link = '%s?redirect_url=%s&display_url=%s' % (internal_url, redirect_url, display_url)
         return link
 
@@ -668,31 +647,32 @@ class Gff(Tabular, _RemoteCallMixin):
         # not found in the first N lines will not have metadata.
         num_lines = 200
         attribute_types = {}
-        for i, line in enumerate(open(dataset.file_name)):
-            if line and not line.startswith('#'):
-                elems = line.split('\t')
-                if len(elems) == 9:
-                    try:
-                        # Loop through attributes to set types.
-                        for name, value in parse_gff_attributes(elems[8]).items():
-                            # Default type is string.
-                            value_type = "str"
-                            try:
-                                # Try int.
-                                int(value)
-                                value_type = "int"
-                            except ValueError:
+        with compression_utils.get_fileobj(dataset.file_name) as in_fh:
+            for i, line in enumerate(in_fh):
+                if line and not line.startswith('#'):
+                    elems = line.split('\t')
+                    if len(elems) == 9:
+                        try:
+                            # Loop through attributes to set types.
+                            for name, value in parse_gff_attributes(elems[8]).items():
+                                # Default type is string.
+                                value_type = "str"
                                 try:
-                                    # Try float.
-                                    float(value)
-                                    value_type = "float"
+                                    # Try int.
+                                    int(value)
+                                    value_type = "int"
                                 except ValueError:
-                                    pass
-                            attribute_types[name] = value_type
-                    except Exception:
-                        pass
-                if i + 1 == num_lines:
-                    break
+                                    try:
+                                        # Try float.
+                                        float(value)
+                                        value_type = "float"
+                                    except ValueError:
+                                        pass
+                                attribute_types[name] = value_type
+                        except Exception:
+                            pass
+                    if i + 1 == num_lines:
+                        break
 
         # Set attribute metadata and then set additional metadata.
         dataset.metadata.attribute_types = attribute_types
@@ -702,17 +682,18 @@ class Gff(Tabular, _RemoteCallMixin):
         self.set_attribute_metadata(dataset)
 
         i = 0
-        for i, line in enumerate(open(dataset.file_name)):
-            line = line.rstrip('\r\n')
-            if line and not line.startswith('#'):
-                elems = line.split('\t')
-                if len(elems) == 9:
-                    try:
-                        int(elems[3])
-                        int(elems[4])
-                        break
-                    except Exception:
-                        pass
+        with compression_utils.get_fileobj(dataset.file_name) as in_fh:
+            for i, line in enumerate(in_fh):
+                line = line.rstrip('\r\n')
+                if line and not line.startswith('#'):
+                    elems = line.split('\t')
+                    if len(elems) == 9:
+                        try:
+                            int(elems[3])
+                            int(elems[4])
+                            break
+                        except Exception:
+                            pass
         Tabular.set_meta(self, dataset, overwrite=overwrite, skip=i)
 
     def display_peek(self, dataset):
@@ -731,69 +712,65 @@ class Gff(Tabular, _RemoteCallMixin):
                 seqid = None
                 start = sys.maxsize
                 stop = 0
-                fh = open(dataset.file_name)
-                while True:
-                    line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                    if not line:
-                        break  # EOF
-                    try:
-                        if line.startswith('##sequence-region'):  # ##sequence-region IV 6000000 6030000
-                            elems = line.rstrip('\n\r').split()
-                            if len(elems) > 3:
-                                # line looks like:
-                                # sequence-region   ctg123 1 1497228
-                                seqid = elems[1]  # IV
-                                start = int(elems[2])  # 6000000
-                                stop = int(elems[3])  # 6030000
-                                break  # use location declared in file
-                            elif len(elems) == 2 and elems[1].find('..') > 0:
-                                # line looks like this:
-                                # sequence-region X:120000..140000
-                                elems = elems[1].split(':')
-                                seqid = elems[0]
-                                start = int(elems[1].split('..')[0])
-                                stop = int(elems[1].split('..')[1])
-                                break  # use location declared in file
-                            else:
-                                log.exception("line (%s) uses an unsupported ##sequence-region definition." % str(line))
-                                # break #no break, if bad definition, we try another method
-                        elif line.startswith("browser position"):
-                            # Allow UCSC style browser and track info in the GFF file
-                            pos_info = line.split()[-1]
-                            seqid, startend = pos_info.split(":")
-                            start, stop = map(int, startend.split("-"))
-                            break  # use location declared in file
-                        elif True not in map(line.startswith, ('#', 'track', 'browser')):  # line.startswith() does not accept iterator in python2.4
-                            viewport_feature_count -= 1
-                            elems = line.rstrip('\n\r').split('\t')
-                            if len(elems) > 3:
-                                if not seqid:
-                                    # We can only set the viewport for a single chromosome
+                with compression_utils.get_fileobj(dataset.file_name) as fh:
+                    for line in util.iter_start_of_line(fh, VIEWPORT_READLINE_BUFFER_SIZE):
+                        try:
+                            if line.startswith('##sequence-region'):  # ##sequence-region IV 6000000 6030000
+                                elems = line.rstrip('\n\r').split()
+                                if len(elems) > 3:
+                                    # line looks like:
+                                    # sequence-region   ctg123 1 1497228
+                                    seqid = elems[1]  # IV
+                                    start = int(elems[2])  # 6000000
+                                    stop = int(elems[3])  # 6030000
+                                    break  # use location declared in file
+                                elif len(elems) == 2 and elems[1].find('..') > 0:
+                                    # line looks like this:
+                                    # sequence-region X:120000..140000
+                                    elems = elems[1].split(':')
                                     seqid = elems[0]
-                                if seqid == elems[0]:
-                                    # Make sure we have not spanned chromosomes
-                                    start = min(start, int(elems[3]))
-                                    stop = max(stop, int(elems[4]))
-                    except Exception:
-                        # most likely start/stop is not an int or not enough fields
-                        pass
-                    # make sure we are at the next new line
-                    readline_count = VIEWPORT_MAX_READS_PER_LINE
-                    while line.rstrip('\n\r') == line:
-                        assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
-                        line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                        if not line:
-                            break  # EOF
-                        readline_count -= 1
-                    max_line_count -= 1
-                    if not viewport_feature_count or not max_line_count:
-                        # exceeded viewport or total line count to check
-                        break
-                if seqid is not None:
-                    return (seqid, str(start), str(stop))  # Necessary to return strings?
-            except Exception as e:
-                # unexpected error
-                log.exception(str(e))
+                                    start = int(elems[1].split('..')[0])
+                                    stop = int(elems[1].split('..')[1])
+                                    break  # use location declared in file
+                                else:
+                                    log.debug("line (%s) uses an unsupported ##sequence-region definition." % str(line))
+                                    # break #no break, if bad definition, we try another line
+                            elif line.startswith("browser position"):
+                                # Allow UCSC style browser and track info in the GFF file
+                                pos_info = line.split()[-1]
+                                seqid, startend = pos_info.split(":")
+                                start, stop = map(int, startend.split("-"))
+                                break  # use location declared in file
+                            elif not line.startswith(('#', 'track', 'browser')):
+                                viewport_feature_count -= 1
+                                elems = line.rstrip('\n\r').split('\t')
+                                if len(elems) > 3:
+                                    if not seqid:
+                                        # We can only set the viewport for a single chromosome
+                                        seqid = elems[0]
+                                    if seqid == elems[0]:
+                                        # Make sure we have not spanned chromosomes
+                                        start = min(start, int(elems[3]))
+                                        stop = max(stop, int(elems[4]))
+                        except Exception:
+                            # most likely start/stop is not an int or not enough fields
+                            pass
+                        # make sure we are at the next new line
+                        readline_count = VIEWPORT_MAX_READS_PER_LINE
+                        while line.rstrip('\n\r') == line:
+                            assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
+                            line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
+                            if not line:
+                                break  # EOF
+                            readline_count -= 1
+                        max_line_count -= 1
+                        if not viewport_feature_count or not max_line_count:
+                            # exceeded viewport or total line count to check
+                            break
+                    if seqid is not None:
+                        return (seqid, str(start), str(stop))  # Necessary to return strings?
+            except Exception:
+                log.exception('Unexpected error')
         return (None, None, None)  # could not determine viewport
 
     def ucsc_links(self, dataset, type, app, base_url):
@@ -831,7 +808,7 @@ class Gff(Tabular, _RemoteCallMixin):
         For complete details see http://genome.ucsc.edu/FAQ/FAQformat#format3
 
         >>> from galaxy.datatypes.sniff import get_test_fname
-        >>> fname = get_test_fname('gff_version_3.gff')
+        >>> fname = get_test_fname('gff.gff3')
         >>> Gff().sniff( fname )
         False
         >>> fname = get_test_fname('test.gff')
@@ -910,31 +887,31 @@ class Gff3(Gff):
 
     def set_meta(self, dataset, overwrite=True, **kwd):
         self.set_attribute_metadata(dataset)
-
         i = 0
-        for i, line in enumerate(open(dataset.file_name)):
-            line = line.rstrip('\r\n')
-            if line and not line.startswith('#'):
-                elems = line.split('\t')
-                valid_start = False
-                valid_end = False
-                if len(elems) == 9:
-                    try:
-                        start = int(elems[3])
-                        valid_start = True
-                    except Exception:
-                        if elems[3] == '.':
+        with compression_utils.get_fileobj(dataset.file_name) as in_fh:
+            for i, line in enumerate(in_fh):
+                line = line.rstrip('\r\n')
+                if line and not line.startswith('#'):
+                    elems = line.split('\t')
+                    valid_start = False
+                    valid_end = False
+                    if len(elems) == 9:
+                        try:
+                            start = int(elems[3])
                             valid_start = True
-                    try:
-                        end = int(elems[4])
-                        valid_end = True
-                    except Exception:
-                        if elems[4] == '.':
+                        except Exception:
+                            if elems[3] == '.':
+                                valid_start = True
+                        try:
+                            end = int(elems[4])
                             valid_end = True
-                    strand = elems[6]
-                    phase = elems[7]
-                    if valid_start and valid_end and start < end and strand in self.valid_gff3_strand and phase in self.valid_gff3_phase:
-                        break
+                        except Exception:
+                            if elems[4] == '.':
+                                valid_end = True
+                        strand = elems[6]
+                        phase = elems[7]
+                        if valid_start and valid_end and start < end and strand in self.valid_gff3_strand and phase in self.valid_gff3_phase:
+                            break
         Tabular.set_meta(self, dataset, overwrite=overwrite, skip=i)
 
     def sniff_prefix(self, file_prefix):
@@ -966,7 +943,7 @@ class Gff3(Gff):
         >>> fname = get_test_fname( 'test.gtf' )
         >>> Gff3().sniff( fname )
         False
-        >>> fname = get_test_fname('gff_version_3.gff')
+        >>> fname = get_test_fname('gff.gff3')
         >>> Gff3().sniff( fname )
         True
         """
@@ -1111,58 +1088,54 @@ class Wiggle(Tabular, _RemoteCallMixin):
                 end = 0
                 span = 1
                 step = None
-                fh = open(dataset.file_name)
-                while True:
-                    line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                    if not line:
-                        break  # EOF
-                    try:
-                        if line.startswith("browser"):
-                            chr_info = line.rstrip('\n\r').split()[-1]
-                            chrom, coords = chr_info.split(":")
-                            start, end = map(int, coords.split("-"))
-                            break  # use the browser line
-                        # variableStep chrom=chr20
-                        if line and (line.lower().startswith("variablestep") or line.lower().startswith("fixedstep")):
-                            if chrom is not None:
-                                break  # different chrom or different section of the chrom
-                            chrom = line.rstrip('\n\r').split("chrom=")[1].split()[0]
-                            if 'span=' in line:
-                                span = int(line.rstrip('\n\r').split("span=")[1].split()[0])
-                            if 'step=' in line:
-                                step = int(line.rstrip('\n\r').split("step=")[1].split()[0])
-                                start = int(line.rstrip('\n\r').split("start=")[1].split()[0])
-                        else:
-                            fields = line.rstrip('\n\r').split()
-                            if fields:
-                                if step is not None:
-                                    if not end:
-                                        end = start + span
+                with open(dataset.file_name) as fh:
+                    for line in util.iter_readline_count(fh, VIEWPORT_READLINE_BUFFER_SIZE):
+                        try:
+                            if line.startswith("browser"):
+                                chr_info = line.rstrip('\n\r').split()[-1]
+                                chrom, coords = chr_info.split(":")
+                                start, end = map(int, coords.split("-"))
+                                break  # use the browser line
+                            # variableStep chrom=chr20
+                            if line and (line.lower().startswith("variablestep") or line.lower().startswith("fixedstep")):
+                                if chrom is not None:
+                                    break  # different chrom or different section of the chrom
+                                chrom = line.rstrip('\n\r').split("chrom=")[1].split()[0]
+                                if 'span=' in line:
+                                    span = int(line.rstrip('\n\r').split("span=")[1].split()[0])
+                                if 'step=' in line:
+                                    step = int(line.rstrip('\n\r').split("step=")[1].split()[0])
+                                    start = int(line.rstrip('\n\r').split("start=")[1].split()[0])
+                            else:
+                                fields = line.rstrip('\n\r').split()
+                                if fields:
+                                    if step is not None:
+                                        if not end:
+                                            end = start + span
+                                        else:
+                                            end += step
                                     else:
-                                        end += step
-                                else:
-                                    start = min(int(fields[0]), start)
-                                    end = max(end, int(fields[0]) + span)
-                                viewport_feature_count -= 1
-                    except Exception:
-                        pass
-                    # make sure we are at the next new line
-                    readline_count = VIEWPORT_MAX_READS_PER_LINE
-                    while line.rstrip('\n\r') == line:
-                        assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
-                        line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                        if not line:
-                            break  # EOF
-                        readline_count -= 1
-                    max_line_count -= 1
-                    if not viewport_feature_count or not max_line_count:
-                        # exceeded viewport or total line count to check
-                        break
+                                        start = min(int(fields[0]), start)
+                                        end = max(end, int(fields[0]) + span)
+                                    viewport_feature_count -= 1
+                        except Exception:
+                            pass
+                        # make sure we are at the next new line
+                        readline_count = VIEWPORT_MAX_READS_PER_LINE
+                        while line.rstrip('\n\r') == line:
+                            assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
+                            line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
+                            if not line:
+                                break  # EOF
+                            readline_count -= 1
+                        max_line_count -= 1
+                        if not viewport_feature_count or not max_line_count:
+                            # exceeded viewport or total line count to check
+                            break
                 if chrom is not None:
                     return (chrom, str(start), str(end))  # Necessary to return strings?
-            except Exception as e:
-                # unexpected error
-                log.exception(str(e))
+            except Exception:
+                log.exception('Unexpected error')
         return (None, None, None)  # could not determine viewport
 
     def gbrowse_links(self, dataset, type, app, base_url):
@@ -1201,16 +1174,14 @@ class Wiggle(Tabular, _RemoteCallMixin):
             if line and not line.startswith('#'):
                 elems = line.split('\t')
                 try:
-                    float(elems[0])  # "Wiggle track data values can be integer or real, positive or negative values"
+                    # variableStep format is nucleotide position\tvalue\n,
+                    # fixedStep is value\n
+                    # "Wiggle track data values can be integer or real, positive or negative values"
+                    float(elems[0])
                     break
                 except Exception:
-                    do_break = False
-                    for col_startswith in data.col1_startswith:
-                        if elems[0].lower().startswith(col_startswith):
-                            do_break = True
-                            break
-                    if do_break:
-                        break
+                    # We are either in the track definition line or in a declaration line
+                    pass
         if self.max_optional_metadata_filesize >= 0 and dataset.get_size() > self.max_optional_metadata_filesize:
             # we'll arbitrarily only use the first 100 data lines in this wig file to calculate tabular attributes (column types)
             # this should be sufficient, except when we have mixed wig track types (bed, variable, fixed),
@@ -1235,7 +1206,7 @@ class Wiggle(Tabular, _RemoteCallMixin):
         For complete details see http://genome.ucsc.edu/goldenPath/help/wiggle.html
 
         >>> from galaxy.datatypes.sniff import get_test_fname
-        >>> fname = get_test_fname( 'interval1.bed' )
+        >>> fname = get_test_fname( 'interv1.bed' )
         >>> Wiggle().sniff( fname )
         False
         >>> fname = get_test_fname( 'wiggle.wig' )
@@ -1301,52 +1272,48 @@ class CustomTrack(Tabular):
         span = 1
         if self.displayable(dataset):
             try:
-                fh = open(dataset.file_name)
-                while True:
-                    line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                    if not line:
-                        break  # EOF
-                    if not line.startswith('#'):
-                        try:
-                            if variable_step_wig:
-                                fields = line.rstrip().split()
-                                if len(fields) == 2:
-                                    start = int(fields[0])
-                                    return (chrom, str(start), str(start + span))
-                            elif line and (line.lower().startswith("variablestep") or line.lower().startswith("fixedstep")):
-                                chrom = line.rstrip('\n\r').split("chrom=")[1].split()[0]
-                                if 'span=' in line:
-                                    span = int(line.rstrip('\n\r').split("span=")[1].split()[0])
-                                if 'start=' in line:
-                                    start = int(line.rstrip('\n\r').split("start=")[1].split()[0])
-                                    return (chrom, str(start), str(start + span))
+                with open(dataset.file_name) as fh:
+                    for line in util.iter_start_of_line(fh, VIEWPORT_READLINE_BUFFER_SIZE):
+                        if not line.startswith('#'):
+                            try:
+                                if variable_step_wig:
+                                    fields = line.rstrip().split()
+                                    if len(fields) == 2:
+                                        start = int(fields[0])
+                                        return (chrom, str(start), str(start + span))
+                                elif line and (line.lower().startswith("variablestep") or line.lower().startswith("fixedstep")):
+                                    chrom = line.rstrip('\n\r').split("chrom=")[1].split()[0]
+                                    if 'span=' in line:
+                                        span = int(line.rstrip('\n\r').split("span=")[1].split()[0])
+                                    if 'start=' in line:
+                                        start = int(line.rstrip('\n\r').split("start=")[1].split()[0])
+                                        return (chrom, str(start), str(start + span))
+                                    else:
+                                        variable_step_wig = True
                                 else:
-                                    variable_step_wig = True
-                            else:
-                                fields = line.rstrip().split('\t')
-                                if len(fields) >= 3:
-                                    chrom = fields[0]
-                                    start = int(fields[1])
-                                    end = int(fields[2])
-                                    return (chrom, str(start), str(end))
-                        except Exception:
-                            # most likely a non-integer field has been encountered for start / stop
-                            continue
-                    # make sure we are at the next new line
-                    readline_count = VIEWPORT_MAX_READS_PER_LINE
-                    while line.rstrip('\n\r') == line:
-                        assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
-                        line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
-                        if not line:
-                            break  # EOF
-                        readline_count -= 1
-                    max_line_count -= 1
-                    if not max_line_count:
-                        # exceeded viewport or total line count to check
-                        break
-            except Exception as e:
-                # unexpected error
-                log.exception(str(e))
+                                    fields = line.rstrip().split('\t')
+                                    if len(fields) >= 3:
+                                        chrom = fields[0]
+                                        start = int(fields[1])
+                                        end = int(fields[2])
+                                        return (chrom, str(start), str(end))
+                            except Exception:
+                                # most likely a non-integer field has been encountered for start / stop
+                                continue
+                        # make sure we are at the next new line
+                        readline_count = VIEWPORT_MAX_READS_PER_LINE
+                        while line.rstrip('\n\r') == line:
+                            assert readline_count > 0, Exception('Viewport readline count exceeded for dataset %s.' % dataset.id)
+                            line = fh.readline(VIEWPORT_READLINE_BUFFER_SIZE)
+                            if not line:
+                                break  # EOF
+                            readline_count -= 1
+                        max_line_count -= 1
+                        if not max_line_count:
+                            # exceeded viewport or total line count to check
+                            break
+            except Exception:
+                log.exception('Unexpected error')
         return (None, None, None)  # could not determine viewport
 
     def ucsc_links(self, dataset, type, app, base_url):
@@ -1355,8 +1322,8 @@ class CustomTrack(Tabular):
         if chrom is not None:
             for site_name, site_url in app.datatypes_registry.get_legacy_sites_by_build('ucsc', dataset.dbkey):
                 if site_name in app.datatypes_registry.get_display_sites('ucsc'):
-                    internal_url = "%s" % url_for(controller='dataset', dataset_id=dataset.id, action='display_at', filename='ucsc_' + site_name)
-                    display_url = quote_plus("%s%s/display_as?id=%i&display_app=%s&authz_method=display_at" % (base_url, url_for(controller='root'), dataset.id, type))
+                    internal_url = "%s" % app.url_for(controller='dataset', dataset_id=dataset.id, action='display_at', filename='ucsc_' + site_name)
+                    display_url = quote_plus("%s%s/display_as?id=%i&display_app=%s&authz_method=display_at" % (base_url, app.url_for(controller='root'), dataset.id, type))
                     redirect_url = quote_plus("%sdb=%s&position=%s:%s-%s&hgt.customText=%%s" % (site_url, dataset.dbkey, chrom, start, stop))
                     link = '%s?redirect_url=%s&display_url=%s' % (internal_url, redirect_url, display_url)
                     ret_val.append((site_name, link))

@@ -15,7 +15,11 @@ from six.moves import shlex_quote
 from galaxy.datatypes.data import get_file_peek, Text
 from galaxy.datatypes.metadata import MetadataElement, MetadataParameter
 from galaxy.datatypes.sniff import build_sniff_from_prefix, iter_headers
-from galaxy.util import nice_size, string_as_bool
+from galaxy.util import (
+    nice_size,
+    string_as_bool,
+    unicodify,
+)
 
 log = logging.getLogger(__name__)
 
@@ -85,15 +89,17 @@ class Json(Text):
         if file_prefix.file_size < 50000 and not file_prefix.truncated:
             # If the file is small enough - don't guess just check.
             try:
-                json.loads(file_prefix.contents_header)
+                item = json.loads(file_prefix.contents_header)
+                # exclude simple types, must set format in these cases
+                assert isinstance(item, (list, dict))
                 return True
             except Exception:
                 return False
         else:
             start = file_prefix.string_io().read(100).strip()
             if start:
-                # simple types are valid JSON as well - but would such a file
-                # be interesting as JSON in Galaxy?
+                # simple types are valid JSON as well,
+                # but if necessary format has to be set explicitly
                 return start.startswith("[") or start.startswith("{")
             return False
 
@@ -102,6 +108,30 @@ class Json(Text):
             return dataset.peek
         except Exception:
             return "JSON file (%s)" % (nice_size(dataset.get_size()))
+
+
+class ExpressionJson(Json):
+    """ Represents the non-data input or output to a tool or workflow.
+    """
+    file_ext = "json"
+    MetadataElement(name="json_type", default=None, desc="JavaScript or JSON type of expression", readonly=True, visible=True, no_value=None)
+
+    def set_meta(self, dataset, **kwd):
+        """
+        """
+        json_type = "null"
+        with open(dataset.file_name) as f:
+            obj = json.load(f)
+            if isinstance(obj, int):
+                json_type = "int"
+            elif isinstance(obj, float):
+                json_type = "float"
+            elif isinstance(obj, list):
+                json_type = "list"
+            elif isinstance(obj, dict):
+                json_type = "object"
+
+        dataset.metadata.json_type = json_type
 
 
 @build_sniff_from_prefix
@@ -153,7 +183,7 @@ class Ipynb(Json):
             except subprocess.CalledProcessError:
                 ofilename = dataset.file_name
                 log.exception('Command "%s" failed. Could not convert the Jupyter Notebook to HTML, defaulting to plain text.', ' '.join(map(shlex_quote, cmd)))
-            return open(ofilename)
+            return open(ofilename, mode='rb')
 
     def set_meta(self, dataset, **kwd):
         """
@@ -182,6 +212,7 @@ class Biom1(Json):
     MetadataElement(name="table_type", default="", desc="table_type", param=MetadataParameter, readonly=True, visible=True, optional=True, no_value="")
     MetadataElement(name="table_id", default=None, desc="table_id", param=MetadataParameter, readonly=True, visible=True, optional=True, no_value=None)
     MetadataElement(name="table_columns", default=[], desc="table_columns", param=MetadataParameter, readonly=True, visible=False, optional=True, no_value=[])
+    MetadataElement(name="table_column_metadata_headers", default=[], desc="table_column_metadata_headers", param=MetadataParameter, readonly=True, visible=True, optional=True, no_value=[])
 
     def set_peek(self, dataset, is_multi_byte=False):
         super(Biom1, self).set_peek(dataset)
@@ -250,11 +281,137 @@ class Biom1(Json):
                                          ('table_columns', 'columns')]:
                     try:
                         metadata_value = json_dict.get(b_name, None)
+                        if b_name == "columns" and metadata_value:
+                            keep_columns = set()
+                            for column in metadata_value:
+                                if column['metadata'] is not None:
+                                    for k, v in column['metadata'].items():
+                                        if v is not None:
+                                            keep_columns.add(k)
+                            final_list = sorted(list(keep_columns))
+                            dataset.metadata.table_column_metadata_headers = final_list
                         if b_name in b_transform:
                             metadata_value = b_transform[b_name](metadata_value)
                         setattr(dataset.metadata, m_name, metadata_value)
                     except Exception:
+                        log.exception("Something in the metadata detection for biom1 went wrong.")
                         pass
+
+
+@build_sniff_from_prefix
+class ImgtJson(Json):
+    file_ext = "imgt.json"
+    MetadataElement(name="taxon_names", default=[], desc="taxonID: names", readonly=True, visible=True, no_value=[])
+    """
+        https://github.com/repseqio/library-imgt/releases
+        Data coming from IMGT server may be used for academic research only,
+        provided that it is referred to IMGT®, and cited as:
+        "IMGT®, the international ImMunoGeneTics information system®
+        http://www.imgt.org (founder and director: Marie-Paule Lefranc, Montpellier, France)."
+    """
+
+    def set_peek(self, dataset, is_multi_byte=False):
+        super(ImgtJson, self).set_peek(dataset)
+        if not dataset.dataset.purged:
+            dataset.blurb = "IMGT Library"
+
+    def sniff_prefix(self, file_prefix):
+        """
+        Determines whether the file is in json format with imgt elements
+
+        >>> from galaxy.datatypes.sniff import get_test_fname
+        >>> fname = get_test_fname( '1.json' )
+        >>> ImgtJson().sniff( fname )
+        False
+        >>> fname = get_test_fname( 'imgt.json' )
+        >>> ImgtJson().sniff( fname )
+        True
+        """
+        is_imgt = False
+        if self._looks_like_json(file_prefix):
+            is_imgt = self._looks_like_imgt(file_prefix)
+        return is_imgt
+
+    def _looks_like_imgt(self, file_prefix, load_size=5000):
+        """
+        @param filepath: [str] The path to the evaluated file.
+        @param load_size: [int] The size of the file block load in RAM (in
+                          bytes).
+        """
+        is_imgt = False
+        try:
+            with open(file_prefix.filename, "r") as fh:
+                segment_str = fh.read(load_size)
+                if segment_str.strip().startswith('['):
+                    if '"taxonId"' in segment_str and '"anchorPoints"' in segment_str:
+                        is_imgt = True
+        except Exception:
+            pass
+        return is_imgt
+
+    def set_meta(self, dataset, **kwd):
+        """
+            Store metadata information from the imgt file.
+        """
+        if dataset.has_data():
+            with open(dataset.file_name) as fh:
+                try:
+                    json_dict = json.load(fh)
+                    tax_names = []
+                    for i, entry in enumerate(json_dict):
+                        if 'taxonId' in entry:
+                            names = "%d: %s" % (entry['taxonId'], ','.join(entry['speciesNames']))
+                            tax_names.append(names)
+                    dataset.metadata.taxon_names = tax_names
+                except Exception:
+                    return
+
+
+@build_sniff_from_prefix
+class GeoJson(Json):
+    """
+        GeoJSON is a geospatial data interchange format based on JavaScript Object Notation (JSON).
+        https://tools.ietf.org/html/rfc7946
+    """
+    file_ext = "geojson"
+
+    def set_peek(self, dataset, is_multi_byte=False):
+        super(GeoJson, self).set_peek(dataset)
+        if not dataset.dataset.purged:
+            dataset.blurb = "GeoJSON"
+
+    def sniff_prefix(self, file_prefix):
+        """
+        Determines whether the file is in json format with imgt elements
+
+        >>> from galaxy.datatypes.sniff import get_test_fname
+        >>> fname = get_test_fname( '1.json' )
+        >>> GeoJson().sniff( fname )
+        False
+        >>> fname = get_test_fname( 'gis.geojson' )
+        >>> GeoJson().sniff( fname )
+        True
+        """
+        is_geojson = False
+        if self._looks_like_json(file_prefix):
+            is_geojson = self._looks_like_geojson(file_prefix)
+        return is_geojson
+
+    def _looks_like_geojson(self, file_prefix, load_size=5000):
+        """
+        One of "Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", and "GeometryCollection" needs to be present.
+        All of "type", "geometry", and "coordinates" needs to be present.
+        """
+        is_geojson = False
+        try:
+            with open(file_prefix.filename, "r") as fh:
+                segment_str = fh.read(load_size)
+                if any(x in segment_str for x in ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection"]):
+                    if all(x in segment_str for x in ["type", "geometry", "coordinates"]):
+                        return True
+        except Exception:
+            pass
+        return is_geojson
 
 
 @build_sniff_from_prefix
@@ -289,7 +446,7 @@ class Obo(Text):
         for line in handle:
             if stanza.match(line.strip()):
                 # a stanza needs to begin with an ID tag
-                if handle.next().startswith('id:'):
+                if next(handle).startswith('id:'):
                     return True
         return False
 
@@ -413,10 +570,10 @@ class SnpEffDb(Text):
     def getSnpeffVersionFromFile(self, path):
         snpeff_version = None
         try:
-            with gzip.open(path, 'rb') as fh:
+            with gzip.open(path, 'rt') as fh:
                 buf = fh.read(100)
                 lines = buf.splitlines()
-                m = re.match('^(SnpEff)\s+(\d+\.\d+).*$', lines[0].strip())
+                m = re.match(r'^(SnpEff)\s+(\d+\.\d+).*$', lines[0].strip())
                 if m:
                     snpeff_version = m.groups()[0] + m.groups()[1]
         except Exception:
@@ -525,18 +682,18 @@ class SnpSiftDbNSFP(Text):
                     if fname.endswith('.gz'):
                         dataset.metadata.bgzip = fname
                         try:
-                            with gzip.open(os.path.join(efp, fname), 'r') as fh:
+                            with gzip.open(os.path.join(efp, fname), 'rt') as fh:
                                 buf = fh.read(5000)
                                 lines = buf.splitlines()
                                 headers = lines[0].split('\t')
                                 dataset.metadata.annotation = headers[4:]
                         except Exception as e:
-                            log.warning("set_meta fname: %s  %s" % (fname, str(e)))
+                            log.warning("set_meta fname: %s  %s", fname, unicodify(e))
                     if fname.endswith('.tbi'):
                         dataset.metadata.index = fname
             self.regenerate_primary_file(dataset)
         except Exception as e:
-            log.warning("set_meta fname: %s  %s" % (dataset.file_name if dataset and dataset.file_name else 'Unkwown', str(e)))
+            log.warning("set_meta fname: %s  %s", dataset.file_name if dataset and dataset.file_name else 'Unkwown', unicodify(e))
 
         def set_peek(self, dataset, is_multi_byte=False):
             if not dataset.dataset.purged:
@@ -573,3 +730,84 @@ class IQTree(Text):
         False
         """
         return file_prefix.startswith("IQ-TREE")
+
+
+@build_sniff_from_prefix
+class Paf(Text):
+    """
+    PAF: a Pairwise mApping Format
+
+    https://github.com/lh3/miniasm/blob/master/PAF.md
+    """
+    file_ext = "paf"
+
+    def sniff_prefix(self, file_prefix):
+        """
+        >>> from galaxy.datatypes.sniff import get_test_fname
+        >>> fname = get_test_fname('A-3105.paf')
+        >>> Paf().sniff(fname)
+        True
+        """
+        found_valid_lines = False
+        for line in iter_headers(file_prefix, "\t"):
+            if len(line) < 12:
+                return False
+            for i in (1, 2, 3, 6, 7, 8, 9, 10, 11):
+                int(line[i])
+            if line[4] not in ('+', '-'):
+                return False
+            if not (0 <= int(line[11]) <= 255):
+                return False
+            # Check that the optional columns after the 12th contain SAM-like typed key-value pairs
+            for i in range(12, len(line)):
+                if len(line[i].split(':')) != 3:
+                    return False
+            found_valid_lines = True
+        return found_valid_lines
+
+
+@build_sniff_from_prefix
+class Gfa1(Text):
+    """
+    Graphical Fragment Assembly (GFA) 1.0
+
+    http://gfa-spec.github.io/GFA-spec/GFA1.html
+    """
+    file_ext = "gfa1"
+
+    def sniff_prefix(self, file_prefix):
+        """
+        >>> from galaxy.datatypes.sniff import get_test_fname
+        >>> fname = get_test_fname('big.gfa1')
+        >>> Gfa1().sniff(fname)
+        True
+        """
+        found_valid_lines = False
+        for line in iter_headers(file_prefix, "\t"):
+            if line[0].startswith('#'):
+                continue
+            if line[0] == 'H':
+                return len(line) == 2 and line[1] == 'VN:Z:1.0'
+            elif line[0] == 'S':
+                if len(line) < 3:
+                    return False
+            elif line[0] == 'L':
+                if len(line) < 6:
+                    return False
+                for i in (2, 4):
+                    if line[i] not in ('+', '-'):
+                        return False
+            elif line[0] == 'C':
+                if len(line) < 7:
+                    return False
+                for i in (2, 4):
+                    if line[i] not in ('+', '-'):
+                        return False
+                int(line[5])
+            elif line[0] == 'P':
+                if len(line) < 4:
+                    return False
+            else:
+                return False
+            found_valid_lines = True
+        return found_valid_lines

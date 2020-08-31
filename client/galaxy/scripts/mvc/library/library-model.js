@@ -1,32 +1,36 @@
+import Backbone from "backbone";
+import { getAppRoot } from "onload/loadConfig";
+import { getGalaxyInstance } from "app";
 import mod_util from "mvc/library/library-util";
+
 // ============================================================================
 // LIBRARY RELATED MODELS
 
 var Library = Backbone.Model.extend({
-    urlRoot: `${Galaxy.root}api/libraries/`,
+    urlRoot: `${getAppRoot()}api/libraries/`,
 
     /** based on show_deleted would this lib show in the list of lib's?
      *  @param {Boolean} show_deleted are we including deleted libraries?
      */
-    isVisible: function(show_deleted) {
+    isVisible: function (show_deleted) {
         var isVisible = true;
         if (!show_deleted && this.get("deleted")) {
             isVisible = false;
         }
         return isVisible;
-    }
+    },
 });
 
 var Libraries = Backbone.Collection.extend({
-    urlRoot: `${Galaxy.root}api/libraries`,
+    urlRoot: `${getAppRoot()}api/libraries`,
 
     model: Library,
 
-    initialize: function(options) {
+    initialize: function (options) {
         options = options || {};
     },
 
-    search: function(search_term) {
+    search: function (search_term) {
         /**
          * Search the collection and return only the models that have
          * the search term in their names.
@@ -35,7 +39,7 @@ var Libraries = Backbone.Collection.extend({
          */
         if (search_term == "") return this;
         var lowercase_term = search_term.toLowerCase();
-        return this.filter(data => {
+        return this.filter((data) => {
             var lowercase_name = data.get("name").toLowerCase();
             return lowercase_name.indexOf(lowercase_term) !== -1;
         });
@@ -45,17 +49,15 @@ var Libraries = Backbone.Collection.extend({
      *  @param {Boolean} show_deleted are we including deleted libraries?
      *  @returns array of library models
      */
-    getVisible: function(show_deleted, filters) {
+    getVisible: function (show_deleted, filters) {
         filters = filters || [];
-        var filteredLibraries = new Libraries(this.filter(item => item.isVisible(show_deleted)));
-
-        return filteredLibraries;
+        return new Libraries(this.filter((item) => item.isVisible(show_deleted)));
     },
 
-    sortLibraries: function(sort_key, sort_order) {
-        this.comparator = mod_util.generateLibraryComparator(sort_key, sort_order);
+    sortLibraries: function (sort_key, sort_order) {
+        this.comparator = mod_util.generateComparator(sort_key, sort_order);
         this.sort();
-    }
+    },
 });
 
 // ============================================================================
@@ -64,29 +66,47 @@ var Libraries = Backbone.Collection.extend({
 var LibraryItem = Backbone.Model.extend({});
 
 var Ldda = LibraryItem.extend({
-    urlRoot: `${Galaxy.root}api/libraries/datasets/`
+    urlRoot: `${getAppRoot()}api/libraries/datasets/`,
 });
 
 var FolderAsModel = LibraryItem.extend({
-    urlRoot: `${Galaxy.root}api/folders/`
+    urlRoot: `${getAppRoot()}api/folders/`,
 });
 
 var Folder = Backbone.Collection.extend({
     model: LibraryItem,
-
-    sortFolder: function(sort_key, sort_order) {
-        this.comparator = mod_util.generateFolderComparator(sort_key, sort_order);
-        this.sort();
-    }
 });
 
 var FolderContainer = Backbone.Model.extend({
     defaults: {
         folder: new Folder(),
-        urlRoot: `${Galaxy.root}api/folders/`,
-        id: "unknown"
+        urlRoot: `${getAppRoot()}api/folders/`,
+        id: "unknown",
     },
-    parse: function(obj) {
+
+    /**
+     * Search the folder and return only the models that have
+     * the search term in their names.
+     * [the term to search]
+     * @type {string}
+     */
+    search: function (search_term) {
+        if (search_term == "") return this;
+        const lowercase_term = search_term.toLowerCase();
+        return this.get("folder").filter((data) => {
+            const lowercase_name = data.get("name").toLowerCase();
+            return lowercase_name.indexOf(lowercase_term) !== -1;
+        });
+    },
+
+    sortFolder: function (sort_key, sort_order) {
+        this.get("folder").comparator = mod_util.generateComparator(sort_key, sort_order);
+        this.get("folder").sort();
+        return this.get("folder");
+    },
+
+    parse: function (obj) {
+        const Galaxy = getGalaxyInstance();
         // empty the collection
         this.get("folder").reset();
         // response is not a simple array, it contains metadata
@@ -103,7 +123,7 @@ var FolderContainer = Backbone.Model.extend({
             }
         }
         return obj;
-    }
+    },
 });
 
 // ============================================================================
@@ -111,27 +131,27 @@ var FolderContainer = Backbone.Model.extend({
 // TODO UNITE
 
 var HistoryItem = Backbone.Model.extend({
-    urlRoot: `${Galaxy.root}api/histories/`
+    urlRoot: `${getAppRoot()}api/histories/`,
 });
 
 var HistoryContents = Backbone.Collection.extend({
-    urlRoot: `${Galaxy.root}api/histories/`,
-    initialize: function(options) {
+    urlRoot: `${getAppRoot()}api/histories/`,
+    initialize: function (options) {
         this.id = options.id;
     },
-    url: function() {
+    url: function () {
         return `${this.urlRoot + this.id}/contents`;
     },
-    model: HistoryItem
+    model: HistoryItem,
 });
 
 var GalaxyHistory = Backbone.Model.extend({
-    urlRoot: `${Galaxy.root}api/histories/`
+    urlRoot: `${getAppRoot()}api/histories/`,
 });
 
 var GalaxyHistories = Backbone.Collection.extend({
-    url: `${Galaxy.root}api/histories`,
-    model: GalaxyHistory
+    url: `${getAppRoot()}api/histories`,
+    model: GalaxyHistory,
 });
 
 // ============================================================================
@@ -141,7 +161,7 @@ var GalaxyHistories = Backbone.Collection.extend({
  */
 
 var Jstree = Backbone.Model.extend({
-    urlRoot: `${Galaxy.root}api/remote_files`
+    urlRoot: `${getAppRoot()}api/remote_files`,
 });
 
 export default {
@@ -156,5 +176,5 @@ export default {
     HistoryContents: HistoryContents,
     GalaxyHistory: GalaxyHistory,
     GalaxyHistories: GalaxyHistories,
-    Jstree: Jstree
+    Jstree: Jstree,
 };

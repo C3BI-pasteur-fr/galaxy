@@ -1,6 +1,10 @@
+import _ from "underscore";
+import $ from "jquery";
+import { getAppRoot } from "onload/loadConfig";
+import { getGalaxyInstance } from "app";
 import STATES from "mvc/dataset/states";
 import DATASET_LI from "mvc/dataset/dataset-li";
-import TAGS from "mvc/tag";
+import { mountModelTags } from "components/Tags";
 import ANNOTATIONS from "mvc/annotation";
 import faIconButton from "ui/fa-icon-button";
 import BASE_MVC from "mvc/base-mvc";
@@ -13,7 +17,7 @@ var _super = DATASET_LI.DatasetListItemView;
 var DatasetListItemEdit = _super.extend(
     /** @lends DatasetListItemEdit.prototype */ {
         /** set up: options */
-        initialize: function(attributes) {
+        initialize: function (attributes) {
             _super.prototype.initialize.call(this, attributes);
             this.hasUser = attributes.hasUser;
 
@@ -29,7 +33,7 @@ var DatasetListItemEdit = _super.extend(
 
         // ......................................................................... titlebar actions
         /** In this override, add the other two primary actions: edit and delete */
-        _renderPrimaryActions: function() {
+        _renderPrimaryActions: function () {
             var actions = _super.prototype._renderPrimaryActions.call(this);
             if (this.model.get("state") === STATES.NOT_VIEWABLE) {
                 return actions;
@@ -43,7 +47,7 @@ var DatasetListItemEdit = _super.extend(
         //TODO: move titleButtons into state renderers, remove state checks in the buttons
 
         /** Render icon-button to edit the attributes (format, permissions, etc.) this dataset. */
-        _renderEditButton: function() {
+        _renderEditButton: function () {
             var self = this;
             // don't show edit while uploading, in-accessible
             // DO show if in error (ala previous history panel)
@@ -55,17 +59,18 @@ var DatasetListItemEdit = _super.extend(
 
             var editBtnData = {
                 title: _l("Edit attributes"),
-                href: `${Galaxy.root}datasets/edit?dataset_id=${this.model.attributes.id}`,
+                href: `${getAppRoot()}datasets/edit?dataset_id=${this.model.attributes.id}`,
                 faIcon: "fa-pencil",
                 classes: "edit-btn",
-                onclick: function(ev) {
+                onclick: function (ev) {
+                    const Galaxy = getGalaxyInstance();
                     if (Galaxy.router) {
                         ev.preventDefault();
                         Galaxy.router.push("datasets/edit", {
-                            dataset_id: self.model.attributes.id
+                            dataset_id: self.model.attributes.id,
                         });
                     }
-                }
+                },
             };
 
             // disable if purged or deleted and explain why in the tooltip
@@ -78,7 +83,7 @@ var DatasetListItemEdit = _super.extend(
                 }
 
                 // disable if still uploading or new
-            } else if (_.contains([STATES.UPLOAD, STATES.NEW], this.model.get("state"))) {
+            } else if ([STATES.UPLOAD, STATES.NEW].includes(this.model.get("state"))) {
                 editBtnData.disabled = true;
                 editBtnData.title = _l("This dataset is not yet editable");
             }
@@ -86,7 +91,7 @@ var DatasetListItemEdit = _super.extend(
         },
 
         /** Render icon-button to delete this hda. */
-        _renderDeleteButton: function() {
+        _renderDeleteButton: function () {
             // don't show delete if...
             if (!this.model.get("accessible")) {
                 return null;
@@ -99,26 +104,28 @@ var DatasetListItemEdit = _super.extend(
                 disabled: deletedAlready,
                 faIcon: "fa-times",
                 classes: "delete-btn",
-                onclick: function() {
-                    // ...bler... tooltips being left behind in DOM (hover out never called on deletion)
-                    self.$el.find(".icon-btn.delete-btn").trigger("mouseout");
+                onclick: function () {
+                    self.$el.find(".icon-btn.delete-btn").tooltip("dispose");
                     self.model["delete"]();
-                }
+                },
             });
         },
 
         // ......................................................................... details
         /** In this override, add tags and annotations controls, make the ? dbkey a link to editing page */
-        _renderDetails: function() {
+        _renderDetails: function () {
             //TODO: generalize to be allow different details for each state
             var $details = _super.prototype._renderDetails.call(this);
 
             var state = this.model.get("state");
 
-            if (!this.model.isDeletedOrPurged() && _.contains([STATES.OK, STATES.FAILED_METADATA], state)) {
+            if (!this.model.isDeletedOrPurged()) {
+                //Enable tagging+annotation regardless of job state (see issue #6330)
                 this._renderTags($details);
                 this._renderAnnotation($details);
-                this._makeDbkeyEditLink($details);
+                if ([STATES.OK, STATES.FAILED_METADATA].includes(state)) {
+                    this._makeDbkeyEditLink($details);
+                }
             }
 
             this._setUpBehaviors($details);
@@ -129,12 +136,12 @@ var DatasetListItemEdit = _super.extend(
          * Render help button to show tool help text without rerunning the tool.
          * Issue #2100
          */
-        _renderToolHelpButton: function() {
+        _renderToolHelpButton: function () {
             var datasetID = this.model.attributes.dataset_id;
             var jobID = this.model.attributes.creating_job;
             var self = this;
 
-            var parseToolBuild = data => {
+            var parseToolBuild = (data) => {
                 var helpString = `<div id="thdiv-${datasetID}" class="toolhelp">`;
                 if (data.name && data.help) {
                     helpString += `<strong>Tool help for ${data.name}</strong><hr/>`;
@@ -145,33 +152,36 @@ var DatasetListItemEdit = _super.extend(
                 helpString += "</div>";
                 self.$el.find(".details").append($.parseHTML(helpString));
             };
-            var parseToolID = data => {
+            var parseToolID = (data) => {
                 $.ajax({
-                    url: `${Galaxy.root}api/tools/${data.tool_id}/build`
+                    url: `${getAppRoot()}api/tools/${data.tool_id}/build`,
                 })
-                    .done(data => {
+                    .done((data) => {
                         parseToolBuild(data);
                     })
                     .fail(() => {
                         parseToolBuild({});
                     });
             };
+
+            const Galaxy = getGalaxyInstance();
             if (Galaxy.user.id === null) {
                 return null;
             }
+
             return faIconButton({
                 title: _l("Tool Help"),
                 classes: "icon-btn",
                 href: "#",
                 faIcon: "fa-question",
-                onclick: function() {
+                onclick: function () {
                     if (self.$el.find(".toolhelp").length > 0) {
                         self.$el.find(".toolhelp").toggle();
                     } else {
                         $.ajax({
-                            url: `${Galaxy.root}api/jobs/${jobID}`
+                            url: `${getAppRoot()}api/jobs/${jobID}`,
                         })
-                            .done(data => {
+                            .done((data) => {
                                 parseToolID(data);
                             })
                             .fail(() => {
@@ -180,13 +190,13 @@ var DatasetListItemEdit = _super.extend(
                                 );
                             });
                     }
-                }
+                },
             });
         },
         //*************************************************************************
 
         /** Add less commonly used actions in the details section based on state */
-        _renderSecondaryActions: function() {
+        _renderSecondaryActions: function () {
             var actions = _super.prototype._renderSecondaryActions.call(this);
             switch (this.model.get("state")) {
                 case STATES.UPLOAD:
@@ -201,33 +211,34 @@ var DatasetListItemEdit = _super.extend(
                     return actions.concat([
                         this._renderRerunButton(),
                         this._renderVisualizationsButton(),
-                        this._renderToolHelpButton()
+                        this._renderToolHelpButton(),
                     ]);
             }
             return actions.concat([this._renderRerunButton(), this._renderToolHelpButton()]);
         },
 
         /** Render icon-button to report an error on this dataset to the galaxy admin. */
-        _renderErrButton: function() {
+        _renderErrButton: function () {
             var self = this;
             return faIconButton({
                 title: _l("View or report this error"),
-                href: `${Galaxy.root}datasets/error?dataset_id=${this.model.attributes.id}`,
+                href: `${getAppRoot()}datasets/error?dataset_id=${this.model.attributes.id}`,
                 classes: "report-error-btn",
                 faIcon: "fa-bug",
-                onclick: function(ev) {
+                onclick: function (ev) {
+                    const Galaxy = getGalaxyInstance();
                     if (Galaxy.router) {
                         ev.preventDefault();
                         Galaxy.router.push("datasets/error", {
-                            dataset_id: self.model.attributes.id
+                            dataset_id: self.model.attributes.id,
                         });
                     }
-                }
+                },
             });
         },
 
         /** Render icon-button to re-run the job that created this dataset. */
-        _renderRerunButton: function() {
+        _renderRerunButton: function () {
             var creating_job = this.model.get("creating_job");
             if (this.model.get("rerunnable")) {
                 return faIconButton({
@@ -236,90 +247,103 @@ var DatasetListItemEdit = _super.extend(
                     classes: "rerun-btn",
                     target: this.linkTarget,
                     faIcon: "fa-refresh",
-                    onclick: function(ev) {
+                    onclick: function (ev) {
+                        const Galaxy = getGalaxyInstance();
                         if (Galaxy.router) {
                             ev.preventDefault();
                             Galaxy.router.push("/", {
-                                job_id: creating_job
+                                job_id: creating_job,
                             });
                         }
-                    }
+                    },
                 });
             }
         },
 
         /** Render an icon-button or popupmenu of links based on the applicable visualizations */
-        _renderVisualizationsButton: function() {
+        _renderVisualizationsButton: function () {
             //TODO: someday - lazyload visualizations
-            var visualizations = this.model.get("visualizations");
-            if (this.model.isDeletedOrPurged() || !this.hasUser || !this.model.hasData() || _.isEmpty(visualizations)) {
+            const Galaxy = getGalaxyInstance();
+            const visualizations = this.model.get("visualizations");
+            if (
+                !Galaxy.config.visualizations_visible ||
+                this.model.isDeletedOrPurged() ||
+                !this.hasUser ||
+                !this.model.hasData() ||
+                _.isEmpty(visualizations)
+            ) {
                 return null;
             }
             if (!_.isObject(visualizations[0])) {
                 this.warn("Visualizations have been switched off");
                 return null;
             }
-
             if (visualizations.length >= 1) {
-                var url = Galaxy.root + "visualizations?dataset_id=" + this.model.get("id");
-                return $("<a/>")
-                    .addClass("visualization-link icon-btn")
-                    .attr("href", url)
-                    .append($("<span/>").addClass("fa fa-bar-chart-o"))
-                    .on("click", function(e) {
-                        Galaxy.frame.add({ url: url, title: "Visualization" });
-                        e.preventDefault();
-                    });
+                const dsid = this.model.get("id");
+                const url = getAppRoot() + "visualizations?dataset_id=" + dsid;
+                return faIconButton({
+                    title: _l("Visualize this data"),
+                    href: url,
+                    classes: "visualization-link",
+                    faIcon: "fa-bar-chart-o",
+                    onclick: (ev) => {
+                        if (Galaxy.frame && Galaxy.frame.active) {
+                            ev.preventDefault();
+                            Galaxy.frame.add({ url: url, title: "Visualization" });
+                        } else if (Galaxy.router) {
+                            ev.preventDefault();
+                            Galaxy.router.push("visualizations", {
+                                dataset_id: dsid,
+                            });
+                            Galaxy.trigger("activate-hda", dsid);
+                        }
+                    },
+                });
             }
         },
 
-        /** add scratchbook functionality to visualization links */
-        _addScratchBookFn: function($links) {
-            $links.click(ev => {
-                if (Galaxy.frame && Galaxy.frame.active) {
-                    Galaxy.frame.add({
-                        title: _l("Visualization"),
-                        url: $(this).attr("href")
-                    });
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                }
-            });
-        },
-
-        //TODO: if possible move these to readonly view - but display the owner's tags/annotation (no edit)
         /** Render the tags list/control */
-        _renderTags: function($where) {
+        _renderTags: function ($where) {
             if (!this.hasUser) {
                 return;
             }
-            var view = this;
-            this.tagsEditor = new TAGS.TagsEditor({
+
+            const el = $where.find(".tags-display")[0];
+
+            const propsData = {
                 model: this.model,
-                el: $where.find(".tags-display"),
-                onshowFirstTime: function() {
-                    this.render();
-                },
-                // persist state on the hda view (and not the editor) since these are currently re-created each time
-                onshow: function() {
-                    view.tagsEditorShown = true;
-                },
-                onhide: function() {
-                    view.tagsEditorShown = false;
-                },
-                $activator: faIconButton({
-                    title: _l("Edit dataset tags"),
-                    classes: "tag-btn",
-                    faIcon: "fa-tags"
-                }).appendTo($where.find(".actions .right"))
-            });
+                disabled: false,
+                context: "dataset-li-edit",
+            };
+
+            const vm = mountModelTags(propsData, el);
+
+            // tag icon button open/closes
+            const activator = faIconButton({
+                title: _l("Edit dataset tags"),
+                classes: "tag-btn",
+                faIcon: "fa-tags",
+            }).appendTo($where.find(".actions .right"));
+
+            const toggleEditor = () => {
+                $(vm.$el).toggleClass("active");
+                this.tagsEditorShown = $(vm.$el).hasClass("active");
+            };
+
+            activator.on("click", toggleEditor);
+
             if (this.tagsEditorShown) {
-                this.tagsEditor.toggle(true);
+                const editorIsOpen = $(vm.$el).hasClass("active");
+                if (!editorIsOpen) {
+                    toggleEditor();
+                }
             }
+
+            return vm;
         },
 
         /** Render the annotation display/control */
-        _renderAnnotation: function($where) {
+        _renderAnnotation: function ($where) {
             if (!this.hasUser) {
                 return;
             }
@@ -327,21 +351,21 @@ var DatasetListItemEdit = _super.extend(
             this.annotationEditor = new ANNOTATIONS.AnnotationEditor({
                 model: this.model,
                 el: $where.find(".annotation-display"),
-                onshowFirstTime: function() {
+                onshowFirstTime: function () {
                     this.render();
                 },
                 // persist state on the hda view (and not the editor) since these are currently re-created each time
-                onshow: function() {
+                onshow: function () {
                     view.annotationEditorShown = true;
                 },
-                onhide: function() {
+                onhide: function () {
                     view.annotationEditorShown = false;
                 },
                 $activator: faIconButton({
                     title: _l("Edit dataset annotation"),
                     classes: "annotate-btn",
-                    faIcon: "fa-comment"
-                }).appendTo($where.find(".actions .right"))
+                    faIcon: "fa-comment",
+                }).appendTo($where.find(".actions .right")),
             });
             if (this.annotationEditorShown) {
                 this.annotationEditor.toggle(true);
@@ -349,7 +373,7 @@ var DatasetListItemEdit = _super.extend(
         },
 
         /** If the format/dbkey/genome_build isn't set, make the display a link to the edit page */
-        _makeDbkeyEditLink: function($details) {
+        _makeDbkeyEditLink: function ($details) {
             // make the dbkey a link to editing
             if (this.model.get("metadata_dbkey") === "?" && !this.model.isDeletedOrPurged()) {
                 var editableDbkey = $('<a class="value">?</a>')
@@ -365,35 +389,35 @@ var DatasetListItemEdit = _super.extend(
             "click .undelete-link": "_clickUndeleteLink",
             "click .purge-link": "_clickPurgeLink",
 
-            "click .edit-btn": function(ev) {
+            "click .edit-btn": function (ev) {
                 this.trigger("edit", this, ev);
             },
-            "click .delete-btn": function(ev) {
+            "click .delete-btn": function (ev) {
                 this.trigger("delete", this, ev);
             },
-            "click .rerun-btn": function(ev) {
+            "click .rerun-btn": function (ev) {
                 this.trigger("rerun", this, ev);
             },
-            "click .report-err-btn": function(ev) {
+            "click .report-err-btn": function (ev) {
                 this.trigger("report-err", this, ev);
             },
-            "click .visualization-btn": function(ev) {
+            "click .visualization-btn": function (ev) {
                 this.trigger("visualize", this, ev);
             },
-            "click .dbkey a": function(ev) {
+            "click .dbkey a": function (ev) {
                 this.trigger("edit", this, ev);
-            }
+            },
         }),
 
         /** listener for item undelete (in the messages section) */
-        _clickUndeleteLink: function(ev) {
+        _clickUndeleteLink: function (ev) {
             this.model.undelete();
             return false;
         },
 
         /** listener for item purge (in the messages section) */
-        _clickPurgeLink: function(ev) {
-            if (confirm(_l("This will permanently remove the data in your dataset. Are you sure?"))) {
+        _clickPurgeLink: function (ev) {
+            if (window.confirm(_l("This will permanently remove the data in your dataset. Are you sure?"))) {
                 this.model.purge();
             }
             return false;
@@ -401,10 +425,10 @@ var DatasetListItemEdit = _super.extend(
 
         // ......................................................................... misc
         /** string rep */
-        toString: function() {
+        toString: function () {
             var modelString = this.model ? `${this.model}` : "(no model)";
             return `HDAEditView(${modelString})`;
-        }
+        },
     }
 );
 
@@ -422,7 +446,7 @@ DatasetListItemEdit.prototype.templates = (() => {
                 _l("Set it manually or retry auto-detection"),
                 "</a>",
                 "</div>",
-                "<% } %>"
+                "<% } %>",
             ],
             "dataset"
         ),
@@ -443,50 +467,17 @@ DatasetListItemEdit.prototype.templates = (() => {
                 "</a>",
                 "<% } %>",
                 "</div>",
-                "<% } %>"
+                "<% } %>",
             ],
             "dataset"
-        )
+        ),
     });
-
-    var visualizationsTemplate = BASE_MVC.wrapTemplate(
-        [
-            "<% if( visualizations.length === 1 ){ %>",
-            '<a class="visualization-link icon-btn" href="<%- visualizations[0].href %>"',
-            ' target="<%- visualizations[0].target %>" title="',
-            _l("Visualize in"),
-            ' <%- visualizations[0].html %>">',
-            '<span class="fa fa-bar-chart-o"></span>',
-            "</a>",
-
-            "<% } else { %>",
-            '<div class="visualizations-dropdown dropdown icon-btn">',
-            '<a data-toggle="dropdown" title="',
-            _l("Visualize"),
-            '">',
-            '<span class="fa fa-bar-chart-o"></span>',
-            "</a>",
-            '<ul class="dropdown-menu" role="menu">',
-            "<% _.each( visualizations, function( visualization ){ %>",
-            '<li><a class="visualization-link" href="<%- visualization.href %>"',
-            ' target="<%- visualization.target %>">',
-            "<%- visualization.html %>",
-            "</a></li>",
-            "<% }); %>",
-            "</ul>",
-            "</div>",
-            "<% } %>"
-        ],
-        "visualizations"
-    );
-
     return _.extend({}, _super.prototype.templates, {
         warnings: warnings,
-        visualizations: visualizationsTemplate
     });
 })();
 
 //==============================================================================
 export default {
-    DatasetListItemEdit: DatasetListItemEdit
+    DatasetListItemEdit: DatasetListItemEdit,
 };

@@ -7,8 +7,11 @@ import socket
 
 from markupsafe import escape
 
-from galaxy.util import send_mail
-from galaxy.util.logging import get_logger
+from galaxy.util import (
+    send_mail,
+    unicodify,
+)
+from galaxy.util.custom_logging import get_logger
 
 log = get_logger(__name__)
 
@@ -41,21 +44,21 @@ class EmailAction(DefaultJobAction):
 
     @classmethod
     def execute(cls, app, sa_session, action, job, replacement_dict):
-        frm = app.config.email_from
-        if frm is None:
-            if action.action_arguments and 'host' in action.action_arguments:
-                host = action.action_arguments['host']
-            else:
-                host = socket.getfqdn()
-            frm = 'galaxy-no-reply@%s' % host
-        to = job.user.email
-        subject = "Galaxy workflow step notification '%s'" % (job.history.name)
-        outdata = ', '.join(ds.dataset.display_name() for ds in job.output_datasets)
-        body = "Your Galaxy job generating dataset '%s' is complete as of %s." % (outdata, datetime.datetime.now().strftime("%I:%M"))
         try:
+            frm = app.config.email_from
+            if frm is None:
+                if action.action_arguments and 'host' in action.action_arguments:
+                    host = action.action_arguments['host']
+                else:
+                    host = socket.getfqdn()
+                frm = 'galaxy-no-reply@%s' % host
+            to = job.user.email
+            subject = "Galaxy job completion notification from history '%s'" % (job.history.name)
+            outdata = ', '.join(ds.dataset.display_name() for ds in job.output_datasets)
+            body = "Your Galaxy job generating dataset '%s' is complete as of %s." % (outdata, datetime.datetime.now().strftime("%I:%M"))
             send_mail(frm, to, subject, body, app.config)
         except Exception as e:
-            log.error("EmailAction PJA Failed, exception: %s" % e)
+            log.error("EmailAction PJA Failed, exception: %s", unicodify(e))
 
     @classmethod
     def get_short_str(cls, pja):
@@ -63,6 +66,23 @@ class EmailAction(DefaultJobAction):
             return "Email the current user from server %s when this job is complete." % escape(pja.action_arguments['host'])
         else:
             return "Email the current user when this job is complete."
+
+
+class ValidateOutputsAction(DefaultJobAction):
+    """
+    This action validates the produced outputs against the expected datatype.
+    """
+    name = "ValidateOutputsAction"
+    verbose_name = "Validate Tool Outputs"
+
+    @classmethod
+    def execute(cls, app, sa_session, action, job, replacement_dict):
+        # no-op: needs to inject metadata handling parameters ahead of time.
+        pass
+
+    @classmethod
+    def get_short_str(cls, pja):
+        return "Validate tool outputs."
 
 
 class ChangeDatatypeAction(DefaultJobAction):
@@ -74,6 +94,11 @@ class ChangeDatatypeAction(DefaultJobAction):
         for dataset_assoc in job.output_datasets:
             if action.output_name == '' or dataset_assoc.name == action.output_name:
                 app.datatypes_registry.change_datatype(dataset_assoc.dataset, action.action_arguments['newtype'])
+        for dataset_collection_assoc in job.output_dataset_collection_instances:
+            if action.output_name == '' or dataset_collection_assoc.name == action.output_name:
+                for dataset_instance in dataset_collection_assoc.dataset_collection_instance.dataset_instances:
+                    if dataset_instance:
+                        app.datatypes_registry.change_datatype(dataset_instance, action.action_arguments['newtype'])
 
     @classmethod
     def get_short_str(cls, pja):
@@ -147,8 +172,6 @@ class RenameDatasetAction(DefaultJobAction):
                 # Treat . as special symbol (breaks parameter names anyway)
                 # to allow access to repeat elements, for instance first
                 # repeat in cat1 would be something like queries_0.input2.
-                # TODO: update the help text (input_terminals) on the action to
-                # show correct valid inputs.
                 input_file_var = input_file_var.replace(".", "|")
 
                 replacement = input_names.get(input_file_var, "")
@@ -279,9 +302,10 @@ class ColumnSetAction(DefaultJobAction):
                 for k, v in action.action_arguments.items():
                     if v:
                         # Try to use both pure integer and 'cX' format.
-                        if v[0] == 'c':
-                            v = v[1:]
-                        v = int(v)
+                        if not isinstance(v, int):
+                            if v[0] == 'c':
+                                v = v[1:]
+                            v = int(v)
                         if v != 0:
                             setattr(dataset_assoc.dataset.metadata, k, v)
 

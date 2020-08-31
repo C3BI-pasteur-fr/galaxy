@@ -1,5 +1,5 @@
-galaxy\.webapps package
-=======================
+galaxy.webapps package
+======================
 
 .. automodule:: galaxy.webapps
     :members:
@@ -11,15 +11,15 @@ Subpackages
 
 .. toctree::
 
+    galaxy.webapps.base
     galaxy.webapps.galaxy
     galaxy.webapps.reports
-    galaxy.webapps.tool_shed
 
 Submodules
 ----------
 
-galaxy\.webapps\.util module
-----------------------------
+galaxy.webapps.util module
+--------------------------
 
 .. automodule:: galaxy.webapps.util
     :members:

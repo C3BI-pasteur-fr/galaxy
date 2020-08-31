@@ -1,15 +1,16 @@
-import * as Backbone from "backbone";
+import $ from "jquery";
+import Backbone from "backbone";
 import Menu from "layout/menu";
 import Scratchbook from "layout/scratchbook";
 import QuotaMeter from "mvc/user/user-quotameter";
-
-/* global Galaxy */
-/* global $ */
+import { getGalaxyInstance } from "app";
 
 /** Masthead **/
-var View = Backbone.View.extend({
-    initialize: function(options) {
-        var self = this;
+const View = Backbone.View.extend({
+    initialize: function (options) {
+        const Galaxy = getGalaxyInstance();
+
+        const self = this;
         this.options = options;
         this.setElement(this._template());
         this.$navbarBrandLink = this.$(".navbar-brand");
@@ -21,14 +22,14 @@ var View = Backbone.View.extend({
         // build tabs
         this.collection = new Menu.Collection();
         this.collection
-            .on("add", model => {
+            .on("add", (model) => {
                 self.$navbarTabs.append(new Menu.Tab({ model: model }).render().$el);
             })
             .on("reset", () => {
                 self.$navbarTabs.empty();
             })
-            .on("dispatch", callback => {
-                self.collection.each(m => {
+            .on("dispatch", (callback) => {
+                self.collection.each((m) => {
                     callback(m);
                 });
             })
@@ -39,36 +40,32 @@ var View = Backbone.View.extend({
 
         // scratchbook
         Galaxy.frame = this.frame = new Scratchbook({
-            collection: this.collection
+            collection: this.collection,
         });
 
         // set up the quota meter (And fetch the current user data from trans)
         // add quota meter to masthead
         Galaxy.quotaMeter = this.quotaMeter = new QuotaMeter.UserQuotaMeter({
             model: Galaxy.user,
-            el: this.$quoteMeter
+            el: this.$quoteMeter,
         });
 
         // loop through beforeunload functions if the user attempts to unload the page
         $(window)
-            .on("click", e => {
-                var $download_link = $(e.target).closest("a[download]");
+            .on("click", (e) => {
+                const $download_link = $(e.target).closest("a[download]");
                 if ($download_link.length == 1) {
                     if ($("iframe[id=download]").length === 0) {
-                        $("body").append(
-                            $("<iframe/>")
-                                .attr("id", "download")
-                                .hide()
-                        );
+                        $("body").append($("<iframe/>").attr("id", "download").hide());
                     }
                     $("iframe[id=download]").attr("src", $download_link.attr("href"));
                     e.preventDefault();
                 }
             })
             .on("beforeunload", () => {
-                var text = "";
-                self.collection.each(model => {
-                    var q = model.get("onbeforeunload") && model.get("onbeforeunload")();
+                let text = "";
+                self.collection.each((model) => {
+                    const q = model.get("onbeforeunload") && model.get("onbeforeunload")();
                     if (q) {
                         text += `${q} `;
                     }
@@ -79,34 +76,38 @@ var View = Backbone.View.extend({
             });
     },
 
-    render: function() {
-        this.$navbarBrandTitle.html(`Galaxy ${(this.options.brand && `/ ${this.options.brand}`) || ""}`);
+    render: function () {
+        let brand = this.options.display_galaxy_brand ? "Galaxy " : "";
+        if (this.options.brand) {
+            brand += this.options.brand;
+        }
+        this.$navbarBrandTitle.html(brand);
         this.$navbarBrandLink.attr("href", this.options.logo_url);
         this.$navbarBrandImage.attr("src", this.options.logo_src);
         this.quotaMeter.render();
         return this;
     },
 
-    highlight: function(id) {
-        this.collection.forEach(function(model) {
+    highlight: function (id) {
+        this.collection.forEach(function (model) {
             model.set("active", model.id == id);
         });
     },
 
     /** body template */
-    _template: function() {
+    _template: function () {
         return `
-            <nav id="masthead" class="navbar navbar-expand fixed-top justify-content-center navbar-dark">
-                <a class="navbar-brand">
-                    <img class="navbar-brand-image"/>
+            <nav id="masthead" class="navbar navbar-expand justify-content-center navbar-dark" role="navigation" aria-label="Main">
+                <a class="navbar-brand" aria-label="homepage">
+                    <img alt="logo" class="navbar-brand-image"/>
                     <span class="navbar-brand-title"/>
                 </a>
                 <ul class="navbar-nav"/>
                 <div class="quota-meter-container"/>
             </nav>`;
-    }
+    },
 });
 
 export default {
-    View: View
+    View: View,
 };

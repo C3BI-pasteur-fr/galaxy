@@ -1,22 +1,29 @@
 /** This class creates/wraps a drill down element. */
+import $ from "jquery";
+import _ from "underscore";
 import Utils from "utils/utils";
 import Options from "mvc/ui/ui-options";
 var View = Options.BaseIcons.extend({
-    initialize: function(options) {
+    initialize: function (options) {
         options.type = options.display || "checkbox";
         options.multiple = options.type == "checkbox";
         Options.BaseIcons.prototype.initialize.call(this, options);
     },
 
+    /** Update available options */
+    update: function (input_def) {
+        this.model.set("data", input_def.options);
+    },
+
     /** Set states for selected values */
-    _setValue: function(new_value) {
+    _setValue: function (new_value) {
         Options.BaseIcons.prototype._setValue.call(this, new_value);
         if (new_value !== undefined && new_value !== null && this.header_index) {
             var self = this;
             var values = $.isArray(new_value) ? new_value : [new_value];
-            _.each(values, v => {
+            _.each(values, (v) => {
                 var list = self.header_index[v];
-                _.each(list, element => {
+                _.each(list, (element) => {
                     self._setState(element, true);
                 });
             });
@@ -24,7 +31,7 @@ var View = Options.BaseIcons.extend({
     },
 
     /** Expand/collapse a sub group */
-    _setState: function(header_id, is_expanded) {
+    _setState: function (header_id, is_expanded) {
         var $button = this.$(`.button-${header_id}`);
         var $subgroup = this.$(`.subgroup-${header_id}`);
         $button.data("is_expanded", is_expanded);
@@ -38,7 +45,7 @@ var View = Options.BaseIcons.extend({
     },
 
     /** Template to create options tree */
-    _templateOptions: function() {
+    _templateOptions: function () {
         var self = this;
         this.header_index = {};
 
@@ -64,16 +71,14 @@ var View = Options.BaseIcons.extend({
                     var $button = $("<span/>")
                         .addClass(`button-${header_id}`)
                         .addClass("ui-drilldown-button fa fa-plus-square");
-                    var $subgroup = $("<div/>")
-                        .addClass(`subgroup-${header_id}`)
-                        .addClass("ui-drilldown-subgroup");
+                    var $subgroup = $("<div/>").addClass(`subgroup-${header_id}`).addClass("ui-drilldown-subgroup");
                     $group.append(
                         $("<div/>")
                             .append($button)
                             .append(
                                 self._templateOption({
                                     label: level.name,
-                                    value: level.value
+                                    value: level.value,
                                 })
                             )
                     );
@@ -85,7 +90,7 @@ var View = Options.BaseIcons.extend({
                     $group.append(
                         self._templateOption({
                             label: level.name,
-                            value: level.value
+                            value: level.value,
                         })
                     );
                 }
@@ -100,13 +105,11 @@ var View = Options.BaseIcons.extend({
     },
 
     /** Template for drill down view */
-    _template: function() {
-        return $("<div/>")
-            .addClass("ui-options-list drilldown-container")
-            .attr("id", this.model.id);
-    }
+    _template: function () {
+        return $("<div/>").addClass("ui-options-list drilldown-container").attr("id", this.model.id);
+    },
 });
 
 export default {
-    View: View
+    View: View,
 };

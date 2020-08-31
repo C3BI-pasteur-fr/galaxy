@@ -1,5 +1,5 @@
 <template>
-  <div v-if="message" :class="[status + 'message']">{{ message }}</div>
+    <div v-if="message" :class="[status + 'message']">{{ message }}</div>
 </template>
 
 <script>
@@ -8,12 +8,12 @@ export default {
     props: {
         message: {
             type: String,
-            required: true
+            required: true,
         },
         status: {
             type: String,
-            default: "done"
-        }
-    }
+            default: "done",
+        },
+    },
 };
 </script>

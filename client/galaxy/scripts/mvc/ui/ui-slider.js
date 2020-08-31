@@ -1,8 +1,10 @@
+import Backbone from "backbone";
+import IMask from "imask";
+
 import Utils from "utils/utils";
 
-var View = Backbone.View.extend({
-    initialize: function(options) {
-        var self = this;
+const View = Backbone.View.extend({
+    initialize: function (options) {
         this.model =
             (options && options.model) ||
             new Backbone.Model({
@@ -13,7 +15,7 @@ var View = Backbone.View.extend({
                 precise: false,
                 split: 10000,
                 value: null,
-                onchange: function() {}
+                onchange: function () {},
             }).set(options);
 
         // create new element
@@ -22,52 +24,28 @@ var View = Backbone.View.extend({
         this.$text = this.$(".ui-form-slider-text");
         this.$slider = this.$(".ui-form-slider-element");
 
-        // add text field event
-        var pressed = [];
-        this.$text
-            .on("change", function() {
-                self.value($(this).val());
-            })
-            .on("keyup", e => {
-                pressed[e.which] = false;
-            })
-            .on("keydown", function(e) {
-                var v = e.which;
-                pressed[v] = true;
-                if (self.model.get("is_workflow") && pressed[16] && v == 52) {
-                    self.value("$");
-                    event.preventDefault();
-                } else if (
-                    !(
-                        v == 8 ||
-                        v == 9 ||
-                        v == 13 ||
-                        v == 37 ||
-                        v == 39 ||
-                        (v >= 48 && v <= 57) ||
-                        (v >= 96 && v <= 105) ||
-                        ((v == 190 || v == 110) &&
-                            $(this)
-                                .val()
-                                .indexOf(".") == -1 &&
-                            self.model.get("precise")) ||
-                        ((v == 189 || v == 109) &&
-                            $(this)
-                                .val()
-                                .indexOf("-") == -1) ||
-                        self._isParameter($(this).val()) ||
-                        pressed[91] ||
-                        pressed[17]
-                    )
-                ) {
-                    event.preventDefault();
+        IMask(this.$text[0], {
+            mask: (value) => {
+                if (this._isParameter(value)) {
+                    return true;
                 }
-            });
+                if (!this.model.get("precise")) {
+                    if (value != value.split(".")[0]) {
+                        return false;
+                    }
+                }
+                return value == value.replace(/[^0-9eE.-]/g, "");
+            },
+        });
+
+        this.$text[0].addEventListener("change", (e) => {
+            this.value(e.currentTarget.value);
+        });
 
         // build slider, cannot be rebuild in render
-        var opts = this.model.attributes;
+        const opts = this.model.attributes;
         this.has_slider = opts.max !== null && opts.min !== null && opts.max > opts.min;
-        var step = opts.step;
+        let step = opts.step;
         if (!step) {
             if (opts.precise && this.has_slider) {
                 step = (opts.max - opts.min) / opts.split;
@@ -76,12 +54,9 @@ var View = Backbone.View.extend({
             }
         }
         if (this.has_slider) {
-            this.$text.addClass("ui-form-slider-left");
             this.$slider.slider({ min: opts.min, max: opts.max, step: step }).on("slide", (event, ui) => {
-                self.value(ui.value);
+                this.value(ui.value);
             });
-        } else {
-            this.$slider.hide();
         }
 
         // add listeners
@@ -89,17 +64,28 @@ var View = Backbone.View.extend({
         this.render();
     },
 
-    render: function() {
-        var value = this.model.get("value");
-        this.has_slider && this.$slider.slider("value", value);
-        value !== this.$text.val() && this.$text.val(value);
+    render: function () {
+        const value = this.model.get("value");
+        if (this.has_slider) {
+            this.$slider.slider("value", value);
+            this.$slider.show();
+            this.$text.addClass("col-3 mr-3");
+        } else {
+            this.$slider.hide();
+            this.$text.removeClass("col-3 mr-3");
+        }
+        if (value !== this.$text.val()) {
+            this.$text.val(value);
+        }
     },
 
     /** Set and return the current value */
-    value: function(new_val) {
-        var options = this.model.attributes;
+    value: function (new_val) {
         if (new_val !== undefined) {
-            if (new_val !== null && new_val !== "" && !this._isParameter(new_val)) {
+            const options = this.model.attributes;
+            const original_val = new_val;
+            const is_value = new_val !== null && new_val !== "" && !this._isParameter(new_val);
+            if (is_value) {
                 if (isNaN(new_val)) {
                     new_val = 0;
                 }
@@ -116,26 +102,29 @@ var View = Backbone.View.extend({
             this.model.set("value", new_val);
             this.model.trigger("change");
             options.onchange(new_val);
+            const has_changed = is_value && parseInt(original_val) !== parseInt(new_val);
+            const message = has_changed ? "This value was invalid or out-of-range. It has been auto-corrected." : null;
+            this.model.trigger("error", message);
         }
         return this.model.get("value");
     },
 
     /** Return true if the field contains a workflow parameter i.e. $('name') */
-    _isParameter: function(value) {
+    _isParameter: function (value) {
         return this.model.get("is_workflow") && String(value).substring(0, 1) === "$";
     },
 
     /** Slider template */
-    _template: function() {
-        return (
-            '<div class="ui-form-slider">' +
-            '<input class="ui-form-slider-text" type="text"/>' +
-            '<div class="ui-form-slider-element"/>' +
-            "</div>"
-        );
-    }
+    _template: function () {
+        return `<div class="ui-form-slider container-fluid">
+                    <div class="row">
+                        <input class="ui-input ui-form-slider-text" type="text"/>
+                        <div class="ui-form-slider-element col mt-1"/>
+                    </div>
+                </div>`;
+    },
 });
 
 export default {
-    View: View
+    View: View,
 };

@@ -29,7 +29,9 @@ from galaxy.managers import context
 from galaxy.util import (
     asbool,
     safe_makedirs,
-    safe_str_cmp
+    safe_str_cmp,
+    smart_str,
+    unicodify
 )
 from galaxy.util.sanitize_html import sanitize_html
 from galaxy.web.framework import (
@@ -37,7 +39,7 @@ from galaxy.web.framework import (
     helpers,
     url_for
 )
-from galaxy.web.stack import get_app_kwds
+from galaxy.web_stack import get_app_kwds
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +79,7 @@ class WebApplication(base.WebApplication):
     def __init__(self, galaxy_app, session_cookie='galaxysession', name=None):
         self.name = name
         base.WebApplication.__init__(self)
+        galaxy_app.is_webapp = True
         self.set_transaction_factory(lambda e: self.transaction_chooser(e, galaxy_app, session_cookie))
         # Mako support
         self.mako_template_lookup = self.create_mako_template_lookup(galaxy_app, name)
@@ -85,21 +88,26 @@ class WebApplication(base.WebApplication):
 
     def create_mako_template_lookup(self, galaxy_app, name):
         paths = []
+        # FIXME: should be os.path.join (galaxy_root, 'templates')?
+        if galaxy_app.config.template_path == './templates':
+            template_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
+        else:
+            template_path = galaxy_app.config.template_path
         # First look in webapp specific directory
         if name is not None:
-            paths.append(os.path.join(galaxy_app.config.template_path, 'webapps', name))
+            paths.append(os.path.join(template_path, 'webapps', name))
         # Then look in root directory
-        paths.append(galaxy_app.config.template_path)
+        paths.append(template_path)
         # Create TemplateLookup with a small cache
         return mako.lookup.TemplateLookup(directories=paths,
-                                          module_directory=galaxy_app.config.template_cache,
-                                          collection_size=500,
-                                          output_encoding='utf-8')
+                                          module_directory=galaxy_app.config.template_cache_path,
+                                          collection_size=500)
 
     def handle_controller_exception(self, e, trans, **kwargs):
         if isinstance(e, MessageException):
             # In the case of a controller exception, sanitize to make sure
             # unsafe html input isn't reflected back to the user
+            trans.response.status = e.status_code
             return trans.show_message(sanitize_html(e.err_msg), e.type)
 
     def make_body_iterable(self, trans, body):
@@ -113,8 +121,8 @@ class WebApplication(base.WebApplication):
         Search for UI controllers in `package_name` and add
         them to the webapp.
         """
-        from galaxy.web.base.controller import BaseUIController
-        from galaxy.web.base.controller import ControllerUnavailable
+        from galaxy.webapps.base.controller import BaseUIController
+        from galaxy.webapps.base.controller import ControllerUnavailable
         package = import_module(package_name)
         controller_dir = package.__path__[0]
         for fname in os.listdir(controller_dir):
@@ -124,7 +132,7 @@ class WebApplication(base.WebApplication):
                 try:
                     module = import_module(module_name)
                 except ControllerUnavailable as exc:
-                    log.debug("%s could not be loaded: %s" % (module_name, str(exc)))
+                    log.debug("%s could not be loaded: %s", module_name, unicodify(exc))
                     continue
                 # Look for a controller inside the modules
                 for key in dir(module):
@@ -138,8 +146,8 @@ class WebApplication(base.WebApplication):
         Search for UI controllers in `package_name` and add
         them to the webapp.
         """
-        from galaxy.web.base.controller import BaseAPIController
-        from galaxy.web.base.controller import ControllerUnavailable
+        from galaxy.webapps.base.controller import BaseAPIController
+        from galaxy.webapps.base.controller import ControllerUnavailable
         package = import_module(package_name)
         controller_dir = package.__path__[0]
         for fname in os.listdir(controller_dir):
@@ -149,7 +157,7 @@ class WebApplication(base.WebApplication):
                 try:
                     module = import_module(module_name)
                 except ControllerUnavailable as exc:
-                    log.debug("%s could not be loaded: %s" % (module_name, str(exc)))
+                    log.debug("%s could not be loaded: %s", module_name, unicodify(exc))
                     continue
                 for key in dir(module):
                     T = getattr(module, key)
@@ -161,7 +169,7 @@ class WebApplication(base.WebApplication):
                         self.add_api_controller(controller_name, controller)
 
     def _instantiate_controller(self, T, app):
-        """ Extension point, allow apps to contstruct controllers differently,
+        """ Extension point, allow apps to construct controllers differently,
         really just used to stub out actual controllers for routes testing.
         """
         return T(app)
@@ -244,7 +252,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
                         self.user = None
                         self.galaxy_session = None
                     else:
-                        self.response.send_redirect(url_for(controller='user',
+                        self.response.send_redirect(url_for(controller='root',
                                                      action='login',
                                                      message="You have been logged out due to inactivity.  Please log in again to continue using Galaxy.",
                                                      status='info',
@@ -269,6 +277,14 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             locales = 'en'
         t = Translations.load(dirname='locale', locales=locales, domain='ginga')
         self.template_context.update(dict(_=t.ugettext, n_=t.ugettext, N_=t.ungettext))
+
+    def set_cors_origin(self, origin=None):
+        if origin is None:
+            origin = self.request.headers.get("Origin", None)
+        if origin:
+            self.response.headers['Access-Control-Allow-Origin'] = origin
+        elif 'Access-Control-Allow-Origin' in self.response.headers:
+            del self.response.headers['Access-Control-Allow-Origin']
 
     def set_cors_headers(self):
         """Allow CORS requests if configured to do so by echoing back the request's
@@ -307,7 +323,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
         origin = urlparse(origin_header).hostname
         # check against the list of allowed strings/regexp hostnames, echo original if cleared
         if is_allowed_origin(origin):
-            self.response.headers['Access-Control-Allow-Origin'] = origin_header
+            self.set_cors_origin(origin=origin_header)
             # TODO: see the to do on ALLOWED_METHODS above
             # self.response.headers[ 'Access-Control-Allow-Methods' ] = ', '.join( ALLOWED_METHODS )
 
@@ -316,10 +332,11 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
 
     def get_user(self):
         """Return the current user if logged in or None."""
-        if self.galaxy_session:
-            return self.galaxy_session.user
-        else:
-            return self.__user
+        user = self.__user
+        if not user and self.galaxy_session:
+            user = self.galaxy_session.user
+            self.__user = user
+        return user
 
     def set_user(self, user):
         """Set the current user."""
@@ -346,7 +363,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
         """Convenience method for setting a session cookie"""
         # The galaxysession cookie value must be a high entropy 128 bit random number encrypted
         # using a server secret key.  Any other value is invalid and could pose security issues.
-        self.response.cookies[name] = value
+        self.response.cookies[name] = unicodify(value)
         self.response.cookies[name]['path'] = path
         self.response.cookies[name]['max-age'] = 3600 * 24 * age  # 90 days
         tstamp = time.localtime(time.time() + 3600 * 24 * age)
@@ -359,6 +376,8 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             self.response.cookies[name]['httponly'] = True
         except CookieError as e:
             log.warning("Error setting httponly attribute in cookie '%s': %s" % (name, e))
+        if self.app.config.cookie_domain is not None:
+            self.response.cookies[name]['domain'] = self.app.config.cookie_domain
 
     def _authenticate_api(self, session_cookie):
         """
@@ -404,8 +423,8 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
         if not master_api_key:
             return False
         # Hash keys to make them the same size, so we can do safe comparison.
-        master_hash = hashlib.sha256(master_api_key).hexdigest()
-        provided_hash = hashlib.sha256(api_key).hexdigest()
+        master_hash = hashlib.sha256(smart_str(master_api_key)).hexdigest()
+        provided_hash = hashlib.sha256(smart_str(api_key)).hexdigest()
         return safe_str_cmp(master_hash, provided_hash)
 
     def _ensure_valid_session(self, session_cookie, create=True):
@@ -429,14 +448,14 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             # Decode the cookie value to get the session_key
             try:
                 session_key = self.security.decode_guid(secure_id)
+                if session_key:
+                    # Retrieve the galaxy_session id via the unique session_key
+                    galaxy_session = self.sa_session.query(self.app.model.GalaxySession) \
+                                                    .filter(and_(self.app.model.GalaxySession.table.c.session_key == session_key,
+                                                                 self.app.model.GalaxySession.table.c.is_valid == true())).options(joinedload("user")).first()
             except Exception:
                 # We'll end up creating a new galaxy_session
                 session_key = None
-            if session_key:
-                # Retrieve the galaxy_session id via the unique session_key
-                galaxy_session = self.sa_session.query(self.app.model.GalaxySession) \
-                                                .filter(and_(self.app.model.GalaxySession.table.c.session_key == session_key,
-                                                             self.app.model.GalaxySession.table.c.is_valid == true())).options(joinedload("user")).first()
         # If remote user is in use it can invalidate the session and in some
         # cases won't have a cookie set above, so we need to to check some
         # things now.
@@ -515,10 +534,6 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
                 url_for(controller='user', action='logout'),
                 url_for(controller='user', action='reset_password'),
                 url_for(controller='user', action='change_password'),
-                # required to log in w/ openid
-                url_for(controller='user', action='openid_auth'),
-                url_for(controller='user', action='openid_process'),
-                url_for(controller='user', action='openid_associate'),
                 # TODO: do any of these still need to bypass require login?
                 url_for(controller='user', action='api_keys'),
                 url_for(controller='user', action='create'),
@@ -550,6 +565,10 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
                         return
                 except IndexError:
                     pass
+            authnz_controller_base = url_for(controller='authnz', action='index')
+            if self.request.path.startswith(authnz_controller_base):
+                #  All authnz requests pass through
+                return
             # redirect to root if the path is not in the list above
             if self.request.path not in allowed_paths:
                 login_url = url_for(controller='root', action='login', redirect=self.request.path)
@@ -604,7 +623,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             user.set_random_password(length=12)
             user.external = True
             # Replace invalid characters in the username
-            for char in [x for x in username if x not in string.ascii_lowercase + string.digits + '-']:
+            for char in [x for x in username if x not in string.ascii_lowercase + string.digits + '-' + '.']:
                 username = username.replace(char, '-')
             # Find a unique username - user can change it later
             if self.sa_session.query(self.app.model.User).filter_by(username=username).first():
@@ -622,12 +641,16 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             # self.log_event( "Automatically created account '%s'", user.email )
         return user
 
+    @property
+    def cookie_path(self):
+        return self.app.config.cookie_path or url_for('/')
+
     def __update_session_cookie(self, name='galaxysession'):
         """
         Update the session cookie to match the current session.
         """
         self.set_cookie(self.security.encode_guid(self.galaxy_session.session_key),
-                        name=name, path=self.app.config.cookie_path)
+                        name=name, path=self.cookie_path)
 
     def check_user_library_import_dir(self, user):
         if getattr(self.app.config, "user_library_import_dir_auto_creation", False):
@@ -635,13 +658,56 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             try:
                 safe_makedirs(os.path.join(self.app.config.user_library_import_dir, user.email))
             except ConfigurationError as e:
-                self.log_event(str(e))
+                self.log_event(unicodify(e))
 
     def user_checks(self, user):
         """
         This could contain more checks around a user upon login
         """
         self.check_user_library_import_dir(user)
+
+    def _associate_user_history(self, user, prev_galaxy_session=None):
+        """
+        Associate the user's last accessed history (if exists) with their new session
+        """
+        history = None
+        set_permissions = False
+        try:
+            users_last_session = user.galaxy_sessions[0]
+        except Exception:
+            users_last_session = None
+        if (prev_galaxy_session and
+                prev_galaxy_session.current_history and not
+                prev_galaxy_session.current_history.deleted and
+                prev_galaxy_session.current_history.datasets and
+                (prev_galaxy_session.current_history.user is None or
+                 prev_galaxy_session.current_history.user == user)):
+            # If the previous galaxy session had a history, associate it with the new session, but only if it didn't
+            # belong to a different user.
+            history = prev_galaxy_session.current_history
+            if prev_galaxy_session.user is None:
+                # Increase the user's disk usage by the amount of the previous history's datasets if they didn't already
+                # own it.
+                for hda in history.datasets:
+                    user.adjust_total_disk_usage(hda.quota_amount(user))
+                # Only set default history permissions if the history is from the previous session and anonymous
+                set_permissions = True
+        elif self.galaxy_session.current_history:
+            history = self.galaxy_session.current_history
+        if (not history and users_last_session and
+                users_last_session.current_history and not
+                users_last_session.current_history.deleted):
+            history = users_last_session.current_history
+        elif not history:
+            history = self.get_history(create=True, most_recent=True)
+        if history not in self.galaxy_session.histories:
+            self.galaxy_session.add_history(history)
+        if history.user is None:
+            history.user = user
+        self.galaxy_session.current_history = history
+        if set_permissions:
+            self.app.security_agent.history_set_default_permissions(history, dataset=True, bypass_manage_permission=True)
+        self.sa_session.add_all((prev_galaxy_session, self.galaxy_session, history))
 
     def handle_user_login(self, user):
         """
@@ -654,6 +720,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
            - add the disk usage of the current session to the user's total disk usage
         """
         self.user_checks(user)
+        self.app.security_agent.create_user_role(user, self.app)
         # Set the previous session
         prev_galaxy_session = self.galaxy_session
         prev_galaxy_session.is_valid = False
@@ -661,42 +728,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
         self.galaxy_session = self.__create_new_session(prev_galaxy_session, user)
         if self.webapp.name == 'galaxy':
             cookie_name = 'galaxysession'
-            # Associated the current user's last accessed history (if exists) with their new session
-            history = None
-            try:
-                users_last_session = user.galaxy_sessions[0]
-                last_accessed = True
-            except Exception:
-                users_last_session = None
-                last_accessed = False
-            if (prev_galaxy_session.current_history and not
-                    prev_galaxy_session.current_history.deleted and
-                    prev_galaxy_session.current_history.datasets):
-                if prev_galaxy_session.current_history.user is None or prev_galaxy_session.current_history.user == user:
-                    # If the previous galaxy session had a history, associate it with the new
-                    # session, but only if it didn't belong to a different user.
-                    history = prev_galaxy_session.current_history
-                    if prev_galaxy_session.user is None:
-                        # Increase the user's disk usage by the amount of the previous history's datasets if they didn't already own it.
-                        for hda in history.datasets:
-                            user.adjust_total_disk_usage(hda.quota_amount(user))
-            elif self.galaxy_session.current_history:
-                history = self.galaxy_session.current_history
-            if (not history and users_last_session and
-                    users_last_session.current_history and not
-                    users_last_session.current_history.deleted):
-                history = users_last_session.current_history
-            elif not history:
-                history = self.get_history(create=True, most_recent=True)
-            if history not in self.galaxy_session.histories:
-                self.galaxy_session.add_history(history)
-            if history.user is None:
-                history.user = user
-            self.galaxy_session.current_history = history
-            if not last_accessed:
-                # Only set default history permissions if current history is not from a previous session
-                self.app.security_agent.history_set_default_permissions(history, dataset=True, bypass_manage_permission=True)
-            self.sa_session.add_all((prev_galaxy_session, self.galaxy_session, history))
+            self._associate_user_history(user, prev_galaxy_session)
         else:
             cookie_name = 'galaxycommunitysession'
             self.sa_session.add_all((prev_galaxy_session, self.galaxy_session))
@@ -785,7 +817,7 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
                 default_history = history
                 break
 
-        # Set or create hsitory.
+        # Set or create history.
         if default_history:
             history = default_history
             self.set_history(history)
@@ -895,18 +927,12 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
             )
         return token
 
-    def check_csrf_token(self):
-        session_csrf_token = self.request.params.get("session_csrf_token", None)
-        problem = False
+    def check_csrf_token(self, payload):
+        session_csrf_token = payload.get("session_csrf_token")
         if not session_csrf_token:
-            log.warning("No session_csrf_token set, denying request.")
-            problem = True
+            return "No session token set, denying request."
         elif session_csrf_token != self.session_csrf_token:
-            log.warning("Wrong session token found, denying request.")
-            problem = True
-
-        if problem:
-            return self.show_warn_message("Failed to authorize action.")
+            return "Wrong session token found, denying request."
 
     def fill_template(self, filename, **kwargs):
         """
@@ -925,7 +951,6 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
     def fill_template_mako(self, filename, template_lookup=None, **kwargs):
         template_lookup = template_lookup or self.webapp.mako_template_lookup
         template = template_lookup.get_template(filename)
-        template.output_encoding = 'utf-8'
 
         data = dict(caller=self, t=self, trans=self, h=helpers, util=util, request=self.request, response=self.response, app=self.app)
         data.update(self.template_context)
@@ -934,7 +959,6 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
 
     def stream_template_mako(self, filename, **kwargs):
         template = self.webapp.mako_template_lookup.get_template(filename)
-        template.output_encoding = 'utf-8'
         data = dict(caller=self, t=self, trans=self, h=helpers, util=util, request=self.request, response=self.response, app=self.app)
         data.update(self.template_context)
         data.update(kwargs)
@@ -958,6 +982,10 @@ class GalaxyWebTransaction(base.DefaultWebTransaction,
         template = Template(source=template_string,
                             searchList=[context or kwargs, dict(caller=self)])
         return str(template)
+
+
+def default_url_path(path):
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), path))
 
 
 def build_native_uwsgi_app(paste_factory, config_section):
@@ -984,10 +1012,12 @@ def build_url_map(app, global_conf, local_conf):
     # Send to dynamic app by default
     urlmap["/"] = app
     # Define static mappings from config
-    urlmap["/static"] = Static(conf.get("static_dir", "./static/"), cache_time)
-    urlmap["/images"] = Static(conf.get("static_images_dir", "./static/images"), cache_time)
-    urlmap["/static/scripts"] = Static(conf.get("static_scripts_dir", "./static/scripts/"), cache_time)
-    urlmap["/static/style"] = Static(conf.get("static_style_dir", "./static/style/blue"), cache_time)
-    urlmap["/favicon.ico"] = Static(conf.get("static_favicon_dir", "./static/favicon.ico"), cache_time)
-    urlmap["/robots.txt"] = Static(conf.get("static_robots_txt", "./static/robots.txt"), cache_time)
+    urlmap["/static"] = Static(conf.get("static_dir", default_url_path("static/")), cache_time)
+    urlmap["/images"] = Static(conf.get("static_images_dir", default_url_path("static/images")), cache_time)
+    urlmap["/static/scripts"] = Static(conf.get("static_scripts_dir", default_url_path("static/scripts/")), cache_time)
+    urlmap["/static/welcome.html"] = Static(conf.get("static_welcome_html", default_url_path("static/welcome.html")), cache_time)
+    urlmap["/favicon.ico"] = Static(conf.get("static_favicon_dir", default_url_path("static/favicon.ico")), cache_time)
+    urlmap["/robots.txt"] = Static(conf.get("static_robots_txt", default_url_path("static/robots.txt")), cache_time)
+    if 'static_local_dir' in conf:
+        urlmap["/static_local"] = Static(conf["static_local_dir"], cache_time)
     return urlmap, cache_time

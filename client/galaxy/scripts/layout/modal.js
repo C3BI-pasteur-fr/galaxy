@@ -1,11 +1,7 @@
-import jQuery from "jquery";
-
-// ============================================================================
-//TODO: (the older version) unify with ui-modal (the newer version)
-var $ = jQuery;
+import $ from "jquery";
 
 // Modal dialog boxes
-var Modal = function(options) {
+export const Modal = function (options) {
     this.$overlay = options.overlay;
     this.$dialog = options.dialog;
     this.$header = this.$dialog.find(".modal-header");
@@ -17,7 +13,7 @@ var Modal = function(options) {
 };
 
 $.extend(Modal.prototype, {
-    setContent: function(options) {
+    setContent: function (options) {
         this.$header.hide();
         // Title
         if (options.title) {
@@ -32,34 +28,22 @@ $.extend(Modal.prototype, {
         }
         // Buttons
         this.$footer.hide();
-        var $buttons = this.$footer.find(".buttons").html("");
+        const $buttons = this.$footer.find(".buttons").html("");
         if (options.buttons) {
             $.each(options.buttons, (name, value) => {
-                $buttons
-                    .append(
-                        $("<button></button> ")
-                            .text(name)
-                            .click(value)
-                    )
-                    .append(" ");
+                $buttons.append($("<button></button> ").text(name).click(value)).append(" ");
             });
             this.$footer.show();
         }
-        var $extraButtons = this.$footer.find(".extra_buttons").html("");
+        const $extraButtons = this.$footer.find(".extra_buttons").html("");
         if (options.extra_buttons) {
             $.each(options.extra_buttons, (name, value) => {
-                $extraButtons
-                    .append(
-                        $("<button></button>")
-                            .text(name)
-                            .click(value)
-                    )
-                    .append(" ");
+                $extraButtons.append($("<button></button>").text(name).click(value)).append(" ");
             });
             this.$footer.show();
         }
         // Body
-        var body = options.body;
+        let body = options.body;
         if (body == "progress") {
             body = $(
                 "<div class='progress progress-striped active'><div class='progress-bar' style='width: 100%'></div></div>"
@@ -67,7 +51,7 @@ $.extend(Modal.prototype, {
         }
         this.$body.html(body);
     },
-    show: function(options, callback) {
+    show: function (options, callback) {
         if (options.backdrop) {
             this.$backdrop.addClass("in");
         } else {
@@ -86,8 +70,8 @@ $.extend(Modal.prototype, {
             callback();
         }
     },
-    hide: function() {
-        var modal = this;
+    hide: function () {
+        const modal = this;
         modal.$dialog.fadeOut(() => {
             modal.$overlay.hide();
             modal.$backdrop.removeClass("in");
@@ -95,48 +79,49 @@ $.extend(Modal.prototype, {
             // Clear min-width to allow for modal to take size of new body.
             modal.$body.css("min-width", undefined);
         });
-    }
+    },
 });
 
-var modal;
+let modal;
 
+// TODO: move into init chain
 $(() => {
     modal = new Modal({
         overlay: $("#top-modal"),
         dialog: $("#top-modal-dialog"),
-        backdrop: $("#top-modal-backdrop")
+        backdrop: $("#top-modal-backdrop"),
     });
 });
 
 // Backward compatibility
-function hide_modal() {
+export function hide_modal() {
     modal.hide();
 }
 
-function show_modal(title, body, buttons, extra_buttons, init_fn) {
+export function show_modal(title, body, buttons, extra_buttons, init_fn) {
     modal.setContent({
         title: title,
         body: body,
         buttons: buttons,
-        extra_buttons: extra_buttons
+        extra_buttons: extra_buttons,
     });
     modal.show({ backdrop: true }, init_fn);
 }
 
-function show_message(title, body, buttons, extra_buttons, init_fn) {
+export function show_message(title, body, buttons, extra_buttons, init_fn) {
     modal.setContent({
         title: title,
         body: body,
         buttons: buttons,
-        extra_buttons: extra_buttons
+        extra_buttons: extra_buttons,
     });
     modal.show({ backdrop: false }, init_fn);
 }
 
-function show_in_overlay(options) {
-    var width = options.width || "600";
-    var height = options.height || "400";
-    var scroll = options.scroll || "auto";
+export function show_in_overlay(options) {
+    const width = options.width || "600";
+    const height = options.height || "400";
+    const scroll = options.scroll || "auto";
     $("#overlay-background").bind("click.overlay", () => {
         hide_modal();
         $("#overlay-background").unbind("click.overlay");
@@ -145,19 +130,8 @@ function show_in_overlay(options) {
         closeButton: true,
         title: "&nbsp;",
         body: $(
-            `<div style='margin: -5px;'><iframe style='margin: 0; padding: 0;' src='${
-                options.url
-            }' width='${width}' height='${height}' scrolling='${scroll}' frameborder='0'></iframe></div>`
-        )
+            `<div style='margin: -5px;'><iframe style='margin: 0; padding: 0;' src='${options.url}' width='${width}' height='${height}' scrolling='${scroll}' frameborder='0'></iframe></div>`
+        ),
     });
     modal.show({ backdrop: true });
 }
-
-// ============================================================================
-export default {
-    Modal: Modal,
-    hide_modal: hide_modal,
-    show_modal: show_modal,
-    show_message: show_message,
-    show_in_overlay: show_in_overlay
-};

@@ -1,8 +1,13 @@
+import _ from "underscore";
+import $ from "jquery";
+import Backbone from "backbone";
+import { getGalaxyInstance } from "app";
 import LIST_ITEM from "mvc/list/list-item";
 import STATES from "mvc/dataset/states";
 import faIconButton from "ui/fa-icon-button";
 import BASE_MVC from "mvc/base-mvc";
 import _l from "utils/localization";
+import { mountNametags } from "components/Nametags";
 
 var logNamespace = "dataset";
 /*==============================================================================
@@ -16,18 +21,18 @@ var _super = LIST_ITEM.ListItemView;
 /** @class Read only list view for either LDDAs, HDAs, or HDADCEs.
  *      Roughly, any DatasetInstance (and not a raw Dataset).
  */
-var DatasetListItemView = _super.extend(
+export var DatasetListItemView = _super.extend(
     /** @lends DatasetListItemView.prototype */ {
         _logNamespace: logNamespace,
 
         className: `${_super.prototype.className} dataset`,
         //TODO:?? doesn't exactly match an hda's type_id
-        id: function() {
+        id: function () {
             return ["dataset", this.model.get("id")].join("-");
         },
 
         /** Set up: instance vars, options, and event handlers */
-        initialize: function(attributes) {
+        initialize: function (attributes) {
             if (attributes.logger) {
                 this.logger = this.model.logger = attributes.logger;
             }
@@ -38,14 +43,28 @@ var DatasetListItemView = _super.extend(
             this.linkTarget = attributes.linkTarget || "_blank";
         },
 
+        // mount new vue component for tags
+        render: function () {
+            const result = _super.prototype.render.apply(this, arguments);
+            this._mountVueNametags();
+            return result;
+        },
+
+        _mountVueNametags: function () {
+            const container = this.$(".nametags")[0];
+            const { id, model_class, tags } = this.model.attributes;
+            const storeKey = `${model_class}-${id}`;
+            mountNametags({ storeKey, tags }, container);
+        },
+
         /** event listeners */
-        _setUpListeners: function() {
+        _setUpListeners: function () {
             _super.prototype._setUpListeners.call(this);
             var self = this;
 
             // re-rendering on any model changes
             return self.listenTo(self.model, {
-                change: function(model) {
+                change: function (model) {
                     // if the model moved into the ready state and is expanded without details, fetch those details now
                     if (
                         self.model.changedAttributes().state &&
@@ -60,16 +79,16 @@ var DatasetListItemView = _super.extend(
                             self.render();
                         });
                     } else {
-                        if (_.has(model.changed, "tags") && _.keys(model.changed).length === 1) {
-                            // If only the tags have changed, rerender specifically
-                            // the titlebar region.  Otherwise default to the full
-                            // render.
-                            self.$(".nametags").html(self._renderNametags());
+                        if (_.has(self.model.changed, "tags") && _.keys(self.model.changed).length === 2) {
+                            // If only the tags and update time have changed,
+                            // rerender specifically the titlebar region.
+                            // Otherwise default to the full render.
+                            self._mountVueNametags();
                         } else {
                             self.render();
                         }
                     }
-                }
+                },
             });
         },
 
@@ -77,12 +96,12 @@ var DatasetListItemView = _super.extend(
         /** In this override, only get details if in the ready state, get rerunnable if in other states.
          *  Note: fetch with no 'change' event triggering to prevent automatic rendering.
          */
-        _fetchModelDetails: function() {
+        _fetchModelDetails: function () {
             var view = this;
             if (view.model.inReadyState() && !view.model.hasDetails()) {
                 return view.model.fetch({ silent: true });
             }
-            return jQuery.when();
+            return $.when();
         },
 
         // ......................................................................... removal
@@ -90,7 +109,7 @@ var DatasetListItemView = _super.extend(
          *  @param {Number or String} speed jq effect speed
          *  @param {Function} callback      an optional function called when removal is done (scoped to this view)
          */
-        remove: function(speed, callback) {
+        remove: function (speed, callback) {
             var view = this;
             speed = speed || this.fxSpeed;
             this.$el.fadeOut(speed, () => {
@@ -111,7 +130,7 @@ var DatasetListItemView = _super.extend(
             - but recreating the view during an update...seems wrong
     */
         /** In this override, add the dataset state as a class for use with state-based CSS */
-        _swapNewRender: function($newRender) {
+        _swapNewRender: function ($newRender) {
             _super.prototype._swapNewRender.call(this, $newRender);
             if (this.model.has("state")) {
                 this.$el.addClass(`state-${this.model.get("state")}`);
@@ -121,13 +140,13 @@ var DatasetListItemView = _super.extend(
 
         // ................................................................................ titlebar
         /** In this override, add the dataset display button. */
-        _renderPrimaryActions: function() {
+        _renderPrimaryActions: function () {
             // render just the display for read-only
             return [this._renderDisplayButton()];
         },
 
         /** Render icon-button to display dataset data */
-        _renderDisplayButton: function() {
+        _renderDisplayButton: function () {
             // don't show display if not viewable or not accessible
             var state = this.model.get("state");
             if (state === STATES.NOT_VIEWABLE || state === STATES.DISCARDED || !this.model.get("accessible")) {
@@ -136,7 +155,7 @@ var DatasetListItemView = _super.extend(
 
             var displayBtnData = {
                 target: this.linkTarget,
-                classes: "display-btn"
+                classes: "display-btn",
             };
 
             // show a disabled display if the data's been purged
@@ -161,7 +180,8 @@ var DatasetListItemView = _super.extend(
 
                 // add frame manager option onclick event
                 var self = this;
-                displayBtnData.onclick = ev => {
+                displayBtnData.onclick = (ev) => {
+                    const Galaxy = getGalaxyInstance();
                     if (Galaxy.frame && Galaxy.frame.active) {
                         // Add dataset to frames.
                         Galaxy.frame.addDataset(self.model.get("id"));
@@ -177,7 +197,7 @@ var DatasetListItemView = _super.extend(
         /** Render the enclosing div of the hda body and, if expanded, the html in the body
          *  @returns {jQuery} rendered DOM
          */
-        _renderDetails: function() {
+        _renderDetails: function () {
             //TODO: generalize to be allow different details for each state
 
             // no access - render nothing but a message
@@ -186,14 +206,8 @@ var DatasetListItemView = _super.extend(
             }
 
             var $details = _super.prototype._renderDetails.call(this);
-            $details
-                .find(".actions .left")
-                .empty()
-                .append(this._renderSecondaryActions());
-            $details
-                .find(".summary")
-                .html(this._renderSummary())
-                .prepend(this._renderDetailMessages());
+            $details.find(".actions .left").empty().append(this._renderSecondaryActions());
+            $details.find(".summary").html(this._renderSummary()).prepend(this._renderDetailMessages());
             $details.find(".display-applications").html(this._renderDisplayApplications());
 
             this._setUpBehaviors($details);
@@ -201,7 +215,7 @@ var DatasetListItemView = _super.extend(
         },
 
         /** Defer to the appropo summary rendering fn based on state */
-        _renderSummary: function() {
+        _renderSummary: function () {
             var json = this.model.toJSON();
             var summaryRenderFn = this.templates.summaries[json.state];
             summaryRenderFn = summaryRenderFn || this.templates.summaries.unknown;
@@ -209,32 +223,32 @@ var DatasetListItemView = _super.extend(
         },
 
         /** Render messages to be displayed only when the details are shown */
-        _renderDetailMessages: function() {
+        _renderDetailMessages: function () {
             var view = this;
             var $warnings = $('<div class="detail-messages"></div>');
             var json = view.model.toJSON();
             //TODO:! unordered (map)
-            _.each(view.templates.detailMessages, templateFn => {
+            _.each(view.templates.detailMessages, (templateFn) => {
                 $warnings.append($(templateFn(json, view)));
             });
             return $warnings;
         },
 
         /** Render the external display application links */
-        _renderDisplayApplications: function() {
+        _renderDisplayApplications: function () {
             if (this.model.isDeletedOrPurged()) {
                 return "";
             }
             // render both old and new display apps using the same template
             return [
                 this.templates.displayApplications(this.model.get("display_apps"), this),
-                this.templates.displayApplications(this.model.get("display_types"), this)
+                this.templates.displayApplications(this.model.get("display_types"), this),
             ].join("");
         },
 
         // ......................................................................... secondary/details actions
         /** A series of links/buttons for less commonly used actions: re-run, info, etc. */
-        _renderSecondaryActions: function() {
+        _renderSecondaryActions: function () {
             this.debug("_renderSecondaryActions");
             switch (this.model.get("state")) {
                 case STATES.NOT_VIEWABLE:
@@ -250,7 +264,7 @@ var DatasetListItemView = _super.extend(
         /** Render icon-button to show the input and output (stdout/err) for the job that created this.
          *  @returns {jQuery} rendered DOM
          */
-        _renderShowParamsButton: function() {
+        _renderShowParamsButton: function () {
             // gen. safe to show in all cases
             return faIconButton({
                 title: _l("View details"),
@@ -258,23 +272,24 @@ var DatasetListItemView = _super.extend(
                 href: this.model.urls.show_params,
                 target: this.linkTarget,
                 faIcon: "fa-info-circle",
-                onclick: function(ev) {
+                onclick: function (ev) {
+                    const Galaxy = getGalaxyInstance();
                     if (Galaxy.frame && Galaxy.frame.active) {
                         Galaxy.frame.add({
                             title: _l("Dataset details"),
-                            url: this.href
+                            url: this.href,
                         });
                         ev.preventDefault();
                         ev.stopPropagation();
                     }
-                }
+                },
             });
         },
 
         /** Render icon-button/popupmenu to download the data (and/or the associated meta files (bai, etc.)) for this.
          *  @returns {jQuery} rendered DOM
          */
-        _renderDownloadButton: function() {
+        _renderDownloadButton: function () {
             // don't show anything if the data's been purged
             if (this.model.get("purged") || !this.model.hasData()) {
                 return null;
@@ -293,7 +308,7 @@ var DatasetListItemView = _super.extend(
         },
 
         /** Render the download button which opens a dropdown with links to download assoc. meta files (indices, etc.) */
-        _renderMetaFileDownloadButton: function() {
+        _renderMetaFileDownloadButton: function () {
             var urls = this.model.urls;
             return $(`
                 <div class="metafile-dropdown dropdown">
@@ -302,57 +317,40 @@ var DatasetListItemView = _super.extend(
             )}">
                         <span class="fa fa-floppy-o"></span>
                     </a>
-                    <ul class="dropdown-menu" role="menu">
-                        <li>
-                            <a href="${urls.download}">
-                                ${_l("Download dataset")}
-                            </a>
-                        </li>
+                    <div class="dropdown-menu" role="menu">
+                        <a class="dropdown-item" href="${urls.download}">
+                            ${_l("Download dataset")}
+                        </a>
                         ${_.map(
                             this.model.get("meta_files"),
-                            meta_file =>
-                                `<li>
-                                    <a href="${urls.meta_download + meta_file.file_type}">
-                                        ${_l("Download")} ${meta_file.file_type}
-                                    </a>
-                                </li>`
+                            (meta_file) =>
+                                `<a class="dropdown-item" href="${urls.meta_download + meta_file.file_type}">
+                                    ${_l("Download")} ${meta_file.file_type}
+                                </a>`
                         )}
-                    </ul>
+                    </div>
                 </div>`);
-        },
-
-        _renderNametags: function() {
-            var tpl = _.template(
-                [
-                    "<% _.each(_.sortBy(_.uniq(tags), function(x) { return x }), function(tag){ %>",
-                    '<% if (tag.indexOf("name:") == 0){ %>',
-                    '<span class="badge badge-primary badge-tags"><%- tag.slice(5) %></span>',
-                    "<% } %>",
-                    "<% }); %>"
-                ].join("")
-            );
-            return tpl({ tags: this.model.get("tags") });
         },
 
         // ......................................................................... misc
         events: _.extend(_.clone(_super.prototype.events), {
-            "click .display-btn": function(ev) {
+            "click .display-btn": function (ev) {
                 this.trigger("display", this, ev);
             },
-            "click .params-btn": function(ev) {
+            "click .params-btn": function (ev) {
                 this.trigger("params", this, ev);
             },
-            "click .download-btn": function(ev) {
+            "click .download-btn": function (ev) {
                 this.trigger("download", this, ev);
-            }
+            },
         }),
 
         // ......................................................................... misc
         /** String representation */
-        toString: function() {
+        toString: function () {
             var modelString = this.model ? `${this.model}` : "(no model)";
             return `DatasetListItemView(${modelString})`;
-        }
+        },
     }
 );
 
@@ -368,7 +366,7 @@ DatasetListItemView.prototype.templates = (() => {
             '<div class="warningmessagesmall">',
             _l("An error occurred setting the metadata for this dataset"),
             "</div>",
-            "<% } %>"
+            "<% } %>",
         ]),
         error: BASE_MVC.wrapTemplate([
             // error during index fetch - show error on dataset
@@ -377,14 +375,14 @@ DatasetListItemView.prototype.templates = (() => {
             _l("There was an error getting the data for this dataset"),
             ": <%- model.error %>",
             "</div>",
-            "<% } %>"
+            "<% } %>",
         ]),
         purged: BASE_MVC.wrapTemplate([
             "<% if( model.purged ){ %>",
             '<div class="purged-msg warningmessagesmall">',
             _l("This dataset has been deleted and removed from disk"),
             "</div>",
-            "<% } %>"
+            "<% } %>",
         ]),
         deleted: BASE_MVC.wrapTemplate([
             // deleted not purged
@@ -392,8 +390,8 @@ DatasetListItemView.prototype.templates = (() => {
             '<div class="deleted-msg warningmessagesmall">',
             _l("This dataset has been deleted"),
             "</div>",
-            "<% } %>"
-        ])
+            "<% } %>",
+        ]),
 
         //NOTE: hidden warning is only needed for HDAs
     });
@@ -419,7 +417,7 @@ DatasetListItemView.prototype.templates = (() => {
             '<pre class="dataset-peek"><%= dataset.peek %></pre>',
             "<% } %>",
             "<% } %>",
-            "</div>"
+            "</div>",
         ],
         "dataset"
     );
@@ -430,7 +428,7 @@ DatasetListItemView.prototype.templates = (() => {
             '<div class="summary">',
             _l("You do not have permission to view this dataset"),
             "</div>",
-            "</div>"
+            "</div>",
         ],
         "dataset"
     );
@@ -469,7 +467,7 @@ DatasetListItemView.prototype.templates = (() => {
             '<div class="info">',
             '<span class="value"><%- dataset.misc_info %></span>',
             "</div>",
-            "<% } %>"
+            "<% } %>",
         ],
         "dataset"
     );
@@ -502,7 +500,12 @@ DatasetListItemView.prototype.templates = (() => {
         "dataset"
     );
     summaryTemplates[STATES.PAUSED] = BASE_MVC.wrapTemplate(
-        ["<div>", _l('This job is paused. Use the "Resume Paused Jobs" in the history menu to resume'), "</div>"],
+        [
+            "<div>",
+            _l('This job is paused. Use the "Resume Paused Jobs" in the history menu to resume'),
+            "</div>",
+            '<div class="info"><%- dataset.misc_info %></div>',
+        ],
         "dataset"
     );
     summaryTemplates[STATES.ERROR] = BASE_MVC.wrapTemplate(
@@ -513,7 +516,7 @@ DatasetListItemView.prototype.templates = (() => {
             '<span class="help-text">',
             _l("An error occurred with this dataset"),
             ":</span>",
-            '<div class="job-error-text"><%- dataset.misc_info %></div>'
+            '<div class="job-error-text"><%- dataset.misc_info %></div>',
         ],
         "dataset"
     );
@@ -534,8 +537,8 @@ DatasetListItemView.prototype.templates = (() => {
             '<div class="resubmitted-msg infomessagesmall">',
             _l("The job creating this dataset has been resubmitted"),
             "</div>",
-            "<% } %>"
-        ])
+            "<% } %>",
+        ]),
     };
 
     // this is applied to both old and new style display apps
@@ -552,7 +555,7 @@ DatasetListItemView.prototype.templates = (() => {
             "<% }); %>",
             "</span>",
             "</div>",
-            "<% }); %>"
+            "<% }); %>",
         ],
         "apps"
     );
@@ -563,11 +566,11 @@ DatasetListItemView.prototype.templates = (() => {
         noAccess: noAccessTemplate,
         summaries: summaryTemplates,
         detailMessages: detailMessageTemplates,
-        displayApplications: displayApplicationsTemplate
+        displayApplications: displayApplicationsTemplate,
     });
 })();
 
 // ============================================================================
 export default {
-    DatasetListItemView: DatasetListItemView
+    DatasetListItemView: DatasetListItemView,
 };

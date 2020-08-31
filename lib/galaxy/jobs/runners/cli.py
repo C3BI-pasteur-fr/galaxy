@@ -9,8 +9,8 @@ from galaxy import model
 from galaxy.jobs import JobDestination
 from galaxy.jobs.runners import (
     AsynchronousJobRunner,
-    AsynchronousJobState
-)
+    AsynchronousJobState,
+    JobState)
 from galaxy.util import asbool
 from .util.cli import CliInterface, split_params
 
@@ -76,6 +76,7 @@ class ShellJobRunner(AsynchronousJobRunner):
         script = self.get_job_file(
             job_wrapper,
             exit_code_path=ajs.exit_code_file,
+            shell=job_wrapper.shell,
             **job_file_kwargs
         )
 
@@ -110,7 +111,7 @@ class ShellJobRunner(AsynchronousJobRunner):
         log.info("(%s) queued with identifier: %s" % (galaxy_id_tag, external_job_id))
 
         # store runner information for tracking if Galaxy restarts
-        job_wrapper.set_job_destination(job_destination, external_job_id)
+        job_wrapper.set_external_id(external_job_id)
 
         # Store state information for job
         ajs.job_id = external_job_id
@@ -160,10 +161,6 @@ class ShellJobRunner(AsynchronousJobRunner):
                 if ajs.job_wrapper.get_state() == model.Job.states.DELETED:
                     continue
 
-                external_metadata = not asbool(ajs.job_wrapper.job_destination.params.get("embed_metadata_in_job", DEFAULT_EMBED_METADATA_IN_JOB))
-                if external_metadata:
-                    self._handle_metadata_externally(ajs.job_wrapper, resolve_requirements=True)
-
                 log.debug("(%s/%s) job not found in batch state check" % (id_tag, external_job_id))
                 shell_params, job_params = self.parse_destination_params(ajs.job_destination.params)
                 shell, job_interface = self.get_cli_plugins(shell_params, job_params)
@@ -176,16 +173,38 @@ class ShellJobRunner(AsynchronousJobRunner):
                 if not state == model.Job.states.OK:
                     # No need to change_state when the state is OK, this will be handled by `self.finish_job`
                     ajs.job_wrapper.change_state(state)
+                if state == model.Job.states.ERROR:
+                    # Try to find out the reason for exiting
+                    self.__handle_out_of_memory(ajs, external_job_id)
+                    self.work_queue.put((self.mark_as_failed, ajs))
+                    # Don't add the job to the watched items once it fails, deals with https://github.com/galaxyproject/galaxy/issues/7820
+                    continue
             if state == model.Job.states.RUNNING and not ajs.running:
                 ajs.running = True
             ajs.old_state = state
             if state == model.Job.states.OK:
+                external_metadata = not asbool(ajs.job_wrapper.job_destination.params.get("embed_metadata_in_job", DEFAULT_EMBED_METADATA_IN_JOB))
+                if external_metadata:
+                    self.work_queue.put((self.handle_metadata_externally, ajs))
                 log.debug('(%s/%s) job execution finished, running job wrapper finish method' % (id_tag, external_job_id))
                 self.work_queue.put((self.finish_job, ajs))
             else:
                 new_watched.append(ajs)
         # Replace the watch list with the updated version
         self.watched = new_watched
+
+    def handle_metadata_externally(self, ajs):
+        self._handle_metadata_externally(ajs.job_wrapper, resolve_requirements=True)
+
+    def __handle_out_of_memory(self, ajs, external_job_id):
+        shell_params, job_params = self.parse_destination_params(ajs.job_destination.params)
+        shell, job_interface = self.get_cli_plugins(shell_params, job_params)
+        cmd_out = shell.execute(job_interface.get_failure_reason(external_job_id))
+        if cmd_out is not None:
+            if job_interface.parse_failure_reason(cmd_out.stdout, external_job_id) \
+                    == JobState.runner_states.MEMORY_LIMIT_REACHED:
+                ajs.runner_state = JobState.runner_states.MEMORY_LIMIT_REACHED
+                ajs.fail_message = "Tool failed due to insufficient memory. Try with more memory."
 
     def __get_job_states(self):
         job_destinations = {}
@@ -207,8 +226,9 @@ class ShellJobRunner(AsynchronousJobRunner):
             job_states.update(job_interface.parse_status(cmd_out.stdout, job_ids))
         return job_states
 
-    def stop_job(self, job):
+    def stop_job(self, job_wrapper):
         """Attempts to delete a dispatched job"""
+        job = job_wrapper.get_job()
         try:
             shell_params, job_params = self.parse_destination_params(job.destination_params)
             shell, job_interface = self.get_cli_plugins(shell_params, job_params)

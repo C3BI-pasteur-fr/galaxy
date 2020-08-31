@@ -1,5 +1,5 @@
-FROM ubuntu:16.04
-MAINTAINER John Chilton <jmchilton@gmail.com>
+FROM ubuntu:18.04
+LABEL maintainer="John Chilton <jmchilton@gmail.com>"
 
 ARG CHROME_VERSION="google-chrome-beta"
 ARG CHROME_DRIVER_VERSION="2.38"
@@ -10,34 +10,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MYSQL_MAJOR=5.7 \
     POSTGRES_MAJOR=9.5 \
     GALAXY_ROOT=/galaxy \
-    GALAXY_VIRTUAL_ENV=/galaxy_venv
+    GALAXY_VIRTUAL_ENV=/galaxy_venv \
+    LC_ALL=C.UTF-8
 
 # Pre-install a bunch of packages to speed up ansible steps.
 RUN apt-get update -y && apt-get install -y software-properties-common apt-transport-https curl && \
     apt-add-repository -y ppa:ansible/ansible && \
     curl -s https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add - && \
-    curl -sL https://deb.nodesource.com/setup_8.x | bash -  && \
-    apt-key adv --keyserver pool.sks-keyservers.net --recv-keys A4A9406876FCBD3C456770C88C718D3B5072E1F5 && \
-    echo "deb http://repo.mysql.com/apt/ubuntu/ trusty mysql-${MYSQL_MAJOR}" > /etc/apt/sources.list.d/mysql.list && \
     echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list && \
-    { \
-		echo mysql-community-server mysql-community-server/data-dir select ''; \
-		echo mysql-community-server mysql-community-server/root-pass password ''; \
-		echo mysql-community-server mysql-community-server/re-root-pass password ''; \
-		echo mysql-community-server mysql-community-server/remove-test-db select false; \
-	} | debconf-set-selections && \
     apt-get update -y && \
-    apt-get install -y libpq-dev postgresql postgresql-client \
-            ansible wget mysql-server="${MYSQL_MAJOR}"* libmysqlclient-dev="${MYSQL_MAJOR}"* \
-            slurm-llnl libmunge-dev slurm-drmaa-dev ant cmake curl \
-            g++ gcc gfortran git-core libffi-dev liblapack-dev \
-            libncurses5-dev libopenblas-dev libpam0g-dev libpq-dev libsparsehash-dev make \
-            mercurial nginx-extras patch postgresql postgresql \
-            postgresql-client python-boto python-dev \
-            python-prettytable python-psycopg2 python-virtualenv python-pip \
-            rsync slurm-drmaa-dev swig sysstat unzip \
-            autoconf automake build-essential libatlas-base-dev libblas-dev openssl \
+    apt-get install -y --no-install-recommends postgresql postgresql-client ansible wget \
+            python3-dev \
+            git-core \
+            rsync swig sysstat unzip \
+            openssl \
             bzip2 \
             ca-certificates \
             openjdk-8-jre-headless \
@@ -46,18 +32,14 @@ RUN apt-get update -y && apt-get install -y software-properties-common apt-trans
             locales \
             xvfb \
             ${CHROME_VERSION:-google-chrome-stable} \
-            wget zlib1g-dev nodejs \
             libnss3 libgconf-2-4 && \
     apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-RUN npm install -g grunt grunt-cli
 
 RUN mkdir -p /tmp/ansible && \
     mkdir -p /opt/galaxy/db && \
-    chown -R postgres:postgres /opt/galaxy/db && \
-    sed -Ei 's/^(bind-address|log)/#&/' /etc/mysql/my.cnf
+    chown -R postgres:postgres /opt/galaxy/db
 
-ADD start_mysql.sh /opt/galaxy/start_mysql.sh
 ADD ansible_vars.yml /tmp/ansible/ansible_vars.yml
 ADD provision.yml /tmp/ansible/provision.yml
 
@@ -79,39 +61,10 @@ RUN mkdir /etc/galaxy && cd /tmp/ansible && mkdir roles && \
     apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 RUN cd $GALAXY_ROOT && \
-    ./scripts/common_startup.sh || { echo "common_startup.sh failed"; exit 1; } && \
-    dev_requirements=./lib/galaxy/dependencies/dev-requirements.txt && \
-    [ -f $dev_requirements ] && $GALAXY_VIRTUAL_ENV/bin/pip install -r $dev_requirements
-
-RUN . $GALAXY_VIRTUAL_ENV/bin/activate && \
-    pip install psycopg2 && \
-    pip install mysql && \
-    cd $GALAXY_ROOT && \
-    echo "Prepopulating postgres database" && \
-    su -c '/usr/lib/postgresql/${POSTGRES_MAJOR}/bin/pg_ctl -o "-F" start -D /opt/galaxy/db' postgres && \
-    sleep 3 && \
-    GALAXY_CONFIG_DATABASE_CONNECTION="postgresql://root@localhost:5930/galaxy" bash create_db.sh && \
-    echo "Prepopulating sqlite database" && \
-    GALAXY_CONFIG_DATABASE_CONNECTION="sqlite:////opt/galaxy/galaxy.sqlite" bash create_db.sh && \
-    sh /opt/galaxy/start_mysql.sh && \
-    echo "Prepopulating mysql database" && \
-    GALAXY_CONFIG_DATABASE_CONNECTION="mysql://galaxy:galaxy@localhost/galaxy?unix_socket=/var/run/mysqld/mysqld.sock" bash create_db.sh && \
-    echo "Prepopulating toolshed postgres database" && \
-    TOOL_SHED_CONFIG_DATABASE_CONNECTION="postgresql://root@localhost:5930/toolshed" bash create_db.sh tool_shed && \
-    echo "Prepopulating toolshed sqlite database" && \
-    TOOL_SHED_CONFIG_DATABASE_CONNECTION="sqlite:////opt/galaxy/toolshed.sqlite" bash create_db.sh tool_shed && \
-    echo "Prepopulating toolshed mysql database" && \
-    TOOL_SHED_CONFIG_DATABASE_CONNECTION="mysql://galaxy:galaxy@localhost/toolshed?unix_socket=/var/run/mysqld/mysqld.sock" bash create_db.sh tool_shed
-
-# bcftools for Galaxy.
-RUN mkdir -p /tmp/install && \
-    cd /tmp/install && \
-    wget https://github.com/samtools/bcftools/releases/download/1.2/bcftools-1.2.tar.bz2 && \
-    tar xvjf bcftools-1.2.tar.bz2 && \
-    cd bcftools-1.2 && \
-    make && \
-    make install && \
-    cd && rm -rf /tmp/install
+    virtualenv -p /usr/bin/python3 $GALAXY_VIRTUAL_ENV && \
+        ./scripts/common_startup.sh --dev-wheels && \
+        $GALAXY_VIRTUAL_ENV/bin/pip install psycopg2-binary && \
+    rm -rf ~/.cache/pip
 
 #========================================
 # Add Selenium user with passwordless sudo
@@ -177,8 +130,8 @@ USER root
 
 ADD run_test_wrapper.sh /usr/local/bin/run_test_wrapper.sh
 
-EXPOSE :9009
-EXPOSE :8080
-EXPOSE :80
+EXPOSE 9009
+EXPOSE 8080
+EXPOSE 80
 
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/run_test_wrapper.sh"]

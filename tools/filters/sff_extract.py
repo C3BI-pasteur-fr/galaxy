@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 '''This software extracts the seq, qual and ancillary information from an sff
 file, like the ones used by the 454 sequencer.
 
@@ -393,13 +393,13 @@ def create_xml_for_unpaired_read(data, fname):
 def format_as_fasta(name, seq, qual):
     name_line = ''.join(('>', name, '\n'))
     seqstring = ''.join((name_line, seq, '\n'))
-    qual_line = ' '.join([str(q) for q in qual])
+    qual_line = ' '.join(str(q) for q in qual)
     qualstring = ''.join((name_line, qual_line, '\n'))
     return seqstring, qualstring
 
 
 def format_as_fastq(name, seq, qual):
-    qual_line = ''.join([chr(q + 33) for q in qual])
+    qual_line = ''.join(chr(q + 33) for q in qual)
     seqstring = ''.join(('@', name, '\n', seq, '\n+\n', qual_line, '\n'))
     return seqstring
 
@@ -498,7 +498,7 @@ def reverse_complement(seq):
         'N': 'N',
         '*': '*'}
 
-    complseq = ''.join([compdict[base] for base in seq])
+    complseq = ''.join(compdict[base] for base in seq)
     # python hack to reverse a list/string/etc
     complseq = complseq[::-1]
     return complseq
@@ -1139,7 +1139,7 @@ def launch_ssaha(linker_fname, query_fname, output_fh):
             print("ok.")
     except Exception:
         print("\n")
-        raise RuntimeError('An error occured during the SSAHA2 execution, aborting.')
+        raise RuntimeError('An error occurred during the SSAHA2 execution, aborting.')
 
 
 def read_ssaha_data(ssahadata_fh):
@@ -1180,7 +1180,7 @@ def read_ssaha_data(ssahadata_fh):
 #
 ##########################################################################
 
-class Fasta:
+class Fasta(object):
     def __init__(self, name, sequence):
         self.name = name
         self.sequence = sequence

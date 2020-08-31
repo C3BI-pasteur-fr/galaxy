@@ -1,13 +1,11 @@
-// dependencies
+import $ from "jquery";
 import Utils from "utils/utils";
-import * as _ from "underscore";
-
-/* global $ */
+import _ from "underscore";
 
 // grid view templates
 export default {
     // template
-    grid: function(options) {
+    grid: function (options) {
         let tmpl;
         if (options.embedded) {
             tmpl = this.grid_header(options) + this.grid_table(options);
@@ -40,7 +38,7 @@ export default {
     },
 
     // template
-    grid_table: function() {
+    grid_table: function () {
         return `
             <form method="post" onsubmit="return false;">
                 <table id="grid-table" class="grid">
@@ -52,7 +50,7 @@ export default {
     },
 
     // template
-    grid_header: function(options) {
+    grid_header: function (options) {
         var tmpl = '<div class="grid-header">';
         if (!options.embedded) {
             let id_str = "";
@@ -69,10 +67,8 @@ export default {
                     '<li><a class="action-button" id="popup-global-actions" class="menubutton">Actions</a></li>' +
                     '<div popupmenu="popup-global-actions">';
             }
-            for (let action of options.global_actions) {
-                tmpl += `<li><a class="action-button use-target" target="${action.target}" href="${
-                    action.url_args
-                }" onclick="return false;" >${action.label}</a></li>`;
+            for (const action of options.global_actions) {
+                tmpl += `<li><a class="action-button use-target" target="${action.target}" href="${action.url_args}" onclick="return false;" >${action.label}</a></li>`;
             }
             if (show_popup) {
                 tmpl += "</div>";
@@ -92,7 +88,7 @@ export default {
     },
 
     // template
-    header: function(options) {
+    header: function (options) {
         // start
         var tmpl = "<tr>";
 
@@ -108,13 +104,11 @@ export default {
         }
 
         // create header elements
-        for (let column of options.columns) {
+        for (const column of options.columns) {
             if (column.visible) {
                 tmpl += `<th id="${column.key}-header">`;
                 if (column.sortable) {
-                    tmpl += `<a href="javascript:void(0)" class="sort-link" sort_key="${column.key}">${
-                        column.label
-                    }</a>`;
+                    tmpl += `<a href="javascript:void(0)" class="sort-link" sort_key="${column.key}">${column.label}</a>`;
                 } else {
                     tmpl += column.label;
                 }
@@ -130,7 +124,7 @@ export default {
     },
 
     // template
-    body: function(options) {
+    body: function (options) {
         // initialize
         var tmpl = "";
         var items_length = options.items.length;
@@ -142,7 +136,7 @@ export default {
         }
 
         // create rows
-        for (let item of options.items) {
+        for (const item of options.items) {
             // Tag current
             tmpl += "<tr ";
             if (options.current_item_id == item.id) {
@@ -152,13 +146,11 @@ export default {
 
             // Item selection column
             if (options.show_item_checkboxes) {
-                tmpl += `<td style="width: 1.5em;"><input type="checkbox" name="id" value="${item.encode_id}" id="${
-                    item.encode_id
-                }" class="grid-row-select-checkbox" /></td>`;
+                tmpl += `<td style="width: 1.5em;"><input type="checkbox" name="id" value="${item.encode_id}" id="${item.encode_id}" class="grid-row-select-checkbox" /></td>`;
             }
 
             // Data columns
-            for (let column of options.columns) {
+            for (const column of options.columns) {
                 if (column.visible) {
                     // Nowrap
                     var nowrap = "";
@@ -190,9 +182,7 @@ export default {
 
                     // Determine cell content
                     if (column.delayed) {
-                        tmpl += `<div class="delayed-value-${column.key}" data-id="${
-                            item.encode_id
-                        }" data-value="${value}"><span class="fa fa-spinner fa-spin"></span></div>`;
+                        tmpl += `<div class="delayed-value-${column.key}" data-id="${item.encode_id}" data-value="${value}"><span class="fa fa-spinner fa-spin"></span></div>`;
                     } else if (column.attach_popup && link) {
                         tmpl += `<div class="btn-group">
                                     <button class="btn btn-secondary use-target" target="${target}" href="${link}" onclick="return false;">${value}</button>
@@ -214,7 +204,7 @@ export default {
     },
 
     // template
-    footer: function(options) {
+    footer: function (options) {
         // create template string
         var tmpl = "";
 
@@ -304,11 +294,9 @@ export default {
             `;
 
             // configure buttons for operations
-            for (let operation of options.operations) {
+            for (const operation of options.operations) {
                 if (operation.allow_multiple) {
-                    tmpl += `<input type="button" value="${
-                        operation.label
-                    }" class="operation-button action-button">&nbsp;`;
+                    tmpl += `<input type="button" value="${operation.label}" class="operation-button action-button">&nbsp;`;
                 }
             }
 
@@ -318,7 +306,7 @@ export default {
 
         // count global operations
         var found_global = false;
-        for (let operation of options.operations) {
+        for (const operation of options.operations) {
             if (operation.global_operation) {
                 found_global = true;
                 break;
@@ -328,7 +316,7 @@ export default {
         // add global operations
         if (found_global) {
             tmpl += "<tr>" + '<td colspan="100">';
-            for (let operation of options.operations) {
+            for (const operation of options.operations) {
                 if (operation.global_operation) {
                     tmpl += `<a class="action-button" href="${operation.global_operation}">${operation.label}</a>`;
                 }
@@ -346,7 +334,7 @@ export default {
     },
 
     // template
-    message: function(options) {
+    message: function (options) {
         var status = options.status;
         if (["success", "ok"].indexOf(status) != -1) {
             status = "done";
@@ -357,7 +345,7 @@ export default {
     },
 
     // template
-    grid_filters: function(options) {
+    grid_filters: function (options) {
         // get filters
         var default_filter_dict = options.default_filter_dict;
         var filters = options.filters;
@@ -370,7 +358,7 @@ export default {
 
         // identify columns with advanced filtering
         var show_advanced_search_link = false;
-        for (let column of options.columns) {
+        for (const column of options.columns) {
             if (column.filterable == "advanced") {
                 var column_key = column.key;
                 var f_key = filters[column_key];
@@ -394,7 +382,7 @@ export default {
         var tmpl = `<div id="standard-search" style="display: ${standard_search_display};"><table><tr><td style="padding: 0;"><table>`;
 
         // add standard filters
-        for (let column of options.columns) {
+        for (const column of options.columns) {
             if (column.filterable == "standard") {
                 tmpl += this.grid_column_filter(options, column);
             }
@@ -405,7 +393,7 @@ export default {
 
         // show advanced search link in standard display
         if (show_advanced_search_link) {
-            tmpl += '<a href="" class="advanced-search-toggle">Advanced Search</a>';
+            tmpl += '<a href="javascript:void(0)" class="advanced-search-toggle">Advanced Search</a>';
         }
 
         // finalize standard search display
@@ -414,10 +402,10 @@ export default {
         //
         // advanced search
         //
-        tmpl += `<div id="advanced-search" style="display: ${advanced_search_display}; margin-top: 5px; border: 1px solid #ccc;"><table><tr><td style="text-align: left" colspan="100"><a href="" class="advanced-search-toggle">Close Advanced Search</a></td></tr>`;
+        tmpl += `<div id="advanced-search" style="display: ${advanced_search_display}; margin-top: 5px;"><table><tr><td style="text-align: left" colspan="100"><a href="javascript:void(0)" class="advanced-search-toggle">Close Advanced Search</a></td></tr>`;
 
         // add advanced filters
-        for (let column of options.columns) {
+        for (const column of options.columns) {
             if (column.filterable == "advanced") {
                 tmpl += this.grid_column_filter(options, column);
             }
@@ -431,7 +419,7 @@ export default {
     },
 
     // template
-    grid_column_filter: function(options, column) {
+    grid_column_filter: function (options, column) {
         // collect parameters
         var filters = options.filters;
         var column_label = column.label;
@@ -450,16 +438,14 @@ export default {
         if (column.is_text) {
             tmpl += `<form class="text-filter-form" column_key="${column_key}" action="${options.url}" method="get" >`;
             // Carry forward filtering criteria with hidden inputs.
-            for (let column of options.columns) {
+            for (const column of options.columns) {
                 var filter_value = filters[column.key];
                 if (filter_value) {
                     if (filter_value != "All") {
                         if (column.is_text) {
                             filter_value = JSON.stringify(filter_value);
                         }
-                        tmpl += `<input type="hidden" id="${column.key}" name="f-${
-                            column.key
-                        }" value="${filter_value}"/>`;
+                        tmpl += `<input type="hidden" id="${column.key}" name="f-${column.key}" value="${filter_value}"/>`;
                     }
                 }
             }
@@ -482,7 +468,7 @@ export default {
 
                 // multiple filter values
                 if (type == "array") {
-                    for (let i in column_filter) {
+                    for (const i in column_filter) {
                         // copy filters and remove entry
                         var params = column_filter;
                         params = params.slice(i);
@@ -558,8 +544,8 @@ export default {
     },
 
     // template for filter items
-    filter_element: function(filter_key, filter_value) {
+    filter_element: function (filter_key, filter_value) {
         filter_value = Utils.sanitize(filter_value);
         return `<span class="text-filter-val">${filter_value}<a href="javascript:void(0);" filter_key="${filter_key}" filter_val="${filter_value}"><i class="fa fa-times" style="padding-left: 5px; padding-bottom: 6px;"/></a></span>`;
-    }
+    },
 };

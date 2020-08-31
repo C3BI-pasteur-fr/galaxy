@@ -1,22 +1,18 @@
-// TODO; tie into Galaxy state?
-window.workflow_globals = window.workflow_globals || {};
+import $ from "jquery";
 
-var DataInputView = Backbone.View.extend({
-    className: "form-row dataRow input-data-row",
-
-    initialize: function(options) {
+export class DataInputView {
+    constructor(options = {}) {
         this.input = options.input;
         this.nodeView = options.nodeView;
         this.terminalElement = options.terminalElement;
-
-        this.$el.attr("name", this.input.name).html(this.input.label);
-
+        this.$el = $(`<div class="form-row dataRow input-data-row"/>`);
+        this.$el.attr("name", this.input.name).html(this.input.label || this.input.name);
         if (!options.skipResize) {
             this.$el.css({
                 position: "absolute",
                 left: -1000,
                 top: -1000,
-                display: "none"
+                display: "none",
             });
             $("body").append(this.el);
             this.nodeView.updateMaxWidth(this.$el.outerWidth());
@@ -24,53 +20,43 @@ var DataInputView = Backbone.View.extend({
                 position: "",
                 left: "",
                 top: "",
-                display: ""
+                display: "",
             });
             this.$el.remove();
         }
     }
-});
+}
 
-var DataOutputView = Backbone.View.extend({
-    className: "form-row dataRow",
-
-    initialize: function(options) {
+export class DataOutputView {
+    constructor(app, options = {}) {
+        this.$el = $(`<div class="form-row dataRow"/>`);
         this.output = options.output;
         this.terminalElement = options.terminalElement;
         this.nodeView = options.nodeView;
-
-        var output = this.output;
-        var label = output.name;
-        var node = this.nodeView.node;
-
-        var isInput = output.extensions.indexOf("input") >= 0 || output.extensions.indexOf("input_collection") >= 0;
+        const output = this.output;
+        let label = output.label || output.name;
+        const node = this.nodeView.node;
+        const isInput = output.extensions.indexOf("input") >= 0;
+        const datatype = output.force_datatype || output.extensions.join(", ");
         if (!isInput) {
-            label = `${label} (${output.extensions.join(", ")})`;
+            label = `${label} (${datatype})`;
         }
         this.$el.html(label);
         this.calloutView = null;
         if (["tool", "subworkflow"].indexOf(node.type) >= 0) {
-            var calloutView = new OutputCalloutView({
+            const calloutView = new OutputCalloutView(app, {
                 label: label,
                 output: output,
-                node: node
+                node: node,
             });
             this.calloutView = calloutView;
-            this.$el.append(calloutView.el);
-            this.$el.hover(
-                () => {
-                    calloutView.hoverImage();
-                },
-                () => {
-                    calloutView.resetImage();
-                }
-            );
+            this.$el.prepend(calloutView.$el);
         }
         this.$el.css({
             position: "absolute",
             left: -1000,
             top: -1000,
-            display: "none"
+            display: "none",
         });
         $("body").append(this.el);
         this.nodeView.updateMaxWidth(this.$el.outerWidth() + 17);
@@ -79,78 +65,96 @@ var DataOutputView = Backbone.View.extend({
                 position: "",
                 left: "",
                 top: "",
-                display: ""
+                display: "",
             })
             .detach();
-    },
-    redrawWorkflowOutput: function() {
+    }
+    redrawWorkflowOutput() {
         if (this.calloutView) {
-            this.calloutView.resetImage();
+            this.calloutView.render();
         }
     }
-});
+}
 
-var OutputCalloutView = Backbone.View.extend({
-    tagName: "div",
+export class ParameterOutputView {
+    constructor(app, options = {}) {
+        this.$el = $(`<div class="form-row dataRow"/>`);
+        this.output = options.output;
+        this.terminalElement = options.terminalElement;
+        this.nodeView = options.nodeView;
+        const output = this.output;
+        const label = output.label || output.name;
+        const node = this.nodeView.node;
+        this.$el.html(label);
+        this.calloutView = null;
+        if (["tool", "subworkflow"].indexOf(node.type) >= 0) {
+            const calloutView = new OutputCalloutView(app, {
+                label: label,
+                output: output,
+                node: node,
+            });
+            this.calloutView = calloutView;
+            this.$el.append(calloutView.$el);
+        }
+        this.$el.css({
+            position: "absolute",
+            left: -1000,
+            top: -1000,
+            display: "none",
+        });
+        $("body").append(this.el);
+        this.nodeView.updateMaxWidth(this.$el.outerWidth() + 17);
+        this.$el
+            .css({
+                position: "",
+                left: "",
+                top: "",
+                display: "",
+            })
+            .detach();
+    }
+    redrawWorkflowOutput() {
+        if (this.calloutView) {
+            this.calloutView.render();
+        }
+    }
+}
 
-    initialize: function(options) {
+export class OutputCalloutView {
+    constructor(app, options = {}) {
+        this.$el = $("<div/>");
         this.label = options.label;
         this.node = options.node;
         this.output = options.output;
-
-        var view = this;
-        var node = this.node;
+        const node = this.node;
+        const outputName = this.output.name;
         this.$el
-            .attr("class", `callout ${this.label}`)
-            .css({ display: "none" })
+            .attr("class", `callout-terminal ${outputName}`)
             .append(
-                $("<div class='buttons'></div>").append(
-                    $("<img/>")
-                        .attr("src", `${Galaxy.root}static/images/fugue/asterisk-small-outline.png`)
-                        .click(() => {
-                            var outputName = view.output.name;
-                            if (node.isWorkflowOutput(outputName)) {
-                                node.removeWorkflowOutput(outputName);
-                                view
-                                    .$("img")
-                                    .attr("src", `${Galaxy.root}static/images/fugue/asterisk-small-outline.png`);
-                            } else {
-                                node.addWorkflowOutput(outputName);
-                                view.$("img").attr("src", `${Galaxy.root}static/images/fugue/asterisk-small.png`);
-                            }
-                            window.workflow_globals.workflow.has_changes = true;
-                            window.workflow_globals.canvas_manager.draw_overview();
-                        })
-                )
+                $("<icon />")
+                    .addClass("mark-terminal")
+                    .click(() => {
+                        if (node.isWorkflowOutput(outputName)) {
+                            node.removeWorkflowOutput(outputName);
+                        } else {
+                            node.addWorkflowOutput(outputName);
+                        }
+                        this.render();
+                        app.has_changes = true;
+                        app.canvas_manager.draw_overview();
+                    })
             )
             .tooltip({
                 delay: 500,
-                title: "Mark dataset as a workflow output. All unmarked datasets will be hidden."
+                title: "Unchecked output datasets will be hidden.",
             });
-
-        this.$el.css({
-            top: "50%",
-            margin: "-8px 0px 0px 0px",
-            right: 8
-        });
-        this.$el.show();
-        this.resetImage();
-    },
-
-    resetImage: function() {
-        if (!this.node.isWorkflowOutput(this.output.name)) {
-            this.$("img").attr("src", `${Galaxy.root}static/images/fugue/asterisk-small-outline.png`);
-        } else {
-            this.$("img").attr("src", `${Galaxy.root}static/images/fugue/asterisk-small.png`);
-        }
-    },
-
-    hoverImage: function() {
-        this.$("img").attr("src", `${Galaxy.root}static/images/fugue/asterisk-small-yellow.png`);
+        this.render();
     }
-});
-
-export default {
-    DataInputView: DataInputView,
-    DataOutputView: DataOutputView
-};
+    render() {
+        if (!this.node.isWorkflowOutput(this.output.name)) {
+            this.$el.find("icon").removeClass("mark-terminal-active");
+        } else {
+            this.$el.find("icon").addClass("mark-terminal-active");
+        }
+    }
+}
