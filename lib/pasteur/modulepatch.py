@@ -26,7 +26,7 @@ def module_prepare(app, command_line, job, working_directory):
             modulefile = file( module_path, "w" )
             modulefile.write( script )
             modulefile.close()
-            os.chmod( module_path, 0750 )
+            os.chmod( module_path, 0o750 )
             dependency_module_commands = [". " + module_path]
         else:
             dependency_module_commands = None
