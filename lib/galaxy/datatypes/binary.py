@@ -288,7 +288,6 @@ class BamNative(CompressedArchive):
     def merge(split_files, output_file):
         """
         Merges BAM files
-
         :param split_files: List of bam file paths to merge
         :param output_file: Write merged bam file to this location
         """
@@ -722,7 +721,6 @@ class BaseBcf(CompressedArchive):
 class Bcf(BaseBcf):
     """
     Class describing a (BGZF-compressed) BCF file
-
     """
     file_ext = "bcf"
 
@@ -749,7 +747,6 @@ class Bcf(BaseBcf):
         dataset_symlink = os.path.join(os.path.dirname(index_file.file_name),
                                        '__dataset_%d_%s' % (dataset.id, os.path.basename(index_file.file_name)))
         os.symlink(dataset.file_name, dataset_symlink)
-	dataset_symlink_gz = dataset_symlink + '.gz'
         try:
             cmd = ['python', '-c', "import pysam.bcftools; pysam.bcftools.index('%s')" % (dataset_symlink)]
             subprocess.check_call(cmd)
@@ -759,15 +756,12 @@ class Bcf(BaseBcf):
         finally:
             # Remove temp file and symlink
             os.remove(dataset_symlink)
-	    if os.path.exists(dataset_symlink_gz):
-	        os.remove(dataset_symlink_gz)
         dataset.metadata.bcf_index = index_file
 
 
 class BcfUncompressed(BaseBcf):
     """
     Class describing an uncompressed BCF file
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('1.bcf_uncompressed')
     >>> BcfUncompressed().sniff(fname)
@@ -792,7 +786,6 @@ class BcfUncompressed(BaseBcf):
 class H5(Binary):
     """
     Class describing an HDF5 file
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.mz5')
     >>> H5().sniff(fname)
@@ -836,7 +829,6 @@ class H5(Binary):
 class Loom(H5):
     """
     Class describing a Loom file: http://loompy.org/
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.loom')
     >>> Loom().sniff(fname)
@@ -990,7 +982,6 @@ class GmxBinary(Binary):
 class Trr(GmxBinary):
     """
     Class describing an trr file from the GROMACS suite
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('md.trr')
     >>> Trr().sniff(fname)
@@ -1007,7 +998,6 @@ class Trr(GmxBinary):
 class Cpt(GmxBinary):
     """
     Class describing a checkpoint (.cpt) file from the GROMACS suite
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('md.cpt')
     >>> Cpt().sniff(fname)
@@ -1024,7 +1014,6 @@ class Cpt(GmxBinary):
 class Xtc(GmxBinary):
     """
     Class describing an xtc file from the GROMACS suite
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('md.xtc')
     >>> Xtc().sniff(fname)
@@ -1041,7 +1030,6 @@ class Xtc(GmxBinary):
 class Edr(GmxBinary):
     """
     Class describing an edr file from the GROMACS suite
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('md.edr')
     >>> Edr().sniff(fname)
@@ -1630,7 +1618,6 @@ class MzSQlite(SQlite):
 class PQP(SQlite):
     """
     Class describing a Peptide query parameters file
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.pqp')
     >>> PQP().sniff(fname)
@@ -1662,7 +1649,6 @@ class PQP(SQlite):
 class OSW(SQlite):
     """
     Class describing OpenSwath output
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.osw')
     >>> OSW().sniff(fname)
@@ -1691,7 +1677,6 @@ class OSW(SQlite):
 class SQmass(SQlite):
     """
     Class describing a Sqmass database
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.sqmass')
     >>> SQmass().sniff(fname)
@@ -1742,7 +1727,6 @@ class DlibSQlite(SQlite):
     Class describing a Proteomics Spectral Library Sqlite database
     DLIBs only have the "entries", "metadata", and "peptidetoprotein" tables populated.
     ELIBs have the rest of the tables populated too, such as "peptidequants" or "peptidescores".
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.dlib')
     >>> DlibSQlite().sniff(fname)
@@ -1778,7 +1762,6 @@ class ElibSQlite(SQlite):
     Class describing a Proteomics Chromatagram Library Sqlite database
     DLIBs only have the "entries", "metadata", and "peptidetoprotein" tables populated.
     ELIBs have the rest of the tables populated too, such as "peptidequants" or "peptidescores".
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.elib')
     >>> ElibSQlite().sniff(fname)
@@ -1821,7 +1804,6 @@ class ElibSQlite(SQlite):
 class IdpDB(SQlite):
     """
     Class describing an IDPicker 3 idpDB (sqlite) database
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.idpdb')
     >>> IdpDB().sniff(fname)
@@ -2002,12 +1984,9 @@ class OxliCountGraph(OxliBinary):
     OxliCountGraph starts with "OXLI" + one byte version number +
     8-bit binary '1'
     Test file generated via::
-
         load-into-counting.py --n_tables 1 --max-tablesize 1 \\
             oxli_countgraph.oxlicg khmer/tests/test-data/100-reads.fq.bz2
-
     using khmer 2.0
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('sequence.csfasta')
     >>> OxliCountGraph().sniff(fname)
@@ -2027,12 +2006,9 @@ class OxliNodeGraph(OxliBinary):
     OxliNodeGraph starts with "OXLI" + one byte version number +
     8-bit binary '2'
     Test file generated via::
-
         load-graph.py --n_tables 1 --max-tablesize 1 oxli_nodegraph.oxling \\
             khmer/tests/test-data/100-reads.fq.bz2
-
     using khmer 2.0
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('sequence.csfasta')
     >>> OxliNodeGraph().sniff(fname)
@@ -2052,13 +2028,10 @@ class OxliTagSet(OxliBinary):
     OxliTagSet starts with "OXLI" + one byte version number +
     8-bit binary '3'
     Test file generated via::
-
         load-graph.py --n_tables 1 --max-tablesize 1 oxli_nodegraph.oxling \\
             khmer/tests/test-data/100-reads.fq.bz2;
         mv oxli_nodegraph.oxling.tagset oxli_tagset.oxlits
-
     using khmer 2.0
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('sequence.csfasta')
     >>> OxliTagSet().sniff(fname)
@@ -2079,7 +2052,6 @@ class OxliStopTags(OxliBinary):
     8-bit binary '4'
     Test file adapted from khmer 2.0's
     "khmer/tests/test-data/goodversion-k32.stoptags"
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('sequence.csfasta')
     >>> OxliStopTags().sniff(fname)
@@ -2099,13 +2071,10 @@ class OxliSubset(OxliBinary):
     OxliSubset starts with "OXLI" + one byte version number +
     8-bit binary '5'
     Test file generated via::
-
         load-graph.py -k 20 example tests/test-data/random-20-a.fa;
         partition-graph.py example;
         mv example.subset.0.pmap oxli_subset.oxliss
-
     using khmer 2.0
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('sequence.csfasta')
     >>> OxliSubset().sniff(fname)
@@ -2125,14 +2094,11 @@ class OxliGraphLabels(OxliBinary):
     OxliGraphLabels starts with "OXLI" + one byte version number +
     8-bit binary '6'
     Test file generated via::
-
         python -c "from khmer import GraphLabels; \\
             gl = GraphLabels(20, 1e7, 4); \\
             gl.consume_fasta_and_tag_with_labels('tests/test-data/test-labels.fa'); \\
             gl.save_labels_and_tags('oxli_graphlabels.oxligl')"
-
     using khmer 2.0
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('sequence.csfasta')
     >>> OxliGraphLabels().sniff(fname)
@@ -2150,7 +2116,6 @@ class OxliGraphLabels(OxliBinary):
 class PostgresqlArchive(CompressedArchive):
     """
     Class describing a Postgresql database packed into a tar archive
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('postgresql_fake.tar.bz2')
     >>> PostgresqlArchive().sniff(fname)
@@ -2197,7 +2162,6 @@ class PostgresqlArchive(CompressedArchive):
 class Fast5Archive(CompressedArchive):
     """
     Class describing a FAST5 archive
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.fast5.tar')
     >>> Fast5Archive().sniff(fname)
@@ -2251,7 +2215,6 @@ class Fast5Archive(CompressedArchive):
 class Fast5ArchiveGz(Fast5Archive):
     """
     Class describing a gzip-compressed FAST5 archive
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.fast5.tar.gz')
     >>> Fast5ArchiveGz().sniff(fname)
@@ -2274,7 +2237,6 @@ class Fast5ArchiveGz(Fast5Archive):
 class Fast5ArchiveBz2(Fast5Archive):
     """
     Class describing a bzip2-compressed FAST5 archive
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test.fast5.tar.bz2')
     >>> Fast5ArchiveBz2().sniff(fname)
@@ -2376,7 +2338,6 @@ class NetCDF(Binary):
 class Dcd(Binary):
     """
     Class describing a dcd file from the CHARMM molecular simulation program
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test_glucose_vacuum.dcd')
     >>> Dcd().sniff(fname)
@@ -2428,7 +2389,6 @@ class Dcd(Binary):
 class Vel(Binary):
     """
     Class describing a velocity file from the CHARMM molecular simulation program
-
     >>> from galaxy.datatypes.sniff import get_test_fname
     >>> fname = get_test_fname('test_charmm.vel')
     >>> Vel().sniff(fname)
