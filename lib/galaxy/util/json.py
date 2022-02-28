@@ -1,16 +1,19 @@
-from __future__ import absolute_import
-
-import collections
 import copy
 import json
 import logging
 import math
 import random
 import string
+from collections.abc import (
+    Iterable,
+    Mapping,
+    Sequence,
+)
 
-from six import iteritems, string_types, text_type
 
-__all__ = ("safe_dumps", "json_fix", "validate_jsonrpc_request", "validate_jsonrpc_response", "jsonrpc_request", "jsonrpc_response")
+from ..util import unicodify
+
+__all__ = ("safe_dumps", "validate_jsonrpc_request", "validate_jsonrpc_response", "jsonrpc_request", "jsonrpc_response")
 
 log = logging.getLogger(__name__)
 
@@ -18,34 +21,23 @@ to_json_string = json.dumps
 from_json_string = json.loads
 
 
-def json_fix(val):
-    if isinstance(val, list):
-        return [json_fix(v) for v in val]
-    elif isinstance(val, dict):
-        return dict([(json_fix(k), json_fix(v)) for (k, v) in iteritems(val)])
-    elif isinstance(val, text_type):
-        return val.encode("utf8")
-    else:
-        return val
-
-
 def swap_inf_nan(val):
     """
     This takes an arbitrary object and preps it for jsonifying safely, templating Inf/NaN.
     """
-    if isinstance(val, string_types):
+    if isinstance(val, str):
         # basestring first, because it's a sequence and would otherwise get caught below.
         return val
-    elif isinstance(val, collections.Sequence):
+    elif isinstance(val, Sequence):
         return [swap_inf_nan(v) for v in val]
-    elif isinstance(val, collections.Mapping):
-        return dict([(swap_inf_nan(k), swap_inf_nan(v)) for (k, v) in iteritems(val)])
+    elif isinstance(val, Mapping):
+        return {swap_inf_nan(k): swap_inf_nan(v) for (k, v) in val.items()}
     elif isinstance(val, float):
         if math.isnan(val):
             return "__NaN__"
-        elif val == float("inf"):
+        elif val == math.inf:
             return "__Infinity__"
-        elif val == float("-inf"):
+        elif val == -math.inf:
             return "__-Infinity__"
         else:
             return val
@@ -61,10 +53,10 @@ def safe_loads(arg):
     """
     try:
         loaded = json.loads(arg)
-        if loaded is not None and not isinstance(loaded, collections.Iterable):
+        if loaded is not None and not isinstance(loaded, Iterable):
             loaded = arg
     except (TypeError, ValueError):
-        loaded = arg
+        loaded = copy.deepcopy(arg)
     return loaded
 
 
@@ -78,7 +70,7 @@ def safe_dumps(*args, **kwargs):
     try:
         dumped = json.dumps(*args, allow_nan=False, **kwargs)
     except ValueError:
-        obj = swap_inf_nan(copy.deepcopy(args[0]))
+        obj = swap_inf_nan(args[0])
         dumped = json.dumps(obj, allow_nan=False, **kwargs)
     if kwargs.get('escape_closing_tags', True):
         return dumped.replace('</', '<\\/')
@@ -106,33 +98,33 @@ def validate_jsonrpc_request(request, regular_methods, notification_methods):
         return False, request, jsonrpc_response(id=None,
                                                 error=dict(code=-32700,
                                                            message='Parse error',
-                                                           data=str(e)))
+                                                           data=unicodify(e)))
     try:
         assert 'jsonrpc' in request, \
             'This server requires JSON-RPC 2.0 and no "jsonrpc" member was sent with the Request object as per the JSON-RPC 2.0 Specification.'
         assert request['jsonrpc'] == '2.0', \
-            'Requested JSON-RPC version "%s" != required version "2.0".' % request['jsonrpc']
+            f"Requested JSON-RPC version \"{request['jsonrpc']}\" != required version \"2.0\"."
         assert 'method' in request, 'No "method" member was sent with the Request object'
     except AssertionError as e:
         return False, request, jsonrpc_response(request=request,
                                                 error=dict(code=-32600,
                                                            message='Invalid Request',
-                                                           data=str(e)))
+                                                           data=unicodify(e)))
     try:
         assert request['method'] in (regular_methods + notification_methods)
-    except AssertionError as e:
+    except AssertionError:
         return False, request, jsonrpc_response(request=request,
                                                 error=dict(code=-32601,
                                                            message='Method not found',
-                                                           data='Valid methods are: %s' % ', '.join(regular_methods + notification_methods)))
+                                                           data=f"Valid methods are: {', '.join(regular_methods + notification_methods)}"))
     try:
         if request['method'] in regular_methods:
-            assert 'id' in request, 'No "id" member was sent with the Request object and the requested method "%s" is not a notification method' % request['method']
+            assert 'id' in request, f"No \"id\" member was sent with the Request object and the requested method \"{request['method']}\" is not a notification method"
     except AssertionError as e:
         return False, request, jsonrpc_response(request=request,
                                                 error=dict(code=-32600,
                                                            message='Invalid Request',
-                                                           data=str(e)))
+                                                           data=unicodify(e)))
     return True, request, None
 
 
@@ -140,8 +132,8 @@ def validate_jsonrpc_response(response, id=None):
     try:
         response = json.loads(response)
     except Exception as e:
-        log.error('Response was not valid JSON: %s' % str(e))
-        log.debug('Response was: %s' % response)
+        log.error('Response was not valid JSON: %s', unicodify(e))
+        log.debug('Response was: %s', response)
         return False, response
     try:
         assert 'jsonrpc' in response, \
@@ -153,15 +145,15 @@ def validate_jsonrpc_response(response, id=None):
                 'The "code" member of the "error" object in the Response is missing or not an integer.'
             assert 'message' in response, \
                 'The "message" member of the "error" object in the Response is missing.'
-    except Exception as e:
-        log.error('Response was not valid JSON-RPC: %s' % str(e))
-        log.debug('Response was: %s' % response)
+    except Exception:
+        log.exception('Response was not valid JSON-RPC')
+        log.debug(f'Response was: {response}')
         return False, response
     if id is not None:
         try:
             assert 'id' in response and response['id'] == id
-        except Exception as e:
-            log.error('The response id "%s" does not match the request id "%s"' % (response['id'], id))
+        except Exception:
+            log.error(f"The response id \"{response['id']}\" does not match the request id \"{id}\"")
             return False, response
     return True, response
 
@@ -174,7 +166,7 @@ def jsonrpc_request(method, params=None, id=None, jsonrpc='2.0'):
     if params:
         request['params'] = params
     if id is not None and id is True:
-        request['id'] = ''.join([random.choice(string.hexdigits) for i in range(16)])
+        request['id'] = ''.join(random.choice(string.hexdigits) for i in range(16))
     elif id is not None:
         request['id'] = id
     return request

@@ -10,15 +10,40 @@ import os
 import shutil
 import sys
 from json import dump, load, loads
+from typing import Dict
 
-from six.moves.urllib.request import urlopen
-
-from galaxy import util
 from galaxy.datatypes import sniff
 from galaxy.datatypes.registry import Registry
 from galaxy.datatypes.upload_util import handle_upload, UploadProblemException
+from galaxy.util import (
+    bunch,
+    is_url,
+    safe_makedirs,
+    unicodify
+)
+from galaxy.util.compression_utils import CompressedFile
 
 assert sys.version_info[:2] >= (2, 7)
+
+
+_file_sources = None
+
+
+def get_file_sources():
+    global _file_sources
+    if _file_sources is None:
+        from galaxy.files import ConfiguredFileSources
+        file_sources = None
+        if os.path.exists("file_sources.json"):
+            file_sources_as_dict = None
+            with open("file_sources.json") as f:
+                file_sources_as_dict = load(f)
+            if file_sources_as_dict is not None:
+                file_sources = ConfiguredFileSources.from_dict(file_sources_as_dict)
+        if file_sources is None:
+            ConfiguredFileSources.from_dict([])
+        _file_sources = file_sources
+    return _file_sources
 
 
 def file_err(msg, dataset):
@@ -36,12 +61,9 @@ def file_err(msg, dataset):
 
 
 def safe_dict(d):
-    """
-    Recursively clone json structure with UTF-8 dictionary keys
-    http://mellowmachines.com/blog/2009/06/exploding-dictionary-with-unicode-keys-as-python-arguments/
-    """
+    """Recursively clone JSON structure with unicode dictionary keys."""
     if isinstance(d, dict):
-        return dict([(k.encode('utf-8'), safe_dict(v)) for k, v in d.items()])
+        return {unicodify(k): safe_dict(v) for k, v in d.items()}
     elif isinstance(d, list):
         return [safe_dict(x) for x in d]
     else:
@@ -56,7 +78,7 @@ def parse_outputs(args):
     return rval
 
 
-def add_file(dataset, registry, output_path):
+def add_file(dataset, registry, output_path: str) -> Dict[str, str]:
     ext = None
     compression_type = None
     line_count = None
@@ -88,7 +110,7 @@ def add_file(dataset, registry, output_path):
 
     # Base on the check_upload_content Galaxy config option and on by default, this enables some
     # security related checks on the uploaded content, but can prevent uploads from working in some cases.
-    check_content = dataset.get('check_content' , True)
+    check_content = dataset.get('check_content', True)
 
     # auto_decompress is a request flag that can be swapped off to prevent Galaxy from automatically
     # decompressing archive files before sniffing.
@@ -100,19 +122,16 @@ def add_file(dataset, registry, output_path):
 
     if dataset.type == 'url':
         try:
-            dataset.path = sniff.stream_url_to_file(dataset.path)
+            dataset.path = sniff.stream_url_to_file(dataset.path, file_sources=get_file_sources())
         except Exception as e:
-            raise UploadProblemException('Unable to fetch %s\n%s' % (dataset.path, str(e)))
+            raise UploadProblemException('Unable to fetch %s\n%s' % (dataset.path, unicodify(e)))
 
     # See if we have an empty file
 
     if not os.path.exists(dataset.path):
         raise UploadProblemException('Uploaded temporary file (%s) does not exist.' % dataset.path)
 
-    if not os.path.getsize(dataset.path) > 0:
-        raise UploadProblemException('The uploaded file is empty')
-
-    stdout, ext, datatype, is_binary, converted_path = handle_upload(
+    stdout, ext, datatype, is_binary, converted_path, _, _ = handle_upload(
         registry=registry,
         path=dataset.path,
         requested_ext=dataset.file_type,
@@ -172,33 +191,81 @@ def add_file(dataset, registry, output_path):
     return info
 
 
-def add_composite_file(dataset, output_path, files_path):
+def add_composite_file(dataset, registry, output_path, files_path):
+    datatype = None
+
+    # Find data type
+    if dataset.file_type is not None:
+        datatype = registry.get_datatype_by_extension(dataset.file_type)
+
+    def to_path(path_or_url):
+        isa_url = is_url(path_or_url)
+        file_sources = get_file_sources()
+        if isa_url or file_sources and file_sources.looks_like_uri(path_or_url):
+            try:
+                temp_name = sniff.stream_url_to_file(path_or_url, file_sources=file_sources)
+            except Exception as e:
+                raise UploadProblemException('Unable to fetch %s\n%s' % (path_or_url, unicodify(e)))
+
+            return temp_name, isa_url
+
+        return path_or_url, isa_url
+
+    def make_files_path():
+        safe_makedirs(files_path)
+
+    def stage_file(name, composite_file_path, is_binary=False):
+        dp = composite_file_path['path']
+        path, isa_url = to_path(dp)
+        if isa_url:
+            dataset.path = path
+            dp = path
+
+        auto_decompress = composite_file_path.get('auto_decompress', True)
+        if auto_decompress and not datatype.composite_type and CompressedFile.can_decompress(dp):
+            # It isn't an explicitly composite datatype, so these are just extra files to attach
+            # as composite data. It'd be better if Galaxy was communicating this to the tool
+            # a little more explicitly so we didn't need to dispatch on the datatype and so we
+            # could attach arbitrary extra composite data to an existing composite datatype if
+            # if need be? Perhaps that would be a mistake though.
+            CompressedFile(dp).extract(files_path)
+        else:
+            tmpdir = output_adjacent_tmpdir(output_path)
+            tmp_prefix = 'data_id_%s_convert_' % dataset.dataset_id
+            sniff.handle_composite_file(
+                datatype,
+                dp,
+                files_path,
+                name,
+                is_binary,
+                tmpdir,
+                tmp_prefix,
+                composite_file_path,
+            )
+
+    # Do we have pre-defined composite files from the datatype definition.
     if dataset.composite_files:
-        os.mkdir(files_path)
+        make_files_path()
         for name, value in dataset.composite_files.items():
-            value = util.bunch.Bunch(**value)
+            value = bunch.Bunch(**value)
+            if value.name not in dataset.composite_file_paths:
+                raise UploadProblemException("Failed to find file_path %s in %s" % (value.name, dataset.composite_file_paths))
             if dataset.composite_file_paths[value.name] is None and not value.optional:
                 raise UploadProblemException('A required composite data file was not provided (%s)' % name)
             elif dataset.composite_file_paths[value.name] is not None:
-                dp = dataset.composite_file_paths[value.name]['path']
-                isurl = dp.find('://') != -1  # todo fixme
-                if isurl:
-                    try:
-                        temp_name = sniff.stream_to_file(urlopen(dp), prefix='url_paste')
-                    except Exception as e:
-                        raise UploadProblemException('Unable to fetch %s\n%s' % (dp, str(e)))
-                    dataset.path = temp_name
-                    dp = temp_name
-                if not value.is_binary:
-                    tmpdir = output_adjacent_tmpdir(output_path)
-                    tmp_prefix = 'data_id_%s_convert_' % dataset.dataset_id
-                    if dataset.composite_file_paths[value.name].get('space_to_tab', value.space_to_tab):
-                        sniff.convert_newlines_sep2tabs(dp, tmp_dir=tmpdir, tmp_prefix=tmp_prefix)
-                    else:
-                        sniff.convert_newlines(dp, tmp_dir=tmpdir, tmp_prefix=tmp_prefix)
-                shutil.move(dp, os.path.join(files_path, name))
+                composite_file_path = dataset.composite_file_paths[value.name]
+                stage_file(name, composite_file_path, value.is_binary)
+
+    # Do we have ad-hoc user supplied composite files.
+    elif dataset.composite_file_paths:
+        make_files_path()
+        for key, composite_file in dataset.composite_file_paths.items():
+            stage_file(key, composite_file)  # TODO: replace these defaults
+
     # Move the dataset to its "real" path
-    shutil.move(dataset.primary_file, output_path)
+    primary_file_path, _ = to_path(dataset.primary_file)
+    shutil.move(primary_file_path, output_path)
+
     # Write the job info
     return dict(type='dataset',
                 dataset_id=dataset.dataset_id,
@@ -232,7 +299,7 @@ def __write_job_metadata(metadata):
 def output_adjacent_tmpdir(output_path):
     """ For temp files that will ultimately be moved to output_path anyway
     just create the file directly in output_path's directory so shutil.move
-    will work optimially.
+    will work optimally.
     """
     return os.path.dirname(output_path)
 
@@ -255,7 +322,7 @@ def __main__():
 
     metadata = []
     for dataset in datasets:
-        dataset = util.bunch.Bunch(**safe_dict(dataset))
+        dataset = bunch.Bunch(**safe_dict(dataset))
         try:
             output_path = output_paths[int(dataset.dataset_id)][0]
         except Exception:
@@ -264,11 +331,11 @@ def __main__():
         try:
             if dataset.type == 'composite':
                 files_path = output_paths[int(dataset.dataset_id)][1]
-                metadata.append(add_composite_file(dataset, output_path, files_path))
+                metadata.append(add_composite_file(dataset, registry, output_path, files_path))
             else:
                 metadata.append(add_file(dataset, registry, output_path))
         except UploadProblemException as e:
-            metadata.append(file_err(e.message, dataset))
+            metadata.append(file_err(unicodify(e), dataset))
     __write_job_metadata(metadata)
 
 

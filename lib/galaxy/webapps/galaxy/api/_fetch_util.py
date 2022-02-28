@@ -8,7 +8,14 @@ from galaxy.actions.library import (
 from galaxy.exceptions import (
     RequestParameterInvalidException
 )
-from galaxy.tools.actions.upload_common import validate_url
+from galaxy.model.store.discover import (
+    get_required_item,
+    replace_request_syntax_sugar,
+)
+from galaxy.tools.actions.upload_common import (
+    validate_datatype_extension,
+    validate_url,
+)
 from galaxy.util import (
     relpath,
 )
@@ -35,8 +42,8 @@ def validate_and_normalize_targets(trans, payload):
     targets = payload.get("targets", [])
 
     for target in targets:
-        destination = _get_required_item(target, "destination", "Each target must specify a 'destination'")
-        destination_type = _get_required_item(destination, "type", "Each target destination must specify a 'type'")
+        destination = get_required_item(target, "destination", "Each target must specify a 'destination'")
+        destination_type = get_required_item(destination, "type", "Each target destination must specify a 'type'")
         if "object_id" in destination:
             raise RequestParameterInvalidException("object_id not allowed to appear in the request.")
 
@@ -45,7 +52,7 @@ def validate_and_normalize_targets(trans, payload):
             msg = template % (destination_type, VALID_DESTINATION_TYPES)
             raise RequestParameterInvalidException(msg)
         if destination_type == "library":
-            library_name = _get_required_item(destination, "name", "Must specify a library name")
+            library_name = get_required_item(destination, "name", "Must specify a library name")
             description = destination.get("description", "")
             synopsis = destination.get("synopsis", "")
             library = trans.app.library_manager.create(
@@ -69,11 +76,18 @@ def validate_and_normalize_targets(trans, payload):
         if "object_id" in item:
             raise RequestParameterInvalidException("object_id not allowed to appear in the request.")
 
+        validate_datatype_extension(datatypes_registry=trans.app.datatypes_registry, ext=item.get('ext'))
+
         # Normalize file:// URLs into paths.
-        if item["src"] == "url" and item["url"].startswith("file://"):
-            item["src"] = "path"
-            item["path"] = item["url"][len("file://"):]
-            del item["path"]
+        if item["src"] == "url":
+            if "url" not in item:
+                raise RequestParameterInvalidException("src specified as 'url' but 'url' not specified")
+
+            url = item["url"]
+            if url.startswith("file://"):
+                item["src"] = "path"
+                item["path"] = url[len("file://"):]
+                del item["url"]
 
         if "in_place" in item:
             raise RequestParameterInvalidException("in_place cannot be set in the upload request")
@@ -153,10 +167,13 @@ def validate_and_normalize_targets(trans, payload):
                     looks_like_url = True
                     break
 
-            if not looks_like_url:
-                raise RequestParameterInvalidException("Invalid URL [%s] found in src definition." % url)
+            if not looks_like_url and trans.app.file_sources.looks_like_uri(url):
+                looks_like_url = True
 
-            validate_url(url, trans.app.config.fetch_url_whitelist_ips)
+            if not looks_like_url:
+                raise RequestParameterInvalidException(f"Invalid URL [{url}] found in src definition.")
+
+            validate_url(url, trans.app.config.fetch_url_allowlist_ips)
             item["in_place"] = run_as_real_user
         elif src == "files":
             item["in_place"] = run_as_real_user
@@ -167,43 +184,20 @@ def validate_and_normalize_targets(trans, payload):
         if "purge_source" not in item:
             item["purge_source"] = False
 
-    _replace_request_syntax_sugar(targets)
+    replace_request_syntax_sugar(targets)
     _for_each_src(check_src, targets)
-
-
-def _replace_request_syntax_sugar(obj):
-    # For data libraries and hdas to make sense - allow items and items_from in place of elements
-    # and elements_from. This is destructive and modifies the supplied request.
-    if isinstance(obj, list):
-        for el in obj:
-            _replace_request_syntax_sugar(el)
-    elif isinstance(obj, dict):
-        if "items" in obj:
-            obj["elements"] = obj["items"]
-            del obj["items"]
-        if "items_from" in obj:
-            obj["elements_from"] = obj["items_from"]
-            del obj["items_from"]
-        for value in obj.values():
-            _replace_request_syntax_sugar(value)
 
 
 def _handle_invalid_link_data_only_type(item):
     link_data_only = item.get("link_data_only", False)
     if link_data_only:
-        raise RequestParameterInvalidException("link_data_only is invalid for src type [%s]" % item.get("src"))
+        raise RequestParameterInvalidException(f"link_data_only is invalid for src type [{item.get('src')}]")
 
 
 def _handle_invalid_link_data_only_elements_type(item):
     link_data_only = item.get("link_data_only", False)
     if link_data_only and item.get("elements_from", False) in ELEMENTS_FROM_TRANSIENT_TYPES:
-        raise RequestParameterInvalidException("link_data_only is invalid for derived elements from [%s]" % item.get("elements_from"))
-
-
-def _get_required_item(from_dict, key, message):
-    if key not in from_dict:
-        raise RequestParameterInvalidException(message)
-    return from_dict[key]
+        raise RequestParameterInvalidException(f"link_data_only is invalid for derived elements from [{item.get('elements_from')}]")
 
 
 def _for_each_src(f, obj):
@@ -213,5 +207,5 @@ def _for_each_src(f, obj):
     if isinstance(obj, dict):
         if "src" in obj:
             f(obj)
-        for key, value in obj.items():
+        for value in obj.values():
             _for_each_src(f, value)

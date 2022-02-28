@@ -1,5 +1,4 @@
 """The module describes the ``influxdb`` error plugin plugin."""
-from __future__ import absolute_import
 
 import datetime
 import logging
@@ -11,7 +10,7 @@ except ImportError:
     influxdb = None
 
 from galaxy.util import unicodify
-from ..plugins import ErrorPlugin
+from . import ErrorPlugin
 
 log = logging.getLogger(__name__)
 

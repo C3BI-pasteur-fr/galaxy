@@ -1,4 +1,4 @@
-import os
+import os, stat
 import logging
 from xml.etree import ElementTree as ET
 
@@ -26,7 +26,7 @@ def module_prepare(app, command_line, job, working_directory):
             modulefile = file( module_path, "w" )
             modulefile.write( script )
             modulefile.close()
-            os.chmod( module_path, 0750 )
+            os.chmod( module_path, stat.S_IRWXU + stat.S_IRGRP + stat.S_IXGRP )
             dependency_module_commands = [". " + module_path]
         else:
             dependency_module_commands = None

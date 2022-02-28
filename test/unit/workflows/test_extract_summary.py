@@ -30,8 +30,8 @@ class TestWorkflowExtractSummary(unittest.TestCase):
         job_dict, warnings = extract.summarize(trans=self.trans)
         assert len(job_dict) == 2
         assert not warnings
-        self.assertEquals(job_dict[hda1.job], [('out1', hda1), ('out2', hda2)])
-        self.assertEquals(job_dict[hda3.job], [('out3', hda3)])
+        self.assertEqual(job_dict[hda1.job], [('out1', hda1), ('out2', hda2)])
+        self.assertEqual(job_dict[hda3.job], [('out3', hda3)])
 
     def test_finds_original_job_if_copied(self):
         hda = MockHda()
@@ -43,7 +43,7 @@ class TestWorkflowExtractSummary(unittest.TestCase):
         job_dict, warnings = extract.summarize(trans=self.trans)
         assert not warnings
         assert len(job_dict) == 1
-        self.assertEquals(job_dict[hda.job], [('out1', derived_hda_2)])
+        self.assertEqual(job_dict[hda.job], [('out1', derived_hda_2)])
 
     def test_fake_job_hda(self):
         """ Fakes job if creating_job_associations is empty.
@@ -53,10 +53,30 @@ class TestWorkflowExtractSummary(unittest.TestCase):
         job_dict, warnings = extract.summarize(trans=self.trans)
         assert not warnings
         assert len(job_dict) == 1
-        fake_job = job_dict.keys()[0]
+        fake_job = next(iter(job_dict.keys()))
         assert fake_job.id.startswith("fake_")
-        datasets = job_dict.values()[0]
+        datasets = next(iter(job_dict.values()))
         assert datasets == [(None, hda)]
+
+    def test_fake_job_hda_name_guess(self):
+        hda_from_history = MockHda(job=UNDEFINED_JOB)
+        hda_from_history.copied_from_history_dataset_association = MockHda(job=UNDEFINED_JOB)
+        self.history.active_datasets.append(hda_from_history)
+        job_dict, warnings = extract.summarize(trans=self.trans)
+        assert not warnings
+        assert len(job_dict) == 1
+        fake_job = next(iter(job_dict.keys()))
+        assert "History" in fake_job.name
+        self.history.active_datasets.remove(hda_from_history)
+
+        hda_from_library = MockHda(job=UNDEFINED_JOB)
+        hda_from_library.copied_from_library_dataset_dataset_association = MockHda(job=UNDEFINED_JOB)
+        self.history.active_datasets.append(hda_from_library)
+        job_dict, warnings = extract.summarize(trans=self.trans)
+        assert not warnings
+        assert len(job_dict) == 1
+        fake_job = next(iter(job_dict.keys()))
+        assert "Library" in fake_job.name
 
     def test_fake_job_hdca(self):
         hdca = MockHdca()
@@ -64,10 +84,10 @@ class TestWorkflowExtractSummary(unittest.TestCase):
         job_dict, warnings = extract.summarize(trans=self.trans)
         assert not warnings
         assert len(job_dict) == 1
-        fake_job = job_dict.keys()[0]
+        fake_job = next(iter(job_dict.keys()))
         assert fake_job.id.startswith("fake_")
         assert fake_job.is_fake
-        content_instances = job_dict.values()[0]
+        content_instances = next(iter(job_dict.values()))
         assert content_instances == [(None, hdca)]
 
     def test_implicit_map_job_hdca(self):
@@ -77,7 +97,7 @@ class TestWorkflowExtractSummary(unittest.TestCase):
         job_dict, warnings = extract.summarize(trans=self.trans)
         assert not warnings
         assert len(job_dict) == 1
-        job = job_dict.keys()[0]
+        job = next(iter(job_dict.keys()))
         assert job is creating_job
 
     def test_warns_and_skips_datasets_if_not_finished(self):
@@ -88,7 +108,15 @@ class TestWorkflowExtractSummary(unittest.TestCase):
         assert len(job_dict) == 0
 
 
-class MockHistory(object):
+class MockJobToOutputDatasetAssociation:
+    job = None
+
+    def __init__(self, name, dataset):
+        self.name = name
+        self.dataset = dataset
+
+
+class MockHistory:
 
     def __init__(self):
         self.active_datasets = []
@@ -98,7 +126,7 @@ class MockHistory(object):
         return self.active_datasets
 
 
-class MockTrans(object):
+class MockTrans:
 
     def __init__(self, history):
         self.history = history
@@ -107,25 +135,27 @@ class MockTrans(object):
         return self.history
 
 
-class MockHda(object):
+class MockHda:
 
     def __init__(self, state='ok', output_name='out1', job=None):
+        self.hid = 1
         self.id = 123
         self.state = state
         self.copied_from_history_dataset_association = None
+        self.copied_from_library_dataset_dataset_association = None
         self.history_content_type = "dataset"
         if job is not UNDEFINED_JOB:
             if not job:
                 job = model.Job()
             self.job = job
-            assoc = model.JobToOutputDatasetAssociation(output_name, self)
+            assoc = MockJobToOutputDatasetAssociation(output_name, self)
             assoc.job = job
             self.creating_job_associations = [assoc]
         else:
             self.creating_job_associations = []
 
 
-class MockHdca(object):
+class MockHdca:
 
     def __init__(self, implicit_output_name=None, job=None, hid=1):
         self.id = 124
@@ -151,4 +181,3 @@ class MockHdca(object):
         element.dataset_instance.creating_job_associations = [
             creating,
         ]
-        self.collection.elements = [element]

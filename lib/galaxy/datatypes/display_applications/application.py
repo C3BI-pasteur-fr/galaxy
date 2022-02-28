@@ -1,17 +1,13 @@
 # Contains objects for using external display applications
 import logging
 from copy import deepcopy
-
-from six import string_types
-from six.moves.urllib.parse import quote_plus
+from urllib.parse import quote_plus
 
 from galaxy.util import (
     parse_xml,
     string_as_bool
 )
-from galaxy.util.odict import odict
 from galaxy.util.template import fill_template
-from galaxy.web import url_for
 from .parameters import (
     DEFAULT_DATASET_NAME,
     DisplayApplicationDataParameter,
@@ -21,11 +17,15 @@ from .util import encode_dataset_user
 
 log = logging.getLogger(__name__)
 
-# Any basic functions that we want to provide as a basic part of parameter dict should be added to this dict
-BASE_PARAMS = {'qp': quote_plus, 'url_for': url_for}
+
+def quote_plus_string(value, **kwds):
+    # Simple helper to make sure value is a string when trying to quote
+    # Object passed in might not be a bare string/bytes, if is e.g., a template result
+    # Prevents e.g. issue of "quote_from_bytes() expected bytes"
+    return quote_plus(str(value), **kwds)
 
 
-class DisplayApplicationLink(object):
+class DisplayApplicationLink:
     @classmethod
     def from_elem(cls, elem, display_application, other_values=None):
         rval = DisplayApplicationLink(display_application)
@@ -38,14 +38,14 @@ class DisplayApplicationLink(object):
         rval.filters = elem.findall('filter')
         for param_elem in elem.findall('param'):
             param = DisplayApplicationParameter.from_elem(param_elem, rval)
-            assert param, 'Unable to load parameter from element: %s' % param_elem
+            assert param, f'Unable to load parameter from element: {param_elem}'
             rval.parameters[param.name] = param
             rval.url_param_name_map[param.url] = param.name
         return rval
 
     def __init__(self, display_application):
         self.display_application = display_application
-        self.parameters = odict()  # parameters are populated in order, allowing lower listed ones to have values of higher listed ones
+        self.parameters = {}
         self.url_param_name_map = {}
         self.url = None
         self.id = None
@@ -53,20 +53,21 @@ class DisplayApplicationLink(object):
 
     def get_display_url(self, data, trans):
         dataset_hash, user_hash = encode_dataset_user(trans, data, None)
-        return url_for(controller='dataset',
-                       action="display_application",
-                       dataset_id=dataset_hash,
-                       user_id=user_hash,
-                       app_name=quote_plus(self.display_application.id),
-                       link_name=quote_plus(self.id),
-                       app_action=None)
+        return trans.app.url_for(controller='dataset',
+                                 action="display_application",
+                                 dataset_id=dataset_hash,
+                                 user_id=user_hash,
+                                 app_name=quote_plus(self.display_application.id),
+                                 link_name=quote_plus(self.id),
+                                 app_action=None)
 
     def get_inital_values(self, data, trans):
         if self.other_values:
-            rval = odict(self.other_values)
+            rval = dict(self.other_values)
         else:
-            rval = odict()
+            rval = {}
         rval.update({'BASE_URL': trans.request.base, 'APP': trans.app})  # trans automatically appears as a response, need to add properties of trans that we want here
+        BASE_PARAMS = {'qp': quote_plus_string, 'url_for': trans.app.url_for}
         for key, value in BASE_PARAMS.items():  # add helper functions/variables
             rval[key] = value
         rval[DEFAULT_DATASET_NAME] = data  # always have the display dataset name available
@@ -78,7 +79,7 @@ class DisplayApplicationLink(object):
         other_values['USER_HASH'] = user_hash
         ready = True
         for name, param in self.parameters.items():
-            assert name not in other_values, "The display parameter '%s' has been defined more than once." % name
+            assert name not in other_values, f"The display parameter '{name}' has been defined more than once."
             if param.ready(other_values):
                 if name in app_kwds and param.allow_override:
                     other_values[name] = app_kwds[name]
@@ -100,7 +101,7 @@ class DisplayApplicationLink(object):
         return True
 
 
-class DynamicDisplayApplicationBuilder(object):
+class DynamicDisplayApplicationBuilder:
 
     def __init__(self, elem, display_application, build_sites):
         filename = None
@@ -113,7 +114,7 @@ class DynamicDisplayApplicationBuilder(object):
             data_table_name = elem.get('from_data_table', None)
             if data_table_name:
                 data_table = display_application.app.tool_data_tables.get(data_table_name, None)
-                assert data_table is not None, 'Unable to find data table named "%s".' % data_table_name
+                assert data_table is not None, f'Unable to find data table named "{data_table_name}".'
 
         assert filename is not None or data_table is not None, 'Filename or data Table is required for dynamic_links.'
         skip_startswith = elem.get('skip_startswith', None)
@@ -166,7 +167,7 @@ class DynamicDisplayApplicationBuilder(object):
             display_application.add_data_table_watch(data_table.name, version)
         links = []
         for line in data_iter:
-            if isinstance(line, string_types):
+            if isinstance(line, str):
                 if not skip_startswith or not line.startswith(skip_startswith):
                     line = line.rstrip('\n\r')
                     if not line:
@@ -189,14 +190,14 @@ class DynamicDisplayApplicationBuilder(object):
                 # now populate
                 links.append(DisplayApplicationLink.from_elem(new_elem, display_application, other_values=dynamic_values))
             else:
-                log.warning('Invalid dynamic display application link specified in %s: "%s"' % (filename, line))
+                log.warning(f'Invalid dynamic display application link specified in {filename}: "{line}"')
         self.links = links
 
     def __iter__(self):
         return iter(self.links)
 
 
-class PopulatedDisplayApplicationLink(object):
+class PopulatedDisplayApplicationLink:
     def __init__(self, display_application_link, data, dataset_hash, user_hash, trans, app_kwds):
         self.link = display_application_link
         self.data = data
@@ -253,10 +254,14 @@ class PopulatedDisplayApplicationLink(object):
         for name, parameter in self.link.parameters.items():
             if parameter.build_url(self.parameters) == url:
                 return name
-        raise ValueError("Unknown URL parameter name provided: %s" % url)
+        raise ValueError(f"Unknown URL parameter name provided: {url}")
+
+    @property
+    def allow_cors(self):
+        return self.link.allow_cors
 
 
-class DisplayApplication(object):
+class DisplayApplication:
     @classmethod
     def from_file(cls, filename, app):
         return cls.from_elem(parse_xml(filename).getroot(), app, filename=filename)
@@ -283,7 +288,7 @@ class DisplayApplication(object):
         if version is None:
             version = "1.0.0"
         self.version = version
-        self.links = odict()
+        self.links = {}
         self._filename = filename
         self._elem = elem
         self._data_table_versions = {}
@@ -319,7 +324,7 @@ class DisplayApplication(object):
         elif self._elem:
             elem = self._elem
         else:
-            raise Exception("Unable to reload DisplayApplication %s." % (self.name))
+            raise Exception(f"Unable to reload DisplayApplication {self.name}.")
         # All toolshed-specific attributes added by e.g the registry will remain
         attr_dict = self._get_attributes_from_elem(elem)
         # We will not allow changing the id at this time (we'll need to fix several mappings upstream to handle this case)

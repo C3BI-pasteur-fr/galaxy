@@ -1,4 +1,3 @@
-import collections
 import logging
 from datetime import timedelta
 
@@ -11,7 +10,7 @@ from galaxy.util import (
     restore_text,
     unicodify
 )
-from galaxy.web.base.controller import BaseUIController, web
+from galaxy.webapps.base.controller import BaseUIController, web
 
 
 log = logging.getLogger(__name__)
@@ -32,9 +31,9 @@ def int_to_octet(size):
         size /= 1000.
         no_unit += 1
     try:
-        return "%.2f %s" % (size, units[no_unit])
+        return f"{size:.2f} {units[no_unit]}"
     except IndexError:
-        return "%.0f %s" % (size * ((no_unit - len(units) + 1) * 1000.), units[-1])
+        return f"{size * ((no_unit - len(units) + 1) * 1000.0):.0f} {units[-1]}"
 
 
 class Tools(BaseUIController):
@@ -50,18 +49,18 @@ class Tools(BaseUIController):
         if len(splited) == 2:
             returned = "%s %dH" % (splited[0], int(splited[1].split(':')[0]))
             if colored:
-                return '<font color="red">' + returned + '</font>'
+                return f"<font color=\"red\">{returned}</font>"
             return returned
         else:
-            splited = tuple([float(_) for _ in str(date).split(':')])
+            splited = tuple(float(_) for _ in str(date).split(':'))
             if splited[0]:
                 returned = '%d h. %d min.' % splited[:2]
                 if colored:
-                    return '<font color="orange">' + returned + '</font>'
+                    return f"<font color=\"orange\">{returned}</font>"
                 return returned
             if splited[1]:
                 return "%d min. %d sec." % splited[1:3]
-            return "%.1f sec." % splited[2]
+            return f"{splited[2]:.1f} sec."
 
     @web.expose
     def tools_and_job_state(self, trans, **kwd):
@@ -85,7 +84,7 @@ class Tools(BaseUIController):
             lambda v: tools_and_jobs_ok.get(v, 0),
             lambda v: tools_and_jobs_error.get(v, 0))
 
-        data = collections.OrderedDict()
+        data = {}
 
         # select count(id), tool_id from job where state='ok' group by tool_id;
         tools_and_jobs_ok = sa.select((galaxy.model.Job.table.c.tool_id .label('tool'),
@@ -101,8 +100,8 @@ class Tools(BaseUIController):
                                          whereclause=(galaxy.model.Job.table.c.state == 'error'),
                                          group_by=['tool'])
 
-        tools_and_jobs_ok = dict(list(tools_and_jobs_ok.execute()))
-        tools_and_jobs_error = dict(list(tools_and_jobs_error.execute()))
+        tools_and_jobs_ok = dict(list(trans.sa_session.execute(tools_and_jobs_ok)))
+        tools_and_jobs_error = dict(list(trans.sa_session.execute(tools_and_jobs_error)))
 
         # select each job name one time
         tools = list(set(tools_and_jobs_ok.keys()) | set(tools_and_jobs_error.keys()))
@@ -139,7 +138,7 @@ class Tools(BaseUIController):
         if tool is None:
             raise TypeError("Tool can't be None")
 
-        data = collections.OrderedDict()
+        data = {}
 
         # select count(id), create_time from job where state='ok' and tool_id=$tool group by date;
         date_and_jobs_ok = sa.select((sa.func.date(galaxy.model.Job.table.c.create_time).label('date'),
@@ -155,8 +154,8 @@ class Tools(BaseUIController):
                                         whereclause=and_(galaxy.model.Job.table.c.state == 'error', galaxy.model.Job.table.c.tool_id == tool),
                                         group_by=['date'])
 
-        date_and_jobs_ok = dict(list(date_and_jobs_ok.execute()))
-        date_and_jobs_error = dict(list(date_and_jobs_error.execute()))
+        date_and_jobs_ok = dict(list(trans.sa_session.execute(date_and_jobs_ok)))
+        date_and_jobs_error = dict(list(trans.sa_session.execute(date_and_jobs_error)))
 
         # select each date
         dates = list(set(date_and_jobs_ok.keys()) | set(date_and_jobs_error.keys()))
@@ -194,7 +193,7 @@ class Tools(BaseUIController):
         color = True if kwd.get("color", '') == "True" else False
 
         data = {}
-        ordered_data = collections.OrderedDict()
+        ordered_data = {}
 
         sort_keys = (
             lambda v: v.lower(),
@@ -208,7 +207,7 @@ class Tools(BaseUIController):
                                 galaxy.model.Job.table.c.update_time - galaxy.model.Job.table.c.create_time),
                                from_obj=[galaxy.model.Job.table])
 
-        jobs_times = [(name, (create, update, time)) for name, create, update, time in jobs_times.execute()]
+        jobs_times = [(name, (create, update, time)) for name, create, update, time in trans.sa_session.execute(jobs_times)]
         for tool, attr in jobs_times:
             if tool not in data:
                 data[tool] = {"last": [(attr[1], attr[0])], "avg": [attr[2]]}
@@ -260,7 +259,7 @@ class Tools(BaseUIController):
         if tool is None:
             raise ValueError("Tool can't be None")
 
-        ordered_data = collections.OrderedDict()
+        ordered_data = {}
         sort_keys = [(lambda v, i=i: v[i]) for i in range(4)]
 
         jobs_times = sa.select((sa.func.date_trunc('month', galaxy.model.Job.table.c.create_time).label('date'),
@@ -271,7 +270,7 @@ class Tools(BaseUIController):
                                whereclause=galaxy.model.Job.table.c.tool_id == tool,
                                group_by=['date'])
 
-        months = list(jobs_times.execute())
+        months = list(trans.sa_session.execute(jobs_times.execute))
         months.sort(key=sort_keys[sort_by], reverse=reverse)
         if user_cutoff:
             months = months[:user_cutoff]
@@ -301,11 +300,22 @@ class Tools(BaseUIController):
 
         if tool_name is None:
             raise ValueError("Tool can't be none")
-        tool_errors = [[unicodify(a), b] for a, b in
-                       sa.select((galaxy.model.Job.table.c.stderr, galaxy.model.Job.table.c.create_time),
-                        from_obj=[galaxy.model.Job.table],
-                        whereclause=and_(galaxy.model.Job.table.c.tool_id == tool_name,
-                                         galaxy.model.Job.table.c.state == 'error')).execute()]
+        tool_errors = [
+            [unicodify(a), b]
+            for a, b in trans.sa_session.execute(
+                sa.select(
+                    (
+                        galaxy.model.Job.table.c.tool_stderr,
+                        galaxy.model.Job.table.c.create_time,
+                    ),
+                    from_obj=[galaxy.model.Job.table],
+                    whereclause=and_(
+                        galaxy.model.Job.table.c.tool_id == tool_name,
+                        galaxy.model.Job.table.c.state == "error",
+                    ),
+                )
+            )
+        ]
 
         counter = {}
         for error in tool_errors:
@@ -314,7 +324,7 @@ class Tools(BaseUIController):
             else:
                 counter[error[0]] = [1, error[1]]
 
-        data = collections.OrderedDict()
+        data = {}
         keys = list(counter.keys())
         if cutoff:
             keys = keys[:cutoff]
@@ -322,7 +332,7 @@ class Tools(BaseUIController):
 
         spaces = [' ', '\t', '    ']
         for key in keys:
-            new_key = '</br>'.join([_ for _ in key.split('\n') if _ and _ not in spaces])
+            new_key = '</br>'.join(_ for _ in key.split('\n') if _ and _ not in spaces)
             if len(new_key) >= 100:
                 to_replace = []
                 words = key.split('\n')
@@ -332,13 +342,13 @@ class Tools(BaseUIController):
                     if words.count(word) > 1:
                         to_replace.append(word)
                 for word in to_replace:
-                    sentence = ("</br>" + word) * 2
+                    sentence = f"</br>{word}" * 2
                     count = 2
-                    while sentence + "</br>" + word in new_key:
-                        sentence += "</br>" + word
+                    while f"{sentence}</br>{word}" in new_key:
+                        sentence += f"</br>{word}"
                         count += 1
                     if sentence in new_key:
-                        new_key = new_key.replace(sentence, '</br>' + word + " [this line in %d times]" % (count))
+                        new_key = new_key.replace(sentence, f"</br>{word}{' [this line in %d times]' % count}")
             data[new_key] = counter[key]
 
         return trans.fill_template("/webapps/reports/tool_error_messages.mako",

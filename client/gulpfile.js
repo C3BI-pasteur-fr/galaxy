@@ -1,85 +1,69 @@
-var path = require("path");
-var fs = require("fs");
-var del = require("del");
-var _ = require("underscore");
+const path = require("path");
+const fs = require("fs");
+const del = require("del");
+const { src, dest, series, parallel, watch } = require("gulp");
+const child_process = require("child_process");
+const glob = require("glob");
 
-var gulp = require("gulp");
-var babel = require("gulp-babel");
-var sourcemaps = require("gulp-sourcemaps");
-var uglify = require("gulp-uglify");
-var beautify = require("gulp-beautify");
-var gulpif = require("gulp-if");
-var cached = require("gulp-cached");
-var plumber = require("gulp-plumber");
-var sass = require("gulp-sass");
+/*
+ * We'll want a flexible glob down the road, but for now there are no
+ * un-built visualizations in the repository; for performance and
+ * simplicity just add them one at a time until we upgrade older viz's.
+ */
+const STATIC_PLUGIN_BUILD_IDS = [
+    "annotate_image",
+    "chiraviz",
+    "cytoscape",
+    "drawrna",
+    "editor",
+    "example",
+    "heatmap/heatmap_default",
+    "hyphyvision",
+    "jqplot/jqplot_bar",
+    "media_player",
+    "mvpapp",
+    "ngl",
+    "nvd3/nvd3_bar",
+    "openlayers",
+    "openseadragon",
+    "pv",
+    "nora",
+    "venn",
+];
 
-var paths = {
+const DIST_PLUGIN_BUILD_IDS = ["new_user"];
+
+const PLUGIN_BUILD_IDS = Array.prototype.concat(DIST_PLUGIN_BUILD_IDS, STATIC_PLUGIN_BUILD_IDS);
+
+const paths = {
     node_modules: "./node_modules",
-    scripts: [
-        "galaxy/scripts/**/*.js",
-        "!galaxy/scripts/qunit/**/*",
-        "!galaxy/scripts/apps/**/*",
-        "!galaxy/scripts/libs/**/*"
+    plugin_dirs: [
+        "../config/plugins/{visualizations,interactive_environments,welcome_page}/*/static/**/*",
+        "../config/plugins/{visualizations,interactive_environments,welcome_page}/*/*/static/**/*",
     ],
-    style_sources: ["galaxy/style/scss/**/*.scss"],
-    style: [
-        "galaxy/style/scss/base.scss",
-        "galaxy/style/scss/autocomplete_tagging.scss",
-        "galaxy/style/scss/embed_item.scss",
-        "galaxy/style/scss/library.scss",
-        "galaxy/style/scss/trackster.scss",
-        "galaxy/style/scss/circster.scss",
-        "galaxy/style/scss/reports.scss"
+    plugin_build_modules: [
+        `../config/plugins/{visualizations,welcome_page}/{${PLUGIN_BUILD_IDS.join(",")}}/package.json`,
     ],
-    plugin_dirs: ["../config/plugins/**/static/**/*", "!../config/plugins/**/node_modules{,/**}"],
     lib_locs: {
         // This is a stepping stone towards having all this staged
         // automatically.  Eventually, this dictionary and staging step will
         // not be necessary.
         backbone: ["backbone.js", "backbone.js"],
-        "bootstrap-tour": ["build/js/bootstrap-tour.js", "bootstrap-tour.js"],
-        d3: ["d3.js", "d3.js"],
-        "bibtex-parse-js": ["bibtexParse.js", "bibtexParse.js"],
+        "@galaxyproject/bootstrap-tour": ["build/js/bootstrap-tour.js", "bootstrap-tour.js"],
         jquery: ["dist/jquery.js", "jquery/jquery.js"],
-        "jquery.complexify": ["jquery.complexify.js", "jquery/jquery.complexify.js"],
         "jquery.cookie": ["jquery.cookie.js", "jquery/jquery.cookie.js"],
         "jquery-migrate": ["dist/jquery-migrate.js", "jquery/jquery.migrate.js"],
         "jquery-mousewheel": ["jquery.mousewheel.js", "jquery/jquery.mousewheel.js"],
-        "raven-js": ["dist/raven.js", "raven.js"],
         requirejs: ["require.js", "require.js"],
-        underscore: ["underscore.js", "underscore.js"]
+        underscore: ["underscore.js", "underscore.js"],
     },
-    libs: ["galaxy/scripts/libs/**/*.js"]
+    libs: ["src/libs/**/*.js"],
 };
 
-var dev_mode = function() {
-    return process.env.NODE_ENV != "production";
-};
-
-var source_maps = function() {
-    return dev_mode() || process.env.GXY_BUILD_SOURCEMAPS !== undefined;
-};
-
-gulp.task("scripts", function() {
-    return gulp
-        .src(paths.scripts)
-        .pipe(plumber())
-        .pipe(cached("scripts"))
-        .pipe(gulpif(source_maps, sourcemaps.init()))
-        .pipe(
-            babel({
-                plugins: ["transform-es2015-modules-amd"]
-            })
-        )
-        .pipe(gulpif(dev_mode, beautify(), uglify()))
-        .pipe(gulpif(source_maps, sourcemaps.write("../maps/")))
-        .pipe(gulp.dest("../static/scripts/"));
-});
-
-gulp.task("stage-libs", function(callback) {
-    _.each(_.keys(paths.lib_locs), function(lib) {
+function stageLibs(callback) {
+    Object.keys(paths.lib_locs).forEach((lib) => {
         var p1 = path.resolve(path.join(paths.node_modules, lib, paths.lib_locs[lib][0]));
-        var p2 = path.resolve(path.join("galaxy", "scripts", "libs", paths.lib_locs[lib][1]));
+        var p2 = path.resolve(path.join("src", "libs", paths.lib_locs[lib][1]));
         if (fs.existsSync(p1)) {
             del.sync(p2);
             fs.createReadStream(p1).pipe(fs.createWriteStream(p2));
@@ -90,45 +74,83 @@ gulp.task("stage-libs", function(callback) {
             );
         }
     });
-});
+    return callback();
+}
 
-gulp.task("fonts", function() {
-    return gulp
-        .src(path.resolve(path.join(paths.node_modules, "font-awesome/fonts/**/*")))
-        .pipe(gulp.dest("../static/images/fonts"));
-});
+function fonts() {
+    return src(path.resolve(path.join(paths.node_modules, "font-awesome/fonts/**/*"))).pipe(
+        dest("../static/images/fonts")
+    );
+}
 
-gulp.task("libs", function() {
-    return gulp
-        .src(paths.libs)
-        .pipe(uglify())
-        .pipe(gulp.dest("../static/scripts/libs/"));
-});
+function stagePlugins() {
+    return src(paths.plugin_dirs).pipe(dest("../static/plugins/"));
+}
 
-gulp.task("style", function() {
-    return gulp
-        .src(paths.style)
-        .pipe(sass().on("error", sass.logError))
-        .pipe(gulp.dest("../static/style/blue/"));
-});
+function buildPlugins(callback) {
+    /*
+     * Walk plugin_build_modules glob and attempt to build modules.
+     * */
+    paths.plugin_build_modules.map((build_module) => {
+        glob(build_module, {}, (er, files) => {
+            files.map((file) => {
+                let skip_build = false;
+                const f = path.join(process.cwd(), file).slice(0, -12);
+                const plugin_name = path.dirname(file).split(path.sep).pop();
+                const hash_file_path = path.join(
+                    f,
+                    DIST_PLUGIN_BUILD_IDS.indexOf(plugin_name) > -1 ? "dist" : "static",
+                    "plugin_build_hash.txt"
+                );
 
-gulp.task("plugins", function() {
-    return gulp.src(paths.plugin_dirs).pipe(gulp.dest("../static/plugins/"));
-});
+                if (fs.existsSync(hash_file_path)) {
+                    skip_build =
+                        child_process.spawnSync("git", ["diff", "--quiet", `$(cat ${hash_file_path})`, "--", f], {
+                            stdio: "inherit",
+                            shell: true,
+                        }).status === 0;
+                } else {
+                    console.log(`No build hashfile detected for ${plugin_name}, generating now.`);
+                }
 
-gulp.task("clean", function() {
-    //Wipe out all scripts that aren't handled by webpack
-    return del(["../static/scripts/**/*.js", "!../static/scripts/bundled/**.*.js"], { force: true });
-});
+                if (skip_build) {
+                    console.log(`No changes detected for ${plugin_name}`);
+                } else {
+                    console.log(`Installing Dependencies for ${plugin_name}`);
+                    child_process.spawnSync(
+                        "yarn",
+                        ["install", "--production=false", "--network-timeout=300000", "--check-files"],
+                        {
+                            cwd: f,
+                            stdio: "inherit",
+                            shell: true,
+                        }
+                    );
+                    console.log(`Building ${plugin_name}`);
+                    child_process.spawnSync("yarn", ["build"], { cwd: f, stdio: "inherit", shell: true });
+                    child_process.exec(`(git rev-parse HEAD 2>/dev/null || echo \`\`) > ${hash_file_path}`);
+                }
+            });
+        });
+    });
+    return callback();
+}
 
-gulp.task("watch", function() {
-    gulp.watch(paths.scripts, ["scripts"]);
-});
+function cleanPlugins() {
+    return del(["../static/plugins/{visualizations,interactive_environments,welcome_page}/*"], { force: true });
+}
 
-gulp.task("watch-style", function() {
-    gulp.watch(paths.style_sources, ["style"]);
-});
+const client = parallel(fonts, stageLibs);
+const plugins = series(buildPlugins, cleanPlugins, stagePlugins);
 
-gulp.task("staging", ["stage-libs", "fonts"]);
+function watchPlugins() {
+    const BUILD_PLUGIN_WATCH_GLOB = [
+        `../config/plugins/{visualizations,welcome_page}/{${PLUGIN_BUILD_IDS.join(",")}}/**/*`,
+    ];
+    watch(BUILD_PLUGIN_WATCH_GLOB, { queue: false }, plugins);
+}
 
-gulp.task("default", ["scripts", "libs", "plugins"]);
+module.exports.client = client;
+module.exports.plugins = plugins;
+module.exports.watchPlugins = watchPlugins;
+module.exports.default = parallel(client, plugins);

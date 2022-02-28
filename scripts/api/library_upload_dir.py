@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from __future__ import print_function
 
 import argparse
 import os
@@ -132,7 +131,7 @@ class Uploader:
             # So that we can check if it really needs to be uploaded.
             already_uploaded = memo_key in self.memo_path.keys()
             fid = self.memoized_path(basepath, base_folder=self.folder_id)
-            print('[%s/%s] %s/%s uploaded=%s' % (idx + 1, len(all_files), fid, fname, already_uploaded))
+            print(f'[{idx + 1}/{len(all_files)}] {fid}/{fname} uploaded={already_uploaded}')
 
             if not already_uploaded:
                 if self.non_local:

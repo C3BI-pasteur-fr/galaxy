@@ -1,22 +1,52 @@
-<tool id="Show tail1" name="Select last" version="1.0.0">
+<tool id="Show tail1" name="Select last" version="1.0.1" profile="20.05">
   <description>lines from a dataset</description>
-  <command interpreter="perl">tailWrapper.pl $input $lineNum $out_file1</command>
+  <requirements>
+    <requirement type="package" version="8.31">coreutils</requirement>
+  </requirements>
+  <command detect_errors="exit_code"><![CDATA[
+    set -eo pipefail;
+    (
+    #if $header
+      head -n 1 '$input' &&
+      tail -n +2 '$input'
+    #else
+      cat '$input'
+    #end if
+    | tail -n $lineNum
+    ) > '$out_file1'
+  ]]></command>
   <inputs>
-    <param name="lineNum" size="5" type="integer" value="10" label="Select last" help="lines"/>
-    <param format="txt" name="input" type="data" label="from"/>
+    <param name="lineNum" type="integer" value="10" min="1" label="Select last" help="lines"/>
+    <param name="input" type="data" format="txt" label="from"/>
+    <param name="header" type="boolean" label="Dataset has a header" help="if checked the header is kept and is not counted as a kept line"/>
   </inputs>
   <outputs>
-    <data format="input" name="out_file1" metadata_source="input"/>
+    <data name="out_file1" format_source="input" metadata_source="input"/>
   </outputs>
   <tests>
     <test>
       <param name="lineNum" value="10"/>
       <param name="input" value="1.bed"/>
-      <output name="out_file1" file="eq-showtail.dat"/>
+      <output name="out_file1" file="eq-showtail.dat">
+        <assert_contents>
+          <not_has_text text="CCDS989.1_cds_0_0_chr1_147962193_r"/>
+          <has_n_lines n="10"/>
+        </assert_contents>
+      </output>
+    </test>
+    <test>
+      <param name="lineNum" value="10"/>
+      <param name="input" value="1.bed"/>
+      <param name="header" value="true"/>
+      <output name="out_file1">
+        <assert_contents>
+          <has_text text="CCDS989.1_cds_0_0_chr1_147962193_r"/>
+          <has_n_lines n="11"/>
+        </assert_contents>
+      </output>
     </test>
   </tests>
   <help>
-
 **What it does**
 
 This tool outputs specified number of lines from the **end** of a dataset
@@ -37,6 +67,5 @@ This tool outputs specified number of lines from the **end** of a dataset
 
     chr7    57341   57361   D17003_CTCF_R7  375     +
     chr7    57457   57477   D17003_CTCF_R3  188     +
-
   </help>
 </tool>

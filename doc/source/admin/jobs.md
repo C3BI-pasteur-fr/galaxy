@@ -2,11 +2,11 @@
 
 By default, jobs in Galaxy are run locally on the server on which the Galaxy application was started.  Many options are available for running Galaxy jobs on other systems, including clusters and other remote resources.
 
-This document is a reference for the job configuration file.  [Detailed documentation](cluster) is provided for configuring Galaxy to work with a variety of Distributed Resource Managers (DRMs) such as TORQUE, Grid Engine, LSF, and HTCondor.  Additionally, a wide range of infrastructure decisions and configuration changes should be made when running Galaxy as a production service, as one is likely doing if using a cluster.  It is highly recommended that the [production server documentation](production.html) and [cluster configuration documentation](cluster.html) be read before making changes to the job configuration.
+This document is a reference for the job configuration file. [Detailed documentation](cluster.md) is provided for configuring Galaxy to work with a variety of Distributed Resource Managers (DRMs) such as TORQUE, Grid Engine, LSF, and HTCondor.  Additionally, a wide range of infrastructure decisions and configuration changes should be made when running Galaxy as a production service, as one is likely doing if using a cluster.  It is highly recommended that the [production server documentation](production.md) and [cluster configuration documentation](cluster.md) be read before making changes to the job configuration.
 
-**The most up-to-date details of advanced job configuration features can be found in the [sample job_conf.xml](https://github.com/galaxyproject/galaxy/blob/dev/config/job_conf.xml.sample_advanced) found in the Galaxy distribution.**
+**The most up-to-date details of advanced job configuration features can be found in the [sample job_conf.xml](https://github.com/galaxyproject/galaxy/blob/dev/lib/galaxy/config/sample/job_conf.xml.sample_advanced) found in the Galaxy distribution.**
 
-Configuration of where to run jobs is performed in the `job_conf.xml` file in `$GALAXY_ROOT/config/`.  The path to the config file can be overridden by setting the value of `job_config_file` in `config/galaxy.yml`.  Sample configurations are provided at `galaxy-dist/config/job_conf.xml.sample_basic` and `galaxy-dist/config/job_conf.xml.sample_advanced`.  The job configuration file is not required - if it does not exist, a default configuration that runs jobs on the local system (with a maximum of 4 concurrent jobs) will be used.  `job_conf.xml.sample_basic` provides a configuration identical to the default configuration if no `job_conf.xml` exists.
+Configuration of where to run jobs is performed in the `job_conf.xml` file in `$GALAXY_ROOT/config/`.  The path to the config file can be overridden by setting the value of `job_config_file` in `config/galaxy.yml`.  Sample configurations are provided at `config/job_conf.xml.sample_basic` and `config/job_conf.xml.sample_advanced`.  The job configuration file is not required - if it does not exist, a default configuration that runs jobs on the local system (with a maximum of 4 concurrent jobs) will be used.  `job_conf.xml.sample_basic` provides a configuration identical to the default configuration if no `job_conf.xml` exists.
 
 ## job_conf.xml Syntax
 
@@ -38,9 +38,9 @@ workers
 
 ### Job Handlers
 
-The `<handlers>` configuration elements defines which Galaxy server processes (when [running multiple server processes](https://galaxyproject.org/admin/config/performance/scaling/)) should be used for running jobs, and how to group those processes.
+The `<handlers>` configuration elements defines which Galaxy server processes (when [running multiple server processes](scaling.md)) should be used for running jobs, and how to group those processes.
 
-The handlers configuration may define a ``default`` attribute. This is the the handler(s) that should be used if no explicit handler is defined for a job and is required if >1 handlers defined.
+The handlers configuration may define a ``default`` attribute. This is the the handler(s) that should be used if no explicit handler is defined for a job. If unset, any untagged handlers will be used by default.
 
 The collection contains `<handler>` elements.
 
@@ -49,7 +49,7 @@ id
     A server name that should be used to run jobs. Server names are dependent on your application server deployment scenario and are explained in the :ref:`configuration section of the scaling documentation <scaling-configuration>`.
 
 tags
-    A comma-separated set of strings that optional define tags to which this handler belongs. 
+    A comma-separated set of strings that optional define tags to which this handler belongs.
 ```
 
 ### Job Destinations
@@ -70,7 +70,7 @@ tags
     Tags to which this destination belongs (for example `tags="longwalltime,bigcluster"`).
 ```
 
-``destination`` elements may contain zero or more ``<param>``s, which are passed to the destination's defined runner plugin and interpreted in a way native to that plugin. For details on the parameter specification, see the documentation on [Cluster configuration](cluster.html).
+``destination`` elements may contain zero or more ``<param>``s, which are passed to the destination's defined runner plugin and interpreted in a way native to that plugin. For details on the parameter specification, see the documentation on [Cluster configuration](cluster.md).
 
 ### Environment Modifications
 
@@ -109,14 +109,76 @@ destination
     Job destination(s) that should be used to run jobs for this tool after resubmission.
 ```
 
-**Note:** Currently, failure conditions for memory limits and walltime are only implemented for the [Slurm](cluster.html) job runner plugin. Contributions for other implementations would be greatly appreciated! An example job configuration and an always-fail job runner plugin for development [can be found in this gist](https://gist.github.com/natefoo/361414fbca3c0ea63aa5).
+**Note:** Currently, failure conditions for memory limits and walltime are only implemented for the [Slurm](cluster.md) job runner plugin. Contributions for other implementations would be greatly appreciated! An example job configuration and an always-fail job runner plugin for development [can be found in this gist](https://gist.github.com/natefoo/361414fbca3c0ea63aa5).
+
+
+### Running jobs in containers
+
+Galaxy can be configured to run jobs in container runtimes. Currently the two supported runtimes are [Docker](https://www.docker.com) and [Singularity](https://www.sylabs.io/). Each ``<destination>`` can enable container support
+with ``<param id="docker_enabled">true</param>`` and/or ``<param id="singularity_enabled">true</param>``, as documented
+in the [advanced sample job_conf.xml](https://github.com/galaxyproject/galaxy/blob/dev/lib/galaxy/config/sample/job_conf.xml.sample_advanced).
+In the case of Docker, containers are run using **sudo** unless ``<param id="docker_sudo">false</param>`` is specified, thus
+the user that Galaxy runs as should be able to run ``sudo docker`` without a password prompt for Docker containers to
+work.
+
+The images used for containers can either be specified explicitely in the ``<destination>`` using the *docker_default_container_id*, *docker_container_id_override*, *singularity_default_container_id* and
+*singularity_container_id_override* parameters, but (perhaps more commonly) the image to use can be derived from the
+tool requirements of the Galaxy tool being executed. In this latter case the image is specified by the
+tool using a ``<container>`` tag in the ``<requirements>`` section.
+
+### Running jobs on a Kubernetes cluster via Pulsar
+
+In order to dispatch jobs to a Kubernetes (K8s) cluster via Pulsar,
+Pulsar implements a "two-container" architecture per pod, where
+one container stages job execution environment (`pulsar-container`)
+and another container encompasses tool's executables (`tool-container`).
+
+Note that this architecture is experimental and under active development,
+it is increasingly improved and it will soon be production-grade ready.
+
+In order to setup Galaxy to use the "two-container" architecture, you may
+take the following steps:
+
+1. In the `galaxy.yml` set the following attributes: 
+
+- `job_config_file: job_conf.yml`
+- Appropriately configure `galaxy_infrastructure_url`; for example,
+set it as the following on macOS:
+`galaxy_infrastructure_url: 'http://host.docker.internal:$GALAXY_WEB_PORT'`
+
+2. In the `job_conf.yml` set the following runners and execution attributes appropriately:
+
+```yaml
+runners:
+  local:
+    load: galaxy.jobs.runners.local:LocalJobRunner
+    workers: 1
+  pulsar_k8s:
+    load: galaxy.jobs.runners.pulsar:PulsarKubernetesJobRunner
+    amqp_url: amqp://guest:guest@localhost:5672//
+
+execution:
+  default: pulsar_k8s_environment
+  environments:
+    pulsar_k8s_environment:
+      k8s_config_path: ~/.kube/config
+      k8s_galaxy_instance_id: any-dns-friendly-random-str
+      k8s_namespace: default
+      runner: pulsar_k8s
+      docker_enabled: true
+      docker_default_container_id: busybox:ubuntu-14.04
+      pulsar_app_config:
+        message_queue_url: 'amqp://guest:guest@host.docker.internal:5672//'
+    local_environment:
+      runner: local
+```
 
 ### Macros
 
 The job configuration XML file may contain any number of macro definitions using the same
-XML macro syntax used by [Galaxy tools](http://planemo.readthedocs.io/en/latest/writing_advanced.html#macros-reusable-elements).
+XML macro syntax used by [Galaxy tools](https://planemo.readthedocs.io/en/latest/writing_advanced.html#macros-reusable-elements).
 
-See [Pull Request #362](https://github.com/galaxyproject/galaxy/pull/362) for implementation details and the [advanced sample job_conf.xml](https://github.com/galaxyproject/galaxy/blob/dev/config/job_conf.xml.sample_advanced) for examples.
+See [Pull Request #362](https://github.com/galaxyproject/galaxy/pull/362) for implementation details and the [advanced sample job_conf.xml](https://github.com/galaxyproject/galaxy/blob/dev/lib/galaxy/config/sample/job_conf.xml.sample_advanced) for examples.
 
 ## Mapping Tools To Destinations
 
@@ -159,7 +221,7 @@ The two most generic and useful dynamic destination types are `python` and `dtd`
 
 #### Dynamic Destination Mapping (DTD method)
 
-DTD is a special dynamic job destination type that builds up rules given a YAML-based DSL - see `config/tool_destinations.yml.sample` (on [Github](https://github.com/galaxyproject/galaxy/blob/dev/config/tool_destinations.yml.sample)) for a syntax description, examples, and a description of how to validate and debug this file.
+DTD is a special dynamic job destination type that builds up rules given a YAML-based DSL - see `config/tool_destinations.yml.sample` (on [Github](https://github.com/galaxyproject/galaxy/blob/dev/lib/galaxy/config/sample/tool_destinations.yml.sample)) for a syntax description, examples, and a description of how to validate and debug this file.
 
 To define and use rules, copy this sample file to `config/tool_destinations.yml` and add your rules. Anything routed with a `dynamic` runner of type `dtd` will then use this file (such as the destination defined with the following XML block in `job_conf.xml`).
 
@@ -168,7 +230,6 @@ To define and use rules, copy this sample file to `config/tool_destinations.yml`
       <param id="type">dtd</param>
     </destination>
 ```
-
 
 #### Dynamic Destination Mapping (Python method)
 
@@ -190,7 +251,6 @@ Next for any tool one wants to dynamically assign job destinations for, this `bl
     <tool id="ncbi_blastn_wrapper" destination="blast" />
 ```
 
-
 Finally, you will need to define a function that describes how `ncbi_blastn_wrapper` should be executed. To do this, one must create a python source file in `lib/galaxy/jobs/rules`, for instance `destinations.py` (though the name of this file is largely unimportant, one can distribute any number of functions across any number of files and they will be automatically detected by Galaxy).
 
 So open `lib/galaxy/jobs/rules/destinations.py` and define a `ncbi_blastn_wrapper` function. A couple possible examples may be:
@@ -209,12 +269,11 @@ def ncbi_blastn_wrapper(job):
         walltime_str = "walltime=24:00:00/"
     else:
         walltime_str = "walltime=12:00:00/"
-    return JobDestination(runner="pbs", params={"Resource_List": walltime_str})
+    return JobDestination(id="ncbi_blastn_wrapper", runner="pbs", params={"Resource_List": walltime_str})
 
 ```
 
-
-or 
+or
 
 ```python
 from galaxy.jobs import JobDestination
@@ -226,7 +285,7 @@ def ncbi_blastn_wrapper(app, user_email):
      params = {}
      if user_email in admin_users:
          params["nativeSpecification"] = "-P bigNodes"
-    return JobDestination(runner="drmaa", params=params)
+    return JobDestination(id="ncbi_blastn_wrapper", runner="drmaa", params=params)
 ```
 
 
@@ -263,7 +322,7 @@ The above examples demonstrate that the dynamic job destination framework will p
     A dictionary of parameters specified by the user using ``job_resource_params_conf.xml`` (if configured).
 
 ``workflow_invocation_uuid``
-    A randomly generated UUID for the workflow invocation generating this job - this can be 
+    A randomly generated UUID for the workflow invocation generating this job - this can be
     useful for instance in routing all the jobs in the same workflow to one resource.
 ```
 
@@ -302,7 +361,6 @@ The following example assumes the existence of a job destination with ids `short
     ...
 ```
 
-
 With these if place, the following `default_runner` rule function will route all tools with id containing `mothur` to the `long_pbs` destination defined `jobs_conf.xml` and all other tools to the `short_pbs` destination:
 
 ```python
@@ -339,9 +397,9 @@ DEV_EMAILS = ["mary@example.com"]
 
 def dev_only(user_email):
     if user_email in DEV_EMAILS
-       return JobDestination(runner="drmaa")
+       return JobDestination(id="dev_only", runner="drmaa")
     else:
-       raise JobMappingException("This tool is under development and you are not authorized to it.")       
+       raise JobMappingException("This tool is under development and you are not authorized to it.")
 ```
 
 
@@ -362,39 +420,41 @@ The `<limits>` collection has no attributes.
 The collection contains `<limit>`s, which have different meanings based on their required `type` attribute:
 
 ```eval_rst
-type
+``type``
     Type of limit to define - one of ``registered_user_concurrent_jobs``, ``anonymous_user_concurrent_jobs``, ``destination_user_concurrent_jobs``, ``destination_total_concurrent_jobs``, ``walltime``, and ``output_size``.
 
-id
+``id``
     Optional destination on which to apply limit (for ``destination_user_concurrent_jobs`` and ``destination_total_concurrent_jobs`` types only) (e.g. ``id="galaxy_cluster"``).
 
-tag
+``tag``
     Optional destinations on which to apply limit (for ``destination_user_concurrent_jobs`` and ``destination_total_concurrent_jobs`` types only).
+```
 
 If a limit tag is defined, its value must be set.  If the limit tag is not defined, the default for each type is unlimited.  The syntax for the available `type`s are:
 
+```eval_rst
 ``registered_user_concurrent_jobs``
     Limit on the number of jobs a user with a registered Galaxy account can have active across all destinations.
 
 ``anonymous_user_concurrent_jobs``
     Limit on the number of jobs an unregistered/anonymous user can have active across all destinations.
 
-``destination_user_concurrent_jobs`` 
+``destination_user_concurrent_jobs``
     The number of jobs a user can have active in the specified destination, or across all destinations identified by the specified tag.
 
 ``destination_total_concurrent_jobs``
     The number of jobs that can be active in the specified destination (or across all destinations identified by the specified tag) by any/all users.
 
 ``walltime``
-    Amount of time a job can run (in any destination) before it will be terminated by Galaxy. 
+    Amount of time a job can run (in any destination) before it will be terminated by Galaxy.
 
 ``total_walltime``
-    Total walltime that jobs may not exceed during a set period. If total walltime of finished 
-    jobs exceeds this value, any new jobs are paused. This limit should include a `window` 
+    Total walltime that jobs may not exceed during a set period. If total walltime of finished
+    jobs exceeds this value, any new jobs are paused. This limit should include a ``window``
     attribute that is the number in days representing the period.
 
 ``output_size``
-    Size that any defined tool output can grow to before the job will be terminated. This does not include temporary files created by the job (e.g. ``53687091200`` for (50 GB)).
+    Size that any defined tool output can grow to before the job will be terminated. This does not include temporary files created by the job (e.g. ``53687091200`` for 50 GB).
 ```
 
 The concept of "across all destinations" is used because Galaxy allows users to run jobs across any number of local or remote (cluster) resources.  A user may always queue an unlimited number of jobs in Galaxy's internal job queue.  The concurrency limits apply to jobs that have been dispatched and are in the `queued` or `running` states.  These limits prevent users from monopolizing the resources Galaxy runs on by, for example, preventing a single user from submitting more long-running jobs than Galaxy has cluster slots to run and subsequently blocking all Galaxy jobs from running for any other user.

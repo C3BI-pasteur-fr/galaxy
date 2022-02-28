@@ -13,7 +13,7 @@ from sqlalchemy import false
 
 import galaxy.model
 from galaxy import util
-from galaxy.web.base.controller import BaseUIController, web
+from galaxy.webapps.base.controller import BaseUIController, web
 from galaxy.webapps.reports.controllers.jobs import sorter
 from galaxy.webapps.reports.controllers.query import ReportQueryBuilder
 
@@ -43,7 +43,7 @@ class Users(BaseUIController, ReportQueryBuilder):
                       group_by=self.group_by_month(galaxy.model.User.table.c.create_time),
                       order_by=[_order])
         users = []
-        for row in q.execute():
+        for row in trans.sa_session.execute(q):
             users.append((row.date.strftime("%Y-%m"),
                           row.num_users,
                           row.date.strftime("%B"),
@@ -74,7 +74,7 @@ class Users(BaseUIController, ReportQueryBuilder):
                       group_by=self.group_by_day(galaxy.model.User.table.c.create_time),
                       order_by=[sa.desc('date')])
         users = []
-        for row in q.execute():
+        for row in trans.sa_session.execute(q):
             users.append((row.date.strftime("%Y-%m-%d"),
                           row.date.strftime("%d"),
                           row.num_users,
@@ -105,8 +105,8 @@ class Users(BaseUIController, ReportQueryBuilder):
                       from_obj=[galaxy.model.User.table],
                       order_by=[galaxy.model.User.table.c.email])
         users = []
-        for row in q.execute():
-            users.append((row.email))
+        for row in trans.sa_session.execute(q):
+            users.append(row.email)
         return trans.fill_template('/webapps/reports/registered_users_specified_date.mako',
                                    specified_date=start_date,
                                    day_label=day_label,
@@ -178,7 +178,9 @@ class Users(BaseUIController, ReportQueryBuilder):
 
         user_cutoff = int(kwd.get('user_cutoff', 60))
         # disk_usage isn't indexed
-        users = sorted(trans.sa_session.query(galaxy.model.User).all(), key=operator.attrgetter(str(sort_id)), reverse=_order)
+        all_users = trans.sa_session.query(galaxy.model.User).all()
+        sort_attrgetter = operator.attrgetter(str(sort_id))
+        users = sorted(all_users, key=lambda x: sort_attrgetter(x) or 0, reverse=_order)
         if user_cutoff:
             users = users[:user_cutoff]
         return trans.fill_template('/webapps/reports/users_user_disk_usage.mako',
@@ -209,7 +211,7 @@ class Users(BaseUIController, ReportQueryBuilder):
             group_by=['username'],
             order_by=[sa.desc('username'), 'history'])
 
-        histories = [(_.username if _.username is not None else "Unknown", _.history) for _ in req.execute()]
+        histories = [(_.username if _.username is not None else "Unknown", _.history) for _ in trans.sa_session.execute(req)]
         histories.sort(key=sort_keys[sorting], reverse=reverse)
         if user_cutoff != 0:
             histories = histories[:user_cutoff]

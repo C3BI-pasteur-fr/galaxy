@@ -1,7 +1,7 @@
 import logging
 import math
 
-from galaxy import exceptions, model, web
+from galaxy import exceptions, model
 from galaxy.util import string_as_bool
 
 log = logging.getLogger(__name__)
@@ -21,14 +21,15 @@ def api_payload_to_create_params(payload):
     required_parameters = ["collection_type", "element_identifiers"]
     missing_parameters = [p for p in required_parameters if p not in payload]
     if missing_parameters:
-        message = "Missing required parameters %s" % missing_parameters
+        message = f"Missing required parameters {missing_parameters}"
         raise exceptions.ObjectAttributeMissingException(message)
 
     params = dict(
         collection_type=payload.get("collection_type"),
         element_identifiers=payload.get("element_identifiers"),
         name=payload.get("name", None),
-        hide_source_items=string_as_bool(payload.get("hide_source_items", False))
+        hide_source_items=string_as_bool(payload.get("hide_source_items", False)),
+        copy_elements=string_as_bool(payload.get("copy_elements", False))
     )
     return params
 
@@ -77,12 +78,12 @@ def get_collection(collection, name=""):
     hdas = []
     if collection.has_subcollections:
         for element in collection.elements:
-            subnames, subhdas = get_collection_elements(element.child_collection, name="%s/%s" % (name, element.element_identifier))
+            subnames, subhdas = get_collection_elements(element.child_collection, name=f"{name}/{element.element_identifier}")
             names.extend(subnames)
             hdas.extend(subhdas)
     else:
         for element in collection.elements:
-            names.append("%s/%s" % (name, element.element_identifier))
+            names.append(f"{name}/{element.element_identifier}")
             hdas.append(element.dataset_instance)
     return names, hdas
 
@@ -91,7 +92,7 @@ def get_collection_elements(collection, name=""):
     names = []
     hdas = []
     for element in collection.elements:
-        full_element_name = "%s/%s" % (name, element.element_identifier)
+        full_element_name = f"{name}/{element.element_identifier}"
         if element.is_collection:
             subnames, subhdas = get_collection(element.child_collection, name=full_element_name)
             names.extend(subnames)
@@ -102,19 +103,24 @@ def get_collection_elements(collection, name=""):
     return names, hdas
 
 
-def dictify_dataset_collection_instance(dataset_collection_instance, parent, security, view="element", fuzzy_count=None):
+def dictify_dataset_collection_instance(dataset_collection_instance, parent, security, url_builder, view="element", fuzzy_count=None):
     hdca_view = "element" if view in ["element", "element-reference"] else "collection"
     dict_value = dataset_collection_instance.to_dict(view=hdca_view)
     encoded_id = security.encode_id(dataset_collection_instance.id)
     if isinstance(parent, model.History):
         encoded_history_id = security.encode_id(parent.id)
-        dict_value['url'] = web.url_for('history_content_typed', history_id=encoded_history_id, id=encoded_id, type="dataset_collection")
+        dict_value['url'] = url_builder('history_content_typed', history_id=encoded_history_id, id=encoded_id, type="dataset_collection")
     elif isinstance(parent, model.LibraryFolder):
-        encoded_library_id = security.encode_id(parent.library.id)
+        encoded_library_id = security.encode_id(parent.library_root.id)
         encoded_folder_id = security.encode_id(parent.id)
         # TODO: Work in progress - this end-point is not right yet...
-        dict_value['url'] = web.url_for('library_content', library_id=encoded_library_id, id=encoded_id, folder_id=encoded_folder_id)
+        dict_value['url'] = url_builder('library_content', library_id=encoded_library_id, id=encoded_id, folder_id=encoded_folder_id)
 
+    dict_value['contents_url'] = url_builder(
+        'contents_dataset_collection',
+        hdca_id=encoded_id,
+        parent_id=security.encode_id(dataset_collection_instance.collection_id)
+    )
     if view in ["element", "element-reference"]:
         collection = dataset_collection_instance.collection
         rank_fuzzy_counts = gen_rank_fuzzy_counts(collection.collection_type, fuzzy_count)
@@ -130,7 +136,7 @@ def dictify_dataset_collection_instance(dataset_collection_instance, parent, sec
     return dict_value
 
 
-def dictify_element_reference(element, rank_fuzzy_counts=None):
+def dictify_element_reference(element, rank_fuzzy_counts=None, recursive=True, security=None):
     """Load minimal details of elements required to show outline of contents in history panel.
 
     History panel can use this reference to expand to full details if individual dataset elements
@@ -139,26 +145,27 @@ def dictify_element_reference(element, rank_fuzzy_counts=None):
     dictified = element.to_dict(view="element")
     element_object = element.element_object
     if element_object is not None:
-        object_detials = dict(
+        object_details = dict(
             id=element_object.id,
             model_class=element_object.__class__.__name__,
         )
         if element.child_collection:
-            object_detials["collection_type"] = element_object.collection_type
-            child_collection = element.child_collection
-            elements, rest_fuzzy_counts = get_fuzzy_count_elements(child_collection, rank_fuzzy_counts)
+            object_details["collection_type"] = element_object.collection_type
+
             # Recursively yield elements for each nested collection...
-            object_detials["elements"] = [dictify_element_reference(_, rank_fuzzy_counts=rest_fuzzy_counts) for _ in elements]
-            object_detials["element_count"] = child_collection.element_count
+            if recursive:
+                child_collection = element.child_collection
+                elements, rest_fuzzy_counts = get_fuzzy_count_elements(child_collection, rank_fuzzy_counts)
+                object_details["elements"] = [dictify_element_reference(_, rank_fuzzy_counts=rest_fuzzy_counts, recursive=recursive) for _ in elements]
+                object_details["element_count"] = child_collection.element_count
         else:
-            object_detials["state"] = element_object.state
-            object_detials["hda_ldda"] = 'hda'
-            object_detials["history_id"] = element_object.history_id
+            object_details["state"] = element_object.state
+            object_details["hda_ldda"] = 'hda'
+            object_details["history_id"] = element_object.history_id
 
+        dictified["object"] = object_details
     else:
-        object_detials = None
-
-    dictified["object"] = object_detials
+        dictified["object"] = None
     return dictified
 
 
@@ -166,20 +173,19 @@ def dictify_element(element, rank_fuzzy_counts=None):
     dictified = element.to_dict(view="element")
     element_object = element.element_object
     if element_object is not None:
-        object_detials = element.element_object.to_dict()
+        object_details = element.element_object.to_dict()
         if element.child_collection:
             child_collection = element.child_collection
             elements, rest_fuzzy_counts = get_fuzzy_count_elements(child_collection, rank_fuzzy_counts)
 
             # Recursively yield elements for each nested collection...
-            child_collection = element.child_collection
-            object_detials["elements"] = [dictify_element(_, rank_fuzzy_counts=rest_fuzzy_counts) for _ in elements]
-            object_detials["populated"] = child_collection.populated
-            object_detials["element_count"] = child_collection.element_count
+            object_details["elements"] = [dictify_element(_, rank_fuzzy_counts=rest_fuzzy_counts) for _ in elements]
+            object_details["populated"] = child_collection.populated
+            object_details["element_count"] = child_collection.element_count
     else:
-        object_detials = None
+        object_details = None
 
-    dictified["object"] = object_detials
+    dictified["object"] = object_details
     return dictified
 
 
@@ -255,7 +261,7 @@ def gen_rank_fuzzy_counts(collection_type, fuzzy_count=None):
         return [None for rt in rank_collection_types]
     else:
         # This is a list...
-        paired_count = sum([1 if rt == "paired" else 0 for rt in rank_collection_types])
+        paired_count = sum(1 if rt == "paired" else 0 for rt in rank_collection_types)
         list_count = len(rank_collection_types) - paired_count
         paired_fuzzy_count_mult = 1 if paired_count == 0 else 2 << (paired_count - 1)
         list_fuzzy_count_mult = math.floor((fuzzy_count * 1.0) / paired_fuzzy_count_mult)

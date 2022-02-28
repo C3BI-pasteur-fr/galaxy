@@ -1,10 +1,10 @@
-from __future__ import absolute_import
-
 import functools
 import logging
+import os
 
 from galaxy import model
 from galaxy.jobs.runners import AsynchronousJobRunner, AsynchronousJobState
+from galaxy.util import unicodify
 
 CHRONOS_IMPORT_MSG = ('The Python \'chronos\' package is required to use '
                       'this feature, please install it or correct the '
@@ -12,9 +12,15 @@ CHRONOS_IMPORT_MSG = ('The Python \'chronos\' package is required to use '
 
 try:
     import chronos
+    chronos_exceptions = (
+        chronos.ChronosAPIError,
+        chronos.UnauthorizedError,
+        chronos.MissingFieldError,
+        chronos.OneOfViolationError,
+    )
 except ImportError as e:
     chronos = None
-    CHRONOS_IMPORT_MSG.format(msg=e.message)
+    CHRONOS_IMPORT_MSG.format(msg=unicodify(e))
 
 
 __all__ = ('ChronosJobRunner',)
@@ -28,19 +34,13 @@ class ChronosRunnerException(Exception):
 def handle_exception_call(func):
     # Catch chronos exceptions. The latest version of chronos-python does
     # support a hierarchy over the exceptions.
-    chronos_exceptions = (
-        chronos.ChronosAPIError,
-        chronos.UnauthorizedError,
-        chronos.MissingFieldError,
-        chronos.OneOfViolationError,
-    )
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except chronos_exceptions as e:
-            LOGGER.error(e.message)
+            LOGGER.error(unicodify(e))
 
     return wrapper
 
@@ -54,6 +54,25 @@ def to_dict(segments, v):
 def _write_logfile(logfile, msg):
     with open(logfile, 'w') as fil:
         fil.write(msg)
+
+
+def _parse_job_volumes_list(li):
+    # Convert comma separated string to list
+    volume_list = list(li.split(','))
+    # Create the list with right mountpoint and permissions
+    mountpoint_list = []
+    # Convert each element to right format
+    for i in volume_list:
+        hpath, cpath, mode = i.split(':')
+        mountpoint_list.append({'hostPath': hpath, 'containerPath': cpath, 'mode': mode})
+    return mountpoint_list
+
+
+def _add_galaxy_environment_variables(cpus, memory):
+    # Set:
+    # GALAXY_SLOTS: to docker_cpu
+    # GALAXY_MEMORY_MB to docker_memory
+    return [{'name': 'GALAXY_SLOTS', 'value': cpus}, {'name': 'GALAXY_MEMORY_MB', 'value': memory}]
 
 
 class ChronosJobRunner(AsynchronousJobRunner):
@@ -100,7 +119,7 @@ class ChronosJobRunner(AsynchronousJobRunner):
             'default': None,
             'map_name': 'container/volumes',
             'map': (
-                lambda x: [{'containerPath': x, 'hostPath': x, 'mode': 'RW'}]
+                lambda x: _parse_job_volumes_list(x)
                 if x is not None else [])
         },
         'max_retries': {
@@ -116,22 +135,20 @@ class ChronosJobRunner(AsynchronousJobRunner):
         if self.RUNNER_PARAM_SPEC_KEY not in kwargs:
             kwargs[self.RUNNER_PARAM_SPEC_KEY] = {}
         kwargs[self.RUNNER_PARAM_SPEC_KEY].update(self.RUNNER_PARAM_SPEC)
-        super(ChronosJobRunner, self).__init__(app, nworkers, **kwargs)
+        super().__init__(app, nworkers, **kwargs)
         protocol = 'http' if self.runner_params.get('insecure', True) else 'https'
         self._chronos_client = chronos.connect(
             self.runner_params['chronos'],
             username=self.runner_params.get('username'),
             password=self.runner_params.get('password'),
             proto=protocol)
-        self._init_monitor_thread()
-        self._init_worker_threads()
 
     @handle_exception_call
     def queue_job(self, job_wrapper):
-        LOGGER.debug("Starting queue_job for job " + job_wrapper.get_id_tag())
+        LOGGER.debug(f"Starting queue_job for job {job_wrapper.get_id_tag()}")
         if not self.prepare_job(job_wrapper, include_metadata=False,
                                 modify_command_for_container=False):
-            LOGGER.debug("Not ready " + job_wrapper.get_id_tag())
+            LOGGER.debug(f"Not ready {job_wrapper.get_id_tag()}")
             return
         job_destination = job_wrapper.job_destination
         chronos_job_spec = self._get_job_spec(job_wrapper)
@@ -142,11 +159,10 @@ class ChronosJobRunner(AsynchronousJobRunner):
                                    job_id=job_name,
                                    job_destination=job_destination)
         self.monitor_queue.put(ajs)
-        return None
 
     @handle_exception_call
-    def stop_job(self, job):
-        job_id = job.get_id_tag()
+    def stop_job(self, job_wrapper):
+        job_id = job_wrapper.get_id_tag()
         job_name = self.JOB_NAME_PREFIX + job_id
         job = self._retrieve_job(job_name)
         if job:
@@ -167,10 +183,10 @@ class ChronosJobRunner(AsynchronousJobRunner):
         ajs.command_line = job.command_line
         ajs.job_wrapper = job_wrapper
         ajs.job_destination = job_wrapper.job_destination
-        if job.state == model.Job.states.RUNNING:
+        if job.state in (model.Job.states.RUNNING, model.Job.states.STOPPED):
             LOGGER.debug(msg.format(
                 name=job.id, runner=job.job_runner_external_id,
-                state='running'))
+                state=job.state))
             ajs.old_state = model.Job.states.RUNNING
             ajs.running = True
             self.monitor_queue.put(ajs)
@@ -182,10 +198,22 @@ class ChronosJobRunner(AsynchronousJobRunner):
             ajs.running = False
             self.monitor_queue.put(ajs)
 
+    def fail_job(self, job_state, exception=False):
+        if getattr(job_state, 'stop_job', True):
+            self.stop_job(job_state.job_wrapper)
+        job_state.job_wrapper.reclaim_ownership()
+        self._handle_runner_state('failure', job_state)
+        if not job_state.runner_state_handled:
+            job_state.job_wrapper.fail(getattr(job_state, 'fail_message', 'Job failed'), exception=exception)
+            self._finish_or_resubmit_job(job_state, '', job_state.fail_message, job_id=job_state.job_id)
+            if job_state.job_wrapper.cleanup_job == "always":
+                job_state.cleanup()
+
     @handle_exception_call
     def check_watched_item(self, job_state):
         job_name = job_state.job_id
         job = self._retrieve_job(job_name)
+        # TODO: how can stopped GxIT jobs be handled here?
         if job:
             succeeded = job['successCount']
             errors = job['errorCount']
@@ -195,10 +223,13 @@ class ChronosJobRunner(AsynchronousJobRunner):
                 return self._mark_as_active(job_state)
             elif errors:
                 max_retries = job['retries']
-                msg = 'Job {name!r} failed more than {retries!s} times'
+                if max_retries == 0:
+                    msg = 'Job {name!r} failed. No retries performed.'
+                else:
+                    msg = 'Job {name!r} failed more than {retries!s} times.'
                 reason = msg.format(name=job_name, retries=str(max_retries))
                 return self._mark_as_failed(job_state, reason)
-        reason = 'Job {name!r} not found'.format(name=job_name)
+        reason = f'Job {job_name!r} not found'
         return self._mark_as_failed(job_state, reason)
 
     def _mark_as_successful(self, job_state):
@@ -227,7 +258,7 @@ class ChronosJobRunner(AsynchronousJobRunner):
 
     @handle_exception_call
     def finish_job(self, job_state):
-        super(ChronosJobRunner, self).finish_job(job_state)
+        super().finish_job(job_state)
         self._chronos_client.delete(job_state.job_id)
 
     def parse_destination_params(self, params):
@@ -240,16 +271,35 @@ class ChronosJobRunner(AsynchronousJobRunner):
             parsed_params.update(to_dict(segments, mapper(value)))
         return parsed_params
 
+    def write_command(self, job_wrapper):
+        # Create command script instead passing it in the container
+        # preventing wrong characters parsing.
+        if not os.path.exists(job_wrapper.working_directory):
+            LOGGER.error("No working directory found")
+
+        path = f"{job_wrapper.working_directory}/chronos_{job_wrapper.get_id_tag()}.sh"
+        mode = 0o755
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('#!/bin/bash\n')
+            f.write(job_wrapper.runner_command_line)
+        os.chmod(path, mode)
+        return path
+
     def _get_job_spec(self, job_wrapper):
         job_name = self.JOB_NAME_PREFIX + job_wrapper.get_id_tag()
         job_destination = job_wrapper.job_destination
+        command_script_path = self.write_command(job_wrapper)
         template = {
             'async': False,
-            'command': job_wrapper.runner_command_line,
+            # 'command': job_wrapper.runner_command_line,
+            'command': f"$SHELL {command_script_path}",
             'owner': self.runner_params['owner'],
             'disabled': False,
             'schedule': 'R1//PT1S',
             'name': job_name,
+            # Add Galaxy environemnt variables to json
+            'environmentVariables': _add_galaxy_environment_variables(job_destination.params.get('docker_cpu'), job_destination.params.get('docker_memory')),
         }
         if not job_destination.params.get('docker_enabled'):
             raise ChronosRunnerException(
@@ -260,13 +310,15 @@ class ChronosJobRunner(AsynchronousJobRunner):
         template['container']['type'] = 'DOCKER'
         template['container']['image'] = self._find_container(
             job_wrapper).container_id
+        # Fix the working directory inside the container
+        template['container']['parameters'] = [{"key": "workdir", "value": job_wrapper.working_directory}]
         return template
 
     def _retrieve_job(self, job_id):
         jobs = self._chronos_client.list()
         job = [x for x in jobs if x['name'] == job_id]
         if len(job) > 1:
-            msg = 'Multiple jobs found with name {name!r}'.format(name=job_id)
+            msg = f'Multiple jobs found with name {job_id!r}'
             LOGGER.error(msg)
             raise ChronosRunnerException(msg)
         return job[0] if job else None

@@ -1,9 +1,9 @@
 import os
 
+from galaxy.tool_shed.galaxy_install.tools import tool_panel_manager
 from galaxy.util import parse_xml
-from tool_shed.galaxy_install.tools import tool_panel_manager
 from tool_shed.tools import tool_version_manager
-from ..tools.test_toolbox import (
+from ..app.tools.test_toolbox import (
     BaseToolBoxTestCase,
     SimplifiedToolBox
 )
@@ -116,7 +116,7 @@ class ToolPanelManagerTestCase(BaseToolBoxTestCase):
         self._setup_two_versions_remove_one(section=True, uninstall=True)
         self._verify_version_2_removed_from_panel()
         # Not in tool conf because it was uninstalled.
-        assert "github.com/galaxyproject/example/test_tool/0.2" not in open(os.path.join(self.test_directory, "tool_conf.xml"), "r").read()
+        assert "github.com/galaxyproject/example/test_tool/0.2" not in open(os.path.join(self.test_directory, "tool_conf.xml")).read()
         new_toolbox = self.get_new_toolbox()
         assert "tool_github.com/galaxyproject/example/test_tool/0.2" not in new_toolbox._integrated_tool_panel["tid"].elems
         self._verify_tool_confs()
@@ -125,26 +125,21 @@ class ToolPanelManagerTestCase(BaseToolBoxTestCase):
         self._setup_two_versions_remove_one(section=False, uninstall=True)
         self._verify_version_2_removed_from_panel(section=False)
         # Still in tool conf since not uninstalled only deactivated...
-        assert "github.com/galaxyproject/example/test_tool/0.2" not in open(os.path.join(self.test_directory, "tool_conf.xml"), "r").read()
+        assert "github.com/galaxyproject/example/test_tool/0.2" not in open(os.path.join(self.test_directory, "tool_conf.xml")).read()
         self._verify_tool_confs()
 
-        self._remove_guids(["github.com/galaxyproject/example/test_tool/0.1"], uninstall=True)
+        self._remove_repository_contents("github.com/galaxyproject/example/test_tool/0.1", uninstall=True)
 
         # Now no versions of this tool are returned by new toolbox.
         new_toolbox = self.get_new_toolbox()
         all_versions = new_toolbox.get_tool("test_tool", get_all_versions=True)
         assert not all_versions
 
-        # Check that tool panel has reverted to old value...
-        section = new_toolbox._tool_panel["tid"]
-        assert len(section.elems) == 0
-
     def _setup_two_versions_remove_one(self, section, uninstall):
         self._init_tool()
-        self._setup_two_versions_in_config(section=True)
+        self._setup_two_versions_in_config(section=section)
         self._setup_two_versions()
-        self.toolbox
-        self._remove_guids(["github.com/galaxyproject/example/test_tool/0.2"], uninstall=uninstall)
+        self._remove_repository_contents("github.com/galaxyproject/example/test_tool/0.2", uninstall=uninstall)
 
     def _verify_version_2_removed_from_panel(self, section=True):
         # Check that test_tool now only has one version...
@@ -161,12 +156,14 @@ class ToolPanelManagerTestCase(BaseToolBoxTestCase):
 
             assert "github.com/galaxyproject/example/test_tool/0.2" not in new_toolbox._integrated_tool_panel["tid"].elems
         else:
-            next(iter(self.toolbox._tool_panel.values())).id == "github.com/galaxyproject/example/test_tool/0.1"
+            assert next(iter(new_toolbox._tool_panel.values())).id == "github.com/galaxyproject/example/test_tool/0.1"
             assert "github.com/galaxyproject/example/test_tool/0.2" not in new_toolbox._integrated_tool_panel
 
-    def _remove_guids(self, guids, uninstall, shed_tool_conf="tool_conf.xml"):
-        self.tpm.remove_guids(
-            guids_to_remove=guids,
+    def _remove_repository_contents(self, guid, uninstall, shed_tool_conf="tool_conf.xml"):
+        tool = self.toolbox.get_tool(guid)
+        repository = tool.tool_shed_repository
+        self.tpm.remove_repository_contents(
+            repository=repository,
             shed_tool_conf=shed_tool_conf,
             uninstall=uninstall,
         )
@@ -180,7 +177,7 @@ class ToolPanelManagerTestCase(BaseToolBoxTestCase):
             parse_xml(filename)
         except Exception:
             message_template = "file %s does not contain valid XML, content %s"
-            message = message_template % (filename, open(filename, "r").read())
+            message = message_template % (filename, open(filename).read())
             raise AssertionError(message)
 
     def _init_ts_tool(self, guid=DEFAULT_GUID, **kwds):

@@ -33,11 +33,11 @@ def add_manual_builds(input_file, build_file, chr_dir):
                 chrs = fields.pop(0).split(",")
             except Exception:
                 chrs = []
-            print>>build_file_out, build + "\t" + name + " (" + build + ")"
+            print(build + "\t" + name + " (" + build + ")", file=build_file_out)
             if chrs:  # create len file if provided chrom lens
                 chr_len_out = open(os.path.join(chr_dir, build + ".len"), 'w')
                 for chr in chrs:
-                    print>>chr_len_out, chr.replace("=", "\t")
+                    print(chr.replace("=", "\t"), file=chr_len_out)
                 chr_len_out.close()
         except Exception:
             continue

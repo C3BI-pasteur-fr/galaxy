@@ -2,8 +2,8 @@ import json
 import logging
 import os
 
-from galaxy.dataset_collections.structure import UnitializedTree
 from galaxy.exceptions import RequestParameterMissingException
+from galaxy.model.dataset_collections.structure import UninitializedTree
 from galaxy.tools.actions import upload_common
 from galaxy.util import ExecutionTimer
 from galaxy.util.bunch import Bunch
@@ -13,17 +13,20 @@ log = logging.getLogger(__name__)
 
 
 class BaseUploadToolAction(ToolAction):
+    produces_real_jobs = True
 
-    def execute(self, tool, trans, incoming={}, history=None, **kwargs):
+    def execute(self, tool, trans, incoming=None, history=None, **kwargs):
+        trans.check_user_activation()
+        incoming = incoming or {}
         dataset_upload_inputs = []
-        for input_name, input in tool.inputs.items():
+        for input in tool.inputs.values():
             if input.type == "upload_dataset":
                 dataset_upload_inputs.append(input)
         assert dataset_upload_inputs, Exception("No dataset upload groups were found.")
 
         persisting_uploads_timer = ExecutionTimer()
         incoming = upload_common.persist_uploads(incoming, trans)
-        log.debug("Persisted uploads %s" % persisting_uploads_timer)
+        log.debug(f"Persisted uploads {persisting_uploads_timer}")
         rval = self._setup_job(tool, trans, incoming, dataset_upload_inputs, history)
         return rval
 
@@ -34,7 +37,7 @@ class BaseUploadToolAction(ToolAction):
         """Wrapper around upload_common.create_job with a timer."""
         create_job_timer = ExecutionTimer()
         rval = upload_common.create_job(*args, **kwds)
-        log.debug("Created upload job %s" % create_job_timer)
+        log.debug(f"Created upload job {create_job_timer}")
         return rval
 
 
@@ -49,7 +52,7 @@ class UploadToolAction(BaseUploadToolAction):
 
         json_file_path = upload_common.create_paramfile(trans, uploaded_datasets)
         data_list = [ud.data for ud in uploaded_datasets]
-        log.debug("Checked uploads %s" % check_timer)
+        log.debug(f"Checked uploads {check_timer}")
         return self._create_job(
             trans, incoming, tool, json_file_path, data_list, history=history
         )
@@ -66,7 +69,10 @@ class FetchUploadToolAction(BaseUploadToolAction):
         def replace_file_srcs(request_part):
             if isinstance(request_part, dict):
                 if request_part.get("src", None) == "files":
-                    path_def = next(files_iter)
+                    try:
+                        path_def = next(files_iter)
+                    except StopIteration:
+                        path_def = None
                     if path_def is None or path_def["file_data"] is None:
                         raise RequestParameterMissingException("Failed to find uploaded file matching target with src='files'")
                     request_part["path"] = path_def["file_data"]["local_filename"]
@@ -74,7 +80,7 @@ class FetchUploadToolAction(BaseUploadToolAction):
                         request_part["name"] = path_def["file_data"]["filename"]
                     request_part["src"] = "path"
                 else:
-                    for key, value in request_part.items():
+                    for value in request_part.values():
                         replace_file_srcs(value)
             elif isinstance(request_part, list):
                 for value in request_part:
@@ -121,7 +127,8 @@ def _precreate_fetched_hdas(trans, history, target, outputs):
         uploaded_dataset = Bunch(
             type='file', name=name, file_type=file_type, dbkey=dbkey
         )
-        data = upload_common.new_upload(trans, '', uploaded_dataset, library_bunch=None, history=history)
+        tag_list = item.get("tags", [])
+        data = upload_common.new_upload(trans, '', uploaded_dataset, library_bunch=None, history=history, tag_list=tag_list)
         outputs.append(data)
         item["object_id"] = data.id
 
@@ -136,11 +143,12 @@ def _precreate_fetched_collection_instance(trans, history, target, outputs):
     if not name:
         return
 
-    collections_service = trans.app.dataset_collections_service
-    collection_type_description = collections_service.collection_type_descriptions.for_collection_type(collection_type)
-    structure = UnitializedTree(collection_type_description)
-    hdca = collections_service.precreate_dataset_collection_instance(
-        trans, history, name, structure=structure
+    tags = target.get("tags", [])
+    collections_manager = trans.app.dataset_collection_manager
+    collection_type_description = collections_manager.collection_type_descriptions.for_collection_type(collection_type)
+    structure = UninitializedTree(collection_type_description)
+    hdca = collections_manager.precreate_dataset_collection_instance(
+        trans, history, name, structure=structure, tags=tags
     )
     outputs.append(hdca)
     # Following flushed needed for an ID.

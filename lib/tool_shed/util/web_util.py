@@ -1,9 +1,7 @@
 from markupsafe import escape as raw_escape
 
-from galaxy.util import smart_str
-
 ALLOWED_ELEMENTS = ["<b>", "</b>", "<br/>"]
-ALLOWED_MAP = dict((x, raw_escape(x)) for x in ALLOWED_ELEMENTS)
+ALLOWED_MAP = {x: raw_escape(x) for x in ALLOWED_ELEMENTS}
 
 
 def escape(string):
@@ -13,10 +11,9 @@ def escape(string):
     in these components and messages in the views or client side - this is
     what should be worked toward - but for now - we have this hack.
 
-    >>> escape("A <b>repo</b>")
-    u'A <b>repo</b>'
+    >>> assert escape(u"A <b>cómplǐcḁtëd strĩñg</b>") == u'A <b>cómplǐcḁtëd strĩñg</b>'
     """
-    escaped = smart_str(raw_escape(string), encoding="ascii", errors="replace")
+    escaped = str(raw_escape(string))
     # Unescape few selected tags.
     for key, value in ALLOWED_MAP.items():
         escaped = escaped.replace(value, key)

@@ -14,18 +14,18 @@ def main():
 
     # index range 1-1000, current sections/tools divided between 250-750
     sectionindex = 250
-    sectionfactor = int(500 / len(root.getchildren()))
+    sectionfactor = int(500 / len(root))
 
-    for rootchild in root.getchildren():
+    for rootchild in root:
         currentsectionlabel = ""
         if (rootchild.tag == "section"):
             sectionname = rootchild.attrib['name']
             # per section tool index range 1-1000, current labels/tools
             # divided between 20 and 750
             toolindex = 250
-            toolfactor = int(500 / len(rootchild.getchildren()))
+            toolfactor = int(500 / len(rootchild))
             currentlabel = ""
-            for sectionchild in rootchild.getchildren():
+            for sectionchild in rootchild:
                 if (sectionchild.tag == "tool"):
                     addToToolDict(sectionchild, sectionname, sectionindex, toolindex, currentlabel)
                     toolindex += toolfactor
@@ -65,7 +65,7 @@ def main():
             hastoolboxpos = True
 
         if (not (hastags and hastoolboxpos)):
-            original = open(toolconffile, 'r')
+            original = open(toolconffile)
             contents = original.readlines()
             original.close()
 
@@ -88,8 +88,8 @@ def main():
                 # create empty tags element
                 newelements.append("<tags/>\n  ")
 
-            contents = (contents[0:addelementsatposition] + newelements +
-                        contents[addelementsatposition:])
+            contents = (contents[0:addelementsatposition] + newelements
+                        + contents[addelementsatposition:])
 
             # add .new for testing/safety purposes :P
             newtoolconffile = open(toolconffile, 'w')
@@ -117,14 +117,14 @@ def addToToolDict(tool, sectionname, sectionindex, toolindex, currentlabel):
 # Build a list of all toolconf xml files in the tools directory
 def getfnl(startdir):
     filenamelist = []
-    for root, dirs, files in os.walk(startdir):
+    for root, _dirs, files in os.walk(startdir):
         for fn in files:
             fullfn = os.path.join(root, fn)
             if fn.endswith('.xml'):
                 try:
                     doc = ET.parse(fullfn)
                 except Exception as e:
-                    raise Exception("Oops, bad XML in '%s': %s" % (fullfn, e))
+                    raise Exception(f"Oops, bad XML in '{fullfn}': {e}")
                 rootelement = doc.getroot()
                 # here we check if this xml file actually is a tool conf xml!
                 if rootelement.tag == 'tool':

@@ -25,7 +25,7 @@ from bx.cookbook import doc_optparse
 from galaxy.util.ucsc import UCSCLimitException, UCSCOutWrapper
 
 
-class PositionalScoresOnDisk:
+class PositionalScoresOnDisk(object):
     fmt = 'f'
     fmt_size = struct.calcsize(fmt)
     default_value = float('nan')
@@ -99,8 +99,7 @@ class FileBinnedArrayDir(Mapping):
 
 
 def stop_err(msg):
-    sys.stderr.write(msg)
-    sys.exit()
+    sys.exit(msg)
 
 
 def load_scores_wiggle(fname, chrom_buffer_size=3):

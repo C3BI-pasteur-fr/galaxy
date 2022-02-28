@@ -40,7 +40,7 @@ errorpage = """
 """
 
 
-class RemoteUser(object):
+class RemoteUser:
 
     def __init__(self, app, maildomain=None, display_servers=None, admin_users=None,
                  single_user=None, remote_user_header=None, remote_user_secret_header=None,
@@ -59,7 +59,7 @@ class RemoteUser(object):
         if self.display_servers and 'REMOTE_ADDR' in environ:
             try:
                 host = socket.gethostbyaddr(environ['REMOTE_ADDR'])[0]
-            except(socket.error, socket.herror, socket.gaierror, socket.timeout):
+            except(OSError, socket.herror, socket.gaierror, socket.timeout):
                 # in the event of a lookup failure, deny access
                 host = None
             if host in self.display_servers:
@@ -82,7 +82,7 @@ class RemoteUser(object):
             if self.normalize_remote_user_email:
                 environ[self.remote_user_header] = environ[self.remote_user_header].lower()
             if self.maildomain and '@' not in environ[self.remote_user_header]:
-                environ[self.remote_user_header] = "%s@%s" % (environ[self.remote_user_header], self.maildomain)
+                environ[self.remote_user_header] = f"{environ[self.remote_user_header]}@{self.maildomain}"
 
         path_info = environ.get('PATH_INFO', '')
 
@@ -134,7 +134,7 @@ class RemoteUser(object):
         if environ.get(self.remote_user_header, None):
             if not environ[self.remote_user_header].count('@'):
                 if self.maildomain is not None:
-                    environ[self.remote_user_header] += '@' + self.maildomain
+                    environ[self.remote_user_header] += f"@{self.maildomain}"
                 else:
                     title = "Access to Galaxy is denied"
                     message = """
@@ -156,7 +156,6 @@ class RemoteUser(object):
                 '/user/logout',
                 '/user/toolbox_filters',
                 '/user/set_default_permissions',
-                '/user/change_communication',
             )
 
             admin_accessible_paths = (
@@ -169,14 +168,14 @@ class RemoteUser(object):
             )
 
             if not path_info.startswith('/user'):
-                # shortcut the following whitelist for non-user-controller
+                # shortcut the following allowlist for non-user-controller
                 # requests.
                 pass
             elif environ[self.remote_user_header] in self.admin_users and \
-                    any([path_info.startswith(prefix) for prefix in admin_accessible_paths]):
+                    any(path_info.startswith(prefix) for prefix in admin_accessible_paths):
                 # If the user is an admin user, and any of the admin accessible paths match..., allow them to execute that action.
                 pass
-            elif any([path_info.startswith(prefix) for prefix in user_accessible_paths]):
+            elif any(path_info.startswith(prefix) for prefix in user_accessible_paths):
                 # If the user is allowed to access the path, pass
                 pass
             elif path_info == '/user' or path_info == '/user/':
@@ -191,7 +190,7 @@ class RemoteUser(object):
                 return self.error(start_response, title, message)
             return self.app(environ, start_response)
         else:
-            log.debug("Unable to identify user.  %s not found" % self.remote_user_header)
+            log.debug(f"Unable to identify user.  {self.remote_user_header} not found")
             for k, v in environ.items():
                 log.debug("%s = %s", k, v)
 

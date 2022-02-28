@@ -1,34 +1,51 @@
 import ipaddress
 import logging
 import os
-import shlex
 import socket
-import subprocess
 import tempfile
-from cgi import FieldStorage
+from dataclasses import dataclass
+from io import StringIO
 from json import dump, dumps
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
-from six import StringIO
-from sqlalchemy.orm import eagerload_all
-try:
-    from urlparse import urlparse
-except ImportError:
-    from urllib.parse import urlparse
+from sqlalchemy.orm import joinedload
+from webob.compat import cgi_FieldStorage
 
-from galaxy import datatypes, util
-from galaxy.exceptions import ConfigDoesNotAllowException, ObjectInvalid
-from galaxy.managers import tags
-from galaxy.util import unicodify
-from galaxy.util.odict import odict
+from galaxy import util
+from galaxy.datatypes.sniff import stream_to_file
+from galaxy.exceptions import (
+    ConfigDoesNotAllowException,
+    RequestParameterInvalidException,
+)
+from galaxy.model import (
+    FormDefinition,
+    LibraryDataset,
+    LibraryFolder,
+    Role,
+    tags,
+)
+from galaxy.util import (
+    is_url,
+    unicodify
+)
+from galaxy.util.path import external_chown
 
 log = logging.getLogger(__name__)
 
 
-def validate_url(url, ip_whitelist):
+def validate_datatype_extension(datatypes_registry, ext):
+    if ext and ext not in ('auto', 'data') and not datatypes_registry.get_datatype_by_extension(ext):
+        raise RequestParameterInvalidException(f"Requested extension '{ext}' unknown, cannot upload dataset.")
+
+
+def validate_url(url, ip_allowlist):
     # If it doesn't look like a URL, ignore it.
     if not (url.lstrip().startswith('http://') or url.lstrip().startswith('https://')):
         return url
 
+    # Strip leading whitespace before passing url to urlparse()
+    url = url.lstrip()
     # Extract hostname component
     parsed_url = urlparse(url).netloc
     # If credentials are in this URL, we need to strip those.
@@ -76,7 +93,7 @@ def validate_url(url, ip_whitelist):
     #   AF_* family: It will resolve to AF_INET or AF_INET6, getaddrinfo(3) doesn't even mention AF_UNIX,
     #   socktype: We don't care if a stream/dgram/raw protocol
     #   protocol: we don't care if it is tcp or udp.
-    addrinfo_results = set([info[4][0] for info in addrinfo])
+    addrinfo_results = {info[4][0] for info in addrinfo}
     # There may be multiple (e.g. IPv4 + IPv6 or DNS round robin). Any one of these
     # could resolve to a local addresses (and could be returned by chance),
     # therefore we must check them all.
@@ -86,17 +103,17 @@ def validate_url(url, ip_whitelist):
         # If this is a private address
         if ip.is_private:
             results = []
-            # If this IP is not anywhere in the whitelist
-            for whitelisted in ip_whitelist:
+            # If this IP is not anywhere in the allowlist
+            for allowlisted in ip_allowlist:
                 # If it's an IP address range (rather than a single one...)
-                if hasattr(whitelisted, 'subnets'):
-                    results.append(ip in whitelisted)
+                if hasattr(allowlisted, 'subnets'):
+                    results.append(ip in allowlisted)
                 else:
-                    results.append(ip == whitelisted)
+                    results.append(ip == allowlisted)
 
             if any(results):
                 # If we had any True, then THIS (and ONLY THIS) IP address that
-                # that specific DNS entry resolved to is in whitelisted and
+                # that specific DNS entry resolved to is in allowlisted and
                 # safe to access. But we cannot exit here, we must ensure that
                 # all IPs that that DNS entry resolves to are likewise safe.
                 pass
@@ -114,7 +131,7 @@ def persist_uploads(params, trans):
         new_files = []
         for upload_dataset in params['files']:
             f = upload_dataset['file_data']
-            if isinstance(f, FieldStorage):
+            if isinstance(f, cgi_FieldStorage):
                 assert not isinstance(f.file, StringIO)
                 assert f.file.name != '<fdopen>'
                 local_filename = util.mkstemp_ln(f.file.name, 'upload_file_data_')
@@ -124,8 +141,8 @@ def persist_uploads(params, trans):
             elif type(f) == dict and 'local_filename' not in f:
                 raise Exception('Uploaded file was encoded in a way not understood by Galaxy.')
             if 'url_paste' in upload_dataset and upload_dataset['url_paste'] and upload_dataset['url_paste'].strip() != '':
-                upload_dataset['url_paste'] = datatypes.sniff.stream_to_file(
-                    StringIO(validate_url(upload_dataset['url_paste'], trans.app.config.fetch_url_whitelist_ips)),
+                upload_dataset['url_paste'] = stream_to_file(
+                    StringIO(validate_url(upload_dataset['url_paste'], trans.app.config.fetch_url_allowlist_ips)),
                     prefix="strio_url_paste_"
                 )
             else:
@@ -135,33 +152,51 @@ def persist_uploads(params, trans):
     return params
 
 
-def handle_library_params(trans, params, folder_id, replace_dataset=None):
+@dataclass
+class LibraryParams:
+    roles: List[Role]
+    tags: Optional[List[str]]
+    template: Optional[FormDefinition]
+    template_field_contents: Dict[str, str]
+    folder: LibraryFolder
+    message: str
+    replace_dataset: Optional[LibraryDataset]
+
+
+def handle_library_params(trans, params, folder_id: str, replace_dataset: Optional[LibraryDataset] = None) -> LibraryParams:
     # FIXME: the received params has already been parsed by util.Params() by the time it reaches here,
     # so no complex objects remain.  This is not good because it does not allow for those objects to be
     # manipulated here.  The received params should be the original kwd from the initial request.
-    library_bunch = util.bunch.Bunch()
-    library_bunch.replace_dataset = replace_dataset
-    library_bunch.message = params.get('ldda_message', '')
+    message = params.get('ldda_message', '')
     # See if we have any template field contents
-    library_bunch.template_field_contents = {}
+    template_field_contents = {}
     template_id = params.get('template_id', None)
-    library_bunch.folder = trans.sa_session.query(trans.app.model.LibraryFolder).get(trans.security.decode_id(folder_id))
+    folder = trans.sa_session.query(LibraryFolder).get(trans.security.decode_id(folder_id))
     # We are inheriting the folder's info_association, so we may have received inherited contents or we may have redirected
     # here after the user entered template contents ( due to errors ).
+    template: Optional[FormDefinition] = None
     if template_id not in [None, 'None']:
-        library_bunch.template = trans.sa_session.query(trans.app.model.FormDefinition).get(template_id)
-        for field in library_bunch.template.fields:
+        template = trans.sa_session.query(FormDefinition).get(template_id)
+        assert template
+        for field in template.fields:
             field_name = field['name']
             if params.get(field_name, False):
                 field_value = util.restore_text(params.get(field_name, ''))
-                library_bunch.template_field_contents[field_name] = field_value
-    else:
-        library_bunch.template = None
-    library_bunch.roles = []
+                template_field_contents[field_name] = field_value
+    roles: List[Role] = []
     for role_id in util.listify(params.get('roles', [])):
-        role = trans.sa_session.query(trans.app.model.Role).get(role_id)
-        library_bunch.roles.append(role)
-    return library_bunch
+        role = trans.sa_session.query(Role).get(role_id)
+        roles.append(role)
+    tags = params.get('tags', None)
+    return LibraryParams(
+        folder=folder,
+        message=message,
+        roles=roles,
+        tags=tags,
+        template=template,
+        template_field_contents=template_field_contents,
+        replace_dataset=replace_dataset,
+    )
 
 
 def __new_history_upload(trans, uploaded_dataset, history=None, state=None):
@@ -179,16 +214,16 @@ def __new_history_upload(trans, uploaded_dataset, history=None, state=None):
     else:
         hda.state = hda.states.QUEUED
     trans.sa_session.flush()
-    history.add_dataset(hda, genome_build=uploaded_dataset.dbkey)
+    history.add_dataset(hda, genome_build=uploaded_dataset.dbkey, quota=False)
     permissions = trans.app.security_agent.history_get_default_permissions(history)
     trans.app.security_agent.set_all_dataset_permissions(hda.dataset, permissions)
     trans.sa_session.flush()
     return hda
 
 
-def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, state=None):
+def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_handler, state=None):
     current_user_roles = trans.get_current_user_roles()
-    if not ((trans.user_is_admin() and cntrller in ['library_admin', 'api']) or trans.app.security_agent.can_add_library_item(current_user_roles, library_bunch.folder)):
+    if not ((trans.user_is_admin and cntrller in ['library_admin', 'api']) or trans.app.security_agent.can_add_library_item(current_user_roles, library_bunch.folder)):
         # This doesn't have to be pretty - the only time this should happen is if someone's being malicious.
         raise Exception("User is not authorized to add datasets to this library.")
     folder = library_bunch.folder
@@ -200,7 +235,7 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, state
             if matches:
                 folder = matches[0]
             else:
-                new_folder = trans.app.model.LibraryFolder(name=name, description='Automatically created by upload tool')
+                new_folder = LibraryFolder(name=name, description='Automatically created by upload tool')
                 new_folder.genome_build = trans.app.genome_builds.default_value
                 folder.add_folder(new_folder)
                 trans.sa_session.add(new_folder)
@@ -223,8 +258,12 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, state
                                                             sa_session=trans.sa_session)
     if uploaded_dataset.get('tag_using_filenames', False):
         tag_from_filename = os.path.splitext(os.path.basename(uploaded_dataset.name))[0]
-        tag_manager = tags.GalaxyTagManager(trans.sa_session)
-        tag_manager.apply_item_tag(item=ldda, user=trans.user, name='name', value=tag_from_filename)
+        tag_handler.apply_item_tag(item=ldda, user=trans.user, name='name', value=tag_from_filename, flush=False)
+
+    tags_list = uploaded_dataset.get('tags', False)
+    if tags_list:
+        for tag in tags_list:
+            tag_handler.apply_item_tag(item=ldda, user=trans.user, name='name', value=tag, flush=False)
 
     trans.sa_session.add(ldda)
     if state:
@@ -274,11 +313,21 @@ def __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, state
     return ldda
 
 
-def new_upload(trans, cntrller, uploaded_dataset, library_bunch=None, history=None, state=None):
+def new_upload(trans, cntrller, uploaded_dataset, library_bunch=None, history=None, state=None, tag_list=None):
+    tag_handler = tags.GalaxyTagHandlerSession(trans.sa_session)
     if library_bunch:
-        return __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, state)
+        upload_target_dataset_instance = __new_library_upload(trans, cntrller, uploaded_dataset, library_bunch, tag_handler, state)
+        if library_bunch.tags and not uploaded_dataset.tags:
+            new_tags = tag_handler.parse_tags_list(library_bunch.tags)
+            for tag in new_tags:
+                tag_handler.apply_item_tag(user=trans.user, item=upload_target_dataset_instance, name=tag[0], value=tag[1], flush=False)
     else:
-        return __new_history_upload(trans, uploaded_dataset, history=history, state=state)
+        upload_target_dataset_instance = __new_history_upload(trans, uploaded_dataset, history=history, state=state)
+
+    if tag_list:
+        tag_handler.add_tags_from_list(trans.user, upload_target_dataset_instance, tag_list, flush=False)
+
+    return upload_target_dataset_instance
 
 
 def get_uploaded_datasets(trans, cntrller, params, dataset_upload_inputs, library_bunch=None, history=None):
@@ -295,19 +344,6 @@ def create_paramfile(trans, uploaded_datasets):
     """
     Create the upload tool's JSON "param" file.
     """
-    def _chown(path):
-        try:
-            # get username from email/username
-            pwent = trans.user.system_user_pwent(trans.app.config.real_system_username)
-            cmd = shlex.split(trans.app.config.external_chown_script)
-            cmd.extend([path, pwent[0], str(pwent[3])])
-            log.debug('Changing ownership of %s with: %s' % (path, ' '.join(cmd)))
-            p = subprocess.Popen(cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = p.communicate()
-            assert p.returncode == 0, stderr
-        except Exception as e:
-            log.warning('Changing ownership of uploaded file %s failed: %s' % (path, str(e)))
-
     tool_params = []
     json_file_path = None
     for uploaded_dataset in uploaded_datasets:
@@ -326,7 +362,7 @@ def create_paramfile(trans, uploaded_datasets):
                           metadata=uploaded_dataset.metadata,
                           primary_file=uploaded_dataset.primary_file,
                           composite_file_paths=uploaded_dataset.composite_files,
-                          composite_files=dict((k, v.__dict__) for k, v in data.datatype.get_composite_files(data).items()))
+                          composite_files={k: v.__dict__ for k, v in data.datatype.get_composite_files(data).items()})
         else:
             try:
                 is_binary = uploaded_dataset.datatype.is_binary
@@ -369,10 +405,12 @@ def create_paramfile(trans, uploaded_datasets):
             # TODO: This will have to change when we start bundling inputs.
             # Also, in_place above causes the file to be left behind since the
             # user cannot remove it unless the parent directory is writable.
-            if link_data_only == 'copy_files' and trans.app.config.external_chown_script:
-                _chown(uploaded_dataset.path)
+            if link_data_only == 'copy_files' and trans.user and trans.app.config.external_chown_script and not is_url(uploaded_dataset.path):
+                external_chown(uploaded_dataset.path,
+                               trans.user.system_user_pwent(trans.app.config.real_system_username),
+                               trans.app.config.external_chown_script, description="uploaded file")
         tool_params.append(params)
-    with tempfile.NamedTemporaryFile(prefix='upload_params_', delete=False) as fh:
+    with tempfile.NamedTemporaryFile(mode="w", prefix='upload_params_', delete=False) as fh:
         json_file_path = fh.name
         dump(tool_params, fh)
     return json_file_path
@@ -383,6 +421,8 @@ def create_job(trans, params, tool, json_file_path, outputs, folder=None, histor
     Create the upload job.
     """
     job = trans.app.model.Job()
+    trans.sa_session.add(job)
+    job.galaxy_version = trans.app.config.version_major
     galaxy_session = trans.get_galaxy_session()
     if type(galaxy_session) == trans.model.GalaxySession:
         job.session_id = galaxy_session.id
@@ -396,16 +436,11 @@ def create_job(trans, params, tool, json_file_path, outputs, folder=None, histor
         job.history_id = history.id
     job.tool_id = tool.id
     job.tool_version = tool.version
-    job.set_state(job.states.UPLOAD)
-    trans.sa_session.add(job)
-    trans.sa_session.flush()
-    log.info('tool %s created job id %d' % (tool.id, job.id))
-    trans.log_event('created job id %d' % job.id, tool_id=tool.id)
+    job.dynamic_tool = tool.dynamic_tool
 
     for name, value in tool.params_to_strings(params, trans.app).items():
         job.add_parameter(name, value)
     job.add_parameter('paramfile', dumps(json_file_path))
-    object_store_id = None
     for i, output_object in enumerate(outputs):
         output_name = "output%i" % i
         if hasattr(output_object, "collection"):
@@ -417,30 +452,13 @@ def create_job(trans, params, tool, json_file_path, outputs, folder=None, histor
                 job.add_output_library_dataset(output_name, dataset)
             else:
                 job.add_output_dataset(output_name, dataset)
-            # Create an empty file immediately
-            if not dataset.dataset.external_filename:
-                dataset.dataset.object_store_id = object_store_id
-                try:
-                    trans.app.object_store.create(dataset.dataset)
-                except ObjectInvalid:
-                    raise Exception('Unable to create output dataset: object store is full')
-                object_store_id = dataset.dataset.object_store_id
 
-        trans.sa_session.add(output_object)
-
-    job.object_store_id = object_store_id
     job.set_state(job.states.NEW)
-    job.set_handler(tool.get_job_handler(None))
     if job_params:
         for name, value in job_params.items():
             job.add_parameter(name, value)
-    trans.sa_session.add(job)
-    trans.sa_session.flush()
 
-    # Queue the job for execution
-    trans.app.job_manager.job_queue.put(job.id, job.tool_id)
-    trans.log_event("Added job to the job queue, id: %s" % str(job.id), tool_id=job.tool_id)
-    output = odict()
+    output = {}
     for i, v in enumerate(outputs):
         if not hasattr(output_object, "collection_type"):
             output['output%i' % i] = v
@@ -451,8 +469,8 @@ def active_folders(trans, folder):
     # Stolen from galaxy.web.controllers.library_common (importing from which causes a circular issues).
     # Much faster way of retrieving all active sub-folders within a given folder than the
     # performance of the mapper.  This query also eagerloads the permissions on each folder.
-    return trans.sa_session.query(trans.app.model.LibraryFolder) \
+    return trans.sa_session.query(LibraryFolder) \
                            .filter_by(parent=folder, deleted=False) \
-                           .options(eagerload_all("actions")) \
-                           .order_by(trans.app.model.LibraryFolder.table.c.name) \
+                           .options(joinedload("actions")) \
+                           .order_by(LibraryFolder.table.c.name) \
                            .all()

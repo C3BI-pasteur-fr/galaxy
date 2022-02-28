@@ -8,11 +8,11 @@ class Newick_Parser(Base_Parser):
     It is necessarily more complex because this parser is later extended by Nexus for parsing newick as well.."""
 
     def __init__(self):
-        super(Newick_Parser, self).__init__()
+        super().__init__()
 
     def parseFile(self, filePath):
         """Parses a newick file to obtain the string inside. Returns: jsonableDict"""
-        with open(filePath, "r") as newickFile:
+        with open(filePath) as newickFile:
             newickString = newickFile.read()
             newickString = newickString.replace("\n", "").replace("\r", "")
             return [self.parseData(newickString)], "Success"
@@ -36,14 +36,14 @@ class Newick_Parser(Base_Parser):
         return self.phyloTree.generateJsonableDict()
 
     def cleanNewickString(self, rawNewick):
-        """removing semi colon, and illegal json characters (\,',") and white spaces"""
-        return re.sub(r'\s|;|\"|\'|\\', '', rawNewick)
+        r"""removing semi colon, and illegal json characters (\,',") and white spaces"""
+        return re.sub(r'\s|;|\"|\'|\\', r'', rawNewick)
 
     def _makeNodesFromString(self, string, depth):
         """elements separated by comma could be empty"""
 
         if string.find("(") != -1:
-            raise Exception("Tree is not well form, location: " + string)
+            raise Exception(f"Tree is not well form, location: {string}")
 
         childrenString = string.split(",")
         childrenNodes = []
@@ -52,17 +52,17 @@ class Newick_Parser(Base_Parser):
             if len(childString) == 0:
                 continue
             nodeInfo = childString.split(":")
-            name, length, bootstrap = "", None, -1
+            name, length, bootstrap = "", None, -1.0
             if len(nodeInfo) == 2:  # has length info
                 length = nodeInfo[1]
                 # checking for bootstap values
                 name = nodeInfo[0]
                 try:    # Nexus may bootstrap in names position
-                    name = float(name)
-                    if 0 <= name <= 1:
-                        bootstrap = name
-                    elif 1 <= name <= 100:
-                        bootstrap = name / 100
+                    name_as_float = float(name)
+                    if 0 <= name_as_float <= 1:
+                        bootstrap = name_as_float
+                    elif 1 <= name_as_float <= 100:
+                        bootstrap = name_as_float / 100
                     name = ""
                 except ValueError:
                     name = nodeInfo[0]
@@ -94,7 +94,7 @@ class Newick_Parser(Base_Parser):
                         if enclosingSymbol == ")" or enclosingSymbol == ":" or enclosingSymbol == ",":
                             termToReplace = newickString[end:j]
 
-                            newString += newickString[start : end] + nameMap[termToReplace]  # + "'"  "'" +
+                            newString += newickString[start:end] + nameMap[termToReplace]  # + "'"  "'" +
                             start = j
                             break
 
@@ -159,7 +159,7 @@ class Newick_Parser(Base_Parser):
                         lenOfPreceedingInternalNodeString = 0
 
                     # recussive call to make the internal claude
-                    childSubString = string[i + 1 : j]
+                    childSubString = string[i + 1:j]
                     InternalNode.addChildNode(self.parseNode(childSubString, depth + 1))
 
                     nodes.append(InternalNode)  # we append the internal node later to preserve order

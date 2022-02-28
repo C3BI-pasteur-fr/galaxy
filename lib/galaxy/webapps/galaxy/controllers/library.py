@@ -1,7 +1,7 @@
 import logging
 
 from galaxy import web
-from galaxy.web.base.controller import BaseUIController
+from galaxy.webapps.base.controller import BaseUIController
 
 
 log = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ class Library(BaseUIController):
     def list(self, trans, **kwd):
         # define app configuration for generic mako template
         app = {
-            'jscript'       : "library"
+            'jscript': "library"
         }
         return trans.fill_template('galaxy.panels.mako',
                                    config={

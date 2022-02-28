@@ -14,14 +14,14 @@ class RBACPermissionFailedException(galaxy.exceptions.InsufficientPermissionsExc
     pass
 
 
-class RBACPermission(object):
+class RBACPermission:
     """
-    Base class for wrangling/controlling the permissions ORM models (\*Permissions, Roles)
+    Base class for wrangling/controlling the permissions ORM models (Permissions, Roles)
     that control which users can perform certain actions on their associated models
     (Libraries, Datasets).
     """
 
-    permissions_class = None
+    permissions_class: type
     permission_failed_error_class = RBACPermissionFailedException
 
     def __init__(self, app):
@@ -33,11 +33,11 @@ class RBACPermission(object):
 
     # TODO: implement group
     # TODO: how does admin play into this?
-    def is_permitted(self, item, user):
+    def is_permitted(self, item, user, trans=None):
         raise NotImplementedError("abstract parent class")
 
-    def error_unless_permitted(self, item, user):
-        if not self.is_permitted(item, user):
+    def error_unless_permitted(self, item, user, trans=None):
+        if not self.is_permitted(item, user, trans=trans):
             error_info = dict(model_class=item.__class__, id=getattr(item, 'id', None))
             raise self.permission_failed_error_class(**error_info)
 
@@ -81,22 +81,21 @@ class DatasetRBACPermission(RBACPermission):
     # ---- double secrect probation
     def __assert_action(self):
         if not self.action_name:
-            raise NotImplementedError("abstract parent class" + " needs action_name")
+            raise NotImplementedError("abstract parent class needs action_name")
 
     # ---- interface
     def by_dataset(self, dataset):
         self.__assert_action()
         all_permissions = self._all_types_by_dataset(dataset)
-        return filter(lambda p: p.action == self.action_name, all_permissions)
+        return list(filter(lambda p: p.action == self.action_name, all_permissions))
 
-    # TODO: list?
     def by_roles(self, dataset, roles):
         permissions = self.by_dataset(dataset)
-        return filter(lambda p: p.role in roles, permissions)
+        return list(filter(lambda p: p.role in roles, permissions))
 
     def by_role(self, dataset, role):
         permissions = self.by_dataset(dataset)
-        found = filter(lambda p: p.role == role, permissions)
+        found = list(filter(lambda p: p.role == role, permissions))
         if not found:
             return None
         if len(found) > 1:
@@ -169,11 +168,14 @@ class ManageDatasetRBACPermission(DatasetRBACPermission):
     have permission on the dataset
     """
     # TODO: We may also be able to infer/record the dataset 'owner' as well.
-    action_name = security.RBACAgent.permitted_actions.DATASET_MANAGE_PERMISSIONS.action
+    action_name = security.RBACAgent.permitted_actions.get('DATASET_MANAGE_PERMISSIONS').action
     permission_failed_error_class = DatasetManagePermissionFailedException
 
     # ---- interface
-    def is_permitted(self, dataset, user):
+    def is_permitted(self, dataset, user, trans=None):
+        if trans and trans.user_is_admin:
+            return True
+
         # anonymous users cannot manage permissions on datasets
         if self.user_manager.is_anonymous(user):
             return False
@@ -225,18 +227,20 @@ class AccessDatasetRBACPermission(DatasetRBACPermission):
     An user must have all the Roles of all the access permissions associated
     with a dataset in order to access it.
     """
-    action_name = security.RBACAgent.permitted_actions.DATASET_ACCESS.action
+    action_name = security.RBACAgent.permitted_actions.get('DATASET_ACCESS').action
     permission_failed_error_class = DatasetAccessPermissionFailedException
 
     # ---- interface
-    def is_permitted(self, dataset, user):
+    def is_permitted(self, dataset, user, trans=None):
+        if trans and trans.user_is_admin:
+            return True
+
         current_roles = self._roles(dataset)
         # NOTE: that because of short circuiting this allows
         #   anonymous access to public datasets
-        return (self._is_public_based_on_roles(current_roles) or
-                # admin is always permitted
-                self.user_manager.is_admin(user) or
-                self._user_has_all_roles(user, current_roles))
+        return (self._is_public_based_on_roles(current_roles)
+                or self.user_manager.is_admin(user)  # admin is always permitted
+                or self._user_has_all_roles(user, current_roles))
 
     def grant(self, item, user):
         pass
@@ -269,6 +273,6 @@ class AccessDatasetRBACPermission(DatasetRBACPermission):
 
     def _role_is_permitted(self, dataset, role):
         current_roles = self._roles(dataset)
-        return (self._is_public_based_on_roles(current_roles) or
+        return (self._is_public_based_on_roles(current_roles)
                 # if there's only one role and this is it, let em in
-                ((len(current_roles) == 1) and (role == current_roles[0])))
+                or ((len(current_roles) == 1) and (role == current_roles[0])))

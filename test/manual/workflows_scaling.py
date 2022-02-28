@@ -15,16 +15,16 @@ from threading import Thread
 from uuid import uuid4
 
 from bioblend import galaxy
+from gxformat2 import python_to_workflow
 
 galaxy_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir))
 sys.path[1:1] = [os.path.join(galaxy_root, "lib"), os.path.join(galaxy_root, "test")]
 
-from base.populators import (  # noqa: I100,I202
+from galaxy_test.base.populators import (
     GiDatasetCollectionPopulator,
     GiDatasetPopulator,
     GiWorkflowPopulator,
 )
-from base.workflows_format_2.converter import python_to_workflow  # noqa: I100
 
 LONG_TIMEOUT = 1000000000
 DESCRIPTION = "Script to exercise the workflow engine."
@@ -51,7 +51,7 @@ def main(argv=None):
     uuid = str(uuid4())
     workflow_struct = _workflow_struct(args, uuid)
 
-    has_input = any([s.get("type", "tool") == "input_collection" for s in workflow_struct])
+    has_input = any(s.get("type", "tool") == "input_collection" for s in workflow_struct)
     if not has_input:
         uuid = None
 
@@ -63,7 +63,7 @@ def main(argv=None):
 
     target = functools.partial(_run, args, gi, workflow_id, uuid)
     threads = []
-    for i in range(args.workflow_count):
+    for _ in range(args.workflow_count):
         t = Thread(target=target)
         t.daemon = True
         t.start()

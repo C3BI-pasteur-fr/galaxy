@@ -1,0 +1,11 @@
+bleach
+boltons
+docutils
+markupsafe
+packaging
+pycryptodome
+pyyaml
+requests
+routes
+typing-extensions
+zipstream-new

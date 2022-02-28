@@ -2,11 +2,13 @@
 Utility functions for bi-directional Python version compatibility.  Python 2.5
 introduced hashlib which replaced sha in Python 2.4 and previous versions.
 """
-from __future__ import absolute_import
 
 import hashlib
 import hmac
 import logging
+
+from . import smart_str
+
 
 log = logging.getLogger(__name__)
 
@@ -14,11 +16,24 @@ BLOCK_SIZE = 1024 * 1024
 
 sha1 = hashlib.sha1
 sha256 = hashlib.sha256
+sha512 = hashlib.sha512
 sha = sha1
 md5 = hashlib.md5
 
+HASH_NAME_MAP = {
+    "MD5": md5,
+    "SHA-1": sha1,
+    "SHA-256": sha256,
+    "SHA-512": sha512,
+}
+HASH_NAMES = list(HASH_NAME_MAP.keys())
 
-def memory_bound_hexdigest(hash_func, path=None, file=None):
+
+def memory_bound_hexdigest(hash_func=None, hash_func_name=None, path=None, file=None):
+    if hash_func is None:
+        assert hash_func_name is not None
+        hash_func = HASH_NAME_MAP[hash_func_name]
+
     hasher = hash_func()
     if file is None:
         assert path is not None
@@ -28,7 +43,7 @@ def memory_bound_hexdigest(hash_func, path=None, file=None):
 
     try:
         for block in iter(lambda: file.read(BLOCK_SIZE), b''):
-                hasher.update(block)
+            hasher.update(block)
         return hasher.hexdigest()
     finally:
         file.close()
@@ -44,24 +59,21 @@ def md5_hash_file(path):
             buf = afile.read()
             hasher.update(buf)
             return hasher.hexdigest()
-    except IOError:
+    except OSError:
         # This may happen if path has been deleted
         return None
 
 
-def new_secure_hash(text_type=None):
+def new_secure_hash(text_type):
     """
-    Returns either a sha1 hash object (if called with no arguments), or a
-    hexdigest of the sha1 hash of the argument `text_type`.
+    Returns the hexdigest of the sha1 hash of the argument `text_type`.
     """
-    if text_type:
-        return sha1(text_type).hexdigest()
-    else:
-        return sha1()
+    assert text_type is not None
+    return sha1(smart_str(text_type)).hexdigest()
 
 
 def hmac_new(key, value):
-    return hmac.new(key, value, sha).hexdigest()
+    return hmac.new(smart_str(key), smart_str(value), sha).hexdigest()
 
 
 def is_hashable(value):

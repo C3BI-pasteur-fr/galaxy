@@ -1,3 +1,4 @@
+<%namespace name="galaxy_client" file="/galaxy_client_app.mako" />
 <!DOCTYPE HTML>
 <html>
     <!--js-app.mako-->
@@ -14,70 +15,48 @@
             | ${app.config.brand}
             %endif
         </title>
+        
         ## relative href for site root
         <link rel="index" href="${ h.url_for( '/' ) }"/>
+        
         ## TODO: use loaders to move everything but the essentials below the fold
-        ${ h.css(
-            'jquery.rating',
-            'jquery-ui/smoothness/jquery-ui',
-            ## base needs to come after jquery-ui because of ui-button, ui- etc. name collision
+        ${ h.dist_css(
             'base',
+        )}
+        ${ h.css(
+            'jquery-ui/smoothness/jquery-ui',
             'bootstrap-tour',
         )}
-        ${ page_setup() }
     </head>
 
     <body scroll="no" class="full-content">
         ${ js_disabled_warning() }
-
-        ## js libraries and bundled js app
-        ${ h.js(
-            'libs/require',
-            'bundled/libs.bundled',
-            'bundled/' + js_app_name + '.bundled'
-        )}
-        <script type="text/javascript">
-            window.jQuery = window.jquery = window.$;
-            define( 'jquery', [], function(){ return window.$; })
-            require.config({
-                baseUrl: "${h.url_for('/static/scripts') }",
-                shim: {
-                    "libs/underscore": {
-                        exports: "_"
-                    },
-                    "libs/backbone": {
-                        deps: [ 'jquery', 'libs/underscore' ],
-                        exports: "Backbone"
-                    }
-                },
-                // cache busting using time server was restarted
-                urlArgs: 'v=${app.server_starttime}',
-            });
-            ${js_app_entry_fn}(
-                ${ h.dumps( options ) },
-                ${ h.dumps( bootstrapped ) }
-            );
-        </script>
+        ${ javascripts() }
+        ${ javascript_app() }
     </body>
 </html>
 
-## ============================================================================
-<%def name="page_setup()">
-    ## Send js errors to Sentry server if configured
-    %if app.config.sentry_dsn:
-    ${h.js( "libs/raven" )}
-    <script>
-        Raven.config('${app.config.sentry_dsn_public}').install();
-        %if trans.user:
-            Raven.setUser( { email: "${trans.user.email|h}" } );
-        %endif
-    </script>
-    %endif
+<%def name="javascripts()">
+    ${ h.dist_js(
+        'libs.bundled',
+        '%s.bundled' % js_app_name
+    )}
+</%def>
+
+<%def name="javascript_app()">
 
     <script type="text/javascript">
-        // this is needed *before* the app code is loaded - many MVC access Galaxy.root for their url
-        // TODO: change this by using a common Backbone.Model base class and url fn
-        window.Galaxy = { root: '${ options[ "root" ] }' };
+        console.debug("Initializing javascript application:", "${js_app_entry_fn}");
+
+        // js-app.mako
+        var options = ${ h.dumps( options ) };
+        var bootstrapped = ${ h.dumps( bootstrapped ) };
+
+        config.set({
+            options: options,
+            bootstrapped: bootstrapped,
+            form_input_auto_focus: ${h.to_js_bool(form_input_auto_focus)}
+        });
     </script>
 
     %if not form_input_auto_focus is UNDEFINED and form_input_auto_focus:
@@ -91,21 +70,18 @@
     </script>
     %endif
 
-    ## google analytics
+    ${ galaxy_client.config_sentry(app) }
     %if app.config.ga_code:
-    <script type="text/javascript">
-        (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-        (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-        m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-        })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
-        ga('create', '${app.config.ga_code}', 'auto');
-        ga('send', 'pageview');
-    </script>
+        ${ galaxy_client.config_google_analytics(app.config.ga_code) }
     %endif
-
+    %if app.config.plausible_server and app.config.plausible_domain:
+            ${ galaxy_client.config_plausible_analytics(app.config.plausible_server, app.config.plausible_domain) }
+    %endif
+    %if app.config.matomo_server and app.config.matomo_site_id:
+            ${ galaxy_client.config_matomo_analytics(app.config.matomo_server, app.config.matomo_site_id) }
+    %endif
 </%def>
 
-## ============================================================================
 <%def name="js_disabled_warning()">
     <noscript>
         <div class="overlay overlay-background noscript-overlay">

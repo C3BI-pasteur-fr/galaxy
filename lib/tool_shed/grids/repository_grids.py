@@ -7,9 +7,9 @@ from sqlalchemy import and_, false, or_, true
 import tool_shed.grids.util as grids_util
 import tool_shed.repository_types.util as rt_util
 import tool_shed.util.shed_util_common as suc
-from galaxy.webapps.reports.framework import grids
-from galaxy.webapps.tool_shed import model
+from galaxy.web.legacy_framework import grids
 from tool_shed.util import hg_util, metadata_util, repository_util
+from tool_shed.webapp import model
 
 log = logging.getLogger(__name__)
 
@@ -57,12 +57,7 @@ class CategoryGrid(grids.Grid):
                            attach_popup=False)
     ]
     # Override these
-    default_filter = {}
-    global_actions = []
-    operations = []
-    standard_filters = []
     num_rows_per_page = 50
-    use_paging = False
 
 
 class RepositoryGrid(grids.Grid):
@@ -85,7 +80,7 @@ class RepositoryGrid(grids.Grid):
 
         def get_value(self, trans, grid, repository):
             """Display the current repository heads."""
-            repo = hg_util.get_repo_for_repository(trans.app, repository=repository, repo_path=None, create=False)
+            repo = repository.hg_repo
             heads = hg_util.get_repository_heads(repo)
             multiple_heads = len(heads) > 1
             if multiple_heads:
@@ -93,7 +88,7 @@ class RepositoryGrid(grids.Grid):
             else:
                 heads_str = ''
             for ctx in heads:
-                heads_str += '%s<br/>' % hg_util.get_revision_label_from_ctx(ctx, include_date=True)
+                heads_str += f'{hg_util.get_revision_label_from_ctx(ctx, include_date=True)}<br/>'
             heads_str.rstrip('<br/>')
             if multiple_heads:
                 heads_str += '</font>'
@@ -109,16 +104,16 @@ class RepositoryGrid(grids.Grid):
             # A repository's metadata revisions may not all be installable, as some may contain only invalid tools.
             select_field = grids_util.build_changeset_revision_select_field(trans, repository, downloadable=False)
             if len(select_field.options) > 1:
-                tmpl = "<select name='%s'>" % select_field.name
+                tmpl = f"<select name='{select_field.name}'>"
                 for o in select_field.options:
-                    tmpl += "<option value='%s'>%s</option>" % (o[1], o[0])
+                    tmpl += f"<option value='{o[1]}'>{o[0]}</option>"
                 tmpl += "</select>"
                 return tmpl
             elif len(select_field.options) == 1:
                 option_items = select_field.options[0][0]
                 rev_label, rev_date = option_items.split(' ')
-                rev_date = '<i><font color="#666666">%s</font></i>' % rev_date
-                return '%s %s' % (rev_label, rev_date)
+                rev_date = f'<i><font color="#666666">{rev_date}</font></i>'
+                return f'{rev_label} {rev_date}'
             return ''
 
     class LatestInstallableRevisionColumn(grids.GridColumn):
@@ -140,7 +135,7 @@ class RepositoryGrid(grids.Grid):
 
         def get_value(self, trans, grid, repository):
             """Display the repository tip revision label."""
-            return escape_html(repository.revision(trans.app))
+            return escape_html(repository.revision())
 
     class DescriptionColumn(grids.TextColumn):
 
@@ -231,11 +226,10 @@ class RepositoryGrid(grids.Grid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    standard_filters = []
     default_filter = dict(deleted="False")
     num_rows_per_page = 50
-    use_paging = False
+    use_paging = True
+    allow_fetching_all_results = False
 
     def build_initial_query(self, trans, **kwd):
         filter = trans.app.repository_grid_filter_manager.get_filter(trans)
@@ -353,8 +347,6 @@ class MatchedRepositoryGrid(grids.Grid):
                    attach_popup=False)
     ]
     operations = [grids.GridOperation("Install to Galaxy", allow_multiple=True)]
-    standard_filters = []
-    default_filter = {}
     num_rows_per_page = 50
     use_paging = False
 
@@ -364,10 +356,9 @@ class MatchedRepositoryGrid(grids.Grid):
         if match_tuples:
             for match_tuple in match_tuples:
                 repository_id, changeset_revision = match_tuple
-                clause_list.append("%s=%d and %s='%s'" % (model.RepositoryMetadata.table.c.repository_id,
-                                                          int(repository_id),
-                                                          model.RepositoryMetadata.table.c.changeset_revision,
-                                                          changeset_revision))
+                clause_list.append(and_(
+                    model.RepositoryMetadata.repository_id == int(repository_id),
+                    model.RepositoryMetadata.changeset_revision == changeset_revision))
             return trans.sa_session.query(model.RepositoryMetadata) \
                                    .join(model.Repository) \
                                    .filter(and_(model.Repository.table.c.deleted == false(),
@@ -409,8 +400,6 @@ class MyWritableRepositoriesGrid(RepositoryGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         # TODO: improve performance by adding a db table associating users with repositories for which they have write access.
@@ -419,7 +408,7 @@ class MyWritableRepositoriesGrid(RepositoryGrid):
         for repository in trans.sa_session.query(model.Repository) \
                                           .filter(and_(model.Repository.table.c.deprecated == false(),
                                                        model.Repository.table.c.deleted == false())):
-            allow_push = repository.allow_push(trans.app)
+            allow_push = repository.allow_push()
             if allow_push:
                 allow_push_usernames = allow_push.split(',')
                 if username in allow_push_usernames:
@@ -450,11 +439,7 @@ class RepositoriesByUserGrid(RepositoryGrid):
                                       key="Category.name",
                                       attach_popup=False)
     ]
-    operations = []
-    standard_filters = []
     default_filter = dict(deleted="False")
-    num_rows_per_page = 50
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         decoded_user_id = trans.security.decode_id(kwd['user_id'])
@@ -516,8 +501,6 @@ class RepositoriesInCategoryGrid(RepositoryGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         category_id = kwd.get('id', None)
@@ -594,8 +577,6 @@ class RepositoriesIOwnGrid(RepositoryGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         return trans.sa_session.query(model.Repository) \
@@ -622,8 +603,6 @@ class RepositoriesICanAdministerGrid(RepositoryGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         """
@@ -672,8 +651,6 @@ class RepositoriesMissingToolTestComponentsGrid(RepositoryGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         # Filter by latest installable revisions that contain tools with missing tool test components.
@@ -701,8 +678,6 @@ class MyWritableRepositoriesMissingToolTestComponentsGrid(RepositoriesMissingToo
     # This grid displays only the latest installable revision of each repository.
     title = "Repositories I can change with missing tool test components"
     columns = [col for col in RepositoriesMissingToolTestComponentsGrid.columns]
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         # First get all repositories that the current user is authorized to update.
@@ -711,7 +686,7 @@ class MyWritableRepositoriesMissingToolTestComponentsGrid(RepositoriesMissingToo
         for repository in trans.sa_session.query(model.Repository) \
                                           .filter(and_(model.Repository.table.c.deprecated == false(),
                                                        model.Repository.table.c.deleted == false())):
-            allow_push = repository.allow_push(trans.app)
+            allow_push = repository.allow_push()
             if allow_push:
                 allow_push_usernames = allow_push.split(',')
                 if username in allow_push_usernames:
@@ -760,7 +735,6 @@ class DeprecatedRepositoriesIOwnGrid(RepositoriesIOwnGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         return trans.sa_session.query(model.Repository) \
@@ -811,8 +785,6 @@ class RepositoriesWithInvalidToolsGrid(RepositoryGrid):
                                   link=(lambda item: dict(operation="repositories_by_user", id=item.id)),
                                   attach_popup=False)
     ]
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         # Filter by latest metadata revisions that contain invalid tools.
@@ -840,8 +812,6 @@ class MyWritableRepositoriesWithInvalidToolsGrid(RepositoriesWithInvalidToolsGri
     # This grid displays only the latest installable revision of each repository.
     title = "Repositories I can change with invalid tools"
     columns = [col for col in RepositoriesWithInvalidToolsGrid.columns]
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         # First get all repositories that the current user is authorized to update.
@@ -850,7 +820,7 @@ class MyWritableRepositoriesWithInvalidToolsGrid(RepositoriesWithInvalidToolsGri
         for repository in trans.sa_session.query(model.Repository) \
                                           .filter(and_(model.Repository.table.c.deprecated == false(),
                                                        model.Repository.table.c.deleted == false())):
-            allow_push = repository.allow_push(trans.app)
+            allow_push = repository.allow_push()
             if allow_push:
                 allow_push_usernames = allow_push.split(',')
                 if username in allow_push_usernames:
@@ -970,11 +940,10 @@ class RepositoryMetadataGrid(grids.Grid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    standard_filters = []
     default_filter = dict(malicious="False")
     num_rows_per_page = 50
-    use_paging = False
+    use_paging = True
+    allow_fetching_all_results = False
 
     def build_initial_query(self, trans, **kwd):
         return trans.sa_session.query(model.RepositoryMetadata) \
@@ -1010,21 +979,15 @@ class RepositoryDependenciesGrid(RepositoryMetadataGrid):
                                                                                                               required_repository_id,
                                                                                                               changeset_revision)
                                 if not required_repository_metadata:
-                                    repo = hg_util.get_repo_for_repository(trans.app,
-                                                                           repository=required_repository,
-                                                                           repo_path=None,
-                                                                           create=False)
                                     updated_changeset_revision = \
-                                        metadata_util.get_next_downloadable_changeset_revision(required_repository,
-                                                                                               repo,
-                                                                                               changeset_revision)
+                                        metadata_util.get_next_downloadable_changeset_revision(trans.app, required_repository, changeset_revision)
                                     required_repository_metadata = \
                                         metadata_util.get_repository_metadata_by_repository_id_changeset_revision(trans.app,
                                                                                                                   required_repository_id,
                                                                                                                   updated_changeset_revision)
                                 required_repository_metadata_id = trans.security.encode_id(required_repository_metadata.id)
-                                rd_line += '<a href="browse_repository_dependencies?operation=view_or_manage_repository&id=%s">' % (required_repository_metadata_id)
-                            rd_line += 'Repository <b>%s</b> revision <b>%s</b> owned by <b>%s</b>' % (escape_html(name), escape_html(owner), escape_html(changeset_revision))
+                                rd_line += f'<a href="browse_repository_dependencies?operation=view_or_manage_repository&id={required_repository_metadata_id}">'
+                            rd_line += f'Repository <b>{escape_html(name)}</b> revision <b>{escape_html(owner)}</b> owned by <b>{escape_html(changeset_revision)}</b>'
                             if required_repository:
                                 rd_line += '</a>'
                             rd_str.append(rd_line)
@@ -1085,8 +1048,8 @@ class DatatypesGrid(RepositoryMetadataGrid):
                         sorted_datatype_tups = sorted(datatype_tups, key=lambda datatype_tup: datatype_tup[0])
                         for datatype_tup in sorted_datatype_tups:
                             extension, datatype = datatype_tup[:2]
-                            datatype_str = '<a href="browse_datatypes?operation=view_or_manage_repository&id=%s">' % trans.security.encode_id(repository_metadata.id)
-                            datatype_str += '<b>%s:</b> %s' % (escape_html(extension), escape_html(datatype))
+                            datatype_str = f'<a href="browse_datatypes?operation=view_or_manage_repository&id={trans.security.encode_id(repository_metadata.id)}">'
+                            datatype_str += f'<b>{escape_html(extension)}:</b> {escape_html(datatype)}'
                             datatype_str += '</a>'
                             datatype_list.append(datatype_str)
             return '<br />'.join(datatype_list)
@@ -1143,9 +1106,9 @@ class ToolDependenciesGrid(RepositoryMetadataGrid):
                             env_dicts = tds_dict['set_environment']
                             num_env_dicts = len(env_dicts)
                             if num_env_dicts > 0:
-                                td_str += '<a href="browse_datatypes?operation=view_or_manage_repository&id=%s">' % trans.security.encode_id(repository_metadata.id)
+                                td_str += f'<a href="browse_datatypes?operation=view_or_manage_repository&id={trans.security.encode_id(repository_metadata.id)}">'
                                 td_str += '<b>environment:</b> '
-                                td_str += ', '.join([escape_html(env_dict['name']) for env_dict in env_dicts])
+                                td_str += ', '.join(escape_html(env_dict['name']) for env_dict in env_dicts)
                                 td_str += '</a><br/>'
                         for index, key in enumerate(sorted_keys):
                             if key == 'set_environment':
@@ -1154,8 +1117,8 @@ class ToolDependenciesGrid(RepositoryMetadataGrid):
                             # Example: {"name": "bwa", "type": "package", "version": "0.5.9"}
                             name = td_dict['name']
                             version = td_dict['version']
-                            td_str += '<a href="browse_datatypes?operation=view_or_manage_repository&id=%s">' % trans.security.encode_id(repository_metadata.id)
-                            td_str += '<b>%s</b> version <b>%s</b>' % (escape_html(name), escape_html(version))
+                            td_str += f'<a href="browse_datatypes?operation=view_or_manage_repository&id={trans.security.encode_id(repository_metadata.id)}">'
+                            td_str += f'<b>{escape_html(name)}</b> version <b>{escape_html(version)}</b>'
                             td_str += '</a>'
                             if index < num_keys - 1:
                                 td_str += '<br/>'
@@ -1215,8 +1178,8 @@ class ToolsGrid(RepositoryMetadataGrid):
                         sorted_tool_tups = sorted(tool_tups, key=lambda tool_tup: tool_tup[0])
                         for tool_tup in sorted_tool_tups:
                             tool_id, version = tool_tup[:2]
-                            tool_str = '<a href="browse_datatypes?operation=view_or_manage_repository&id=%s">' % trans.security.encode_id(repository_metadata.id)
-                            tool_str += '<b>%s:</b> %s' % (escape_html(tool_id), escape_html(version))
+                            tool_str = f'<a href="browse_datatypes?operation=view_or_manage_repository&id={trans.security.encode_id(repository_metadata.id)}">'
+                            tool_str += f'<b>{escape_html(tool_id)}:</b> {escape_html(version)}'
                             tool_str += '</a>'
                             tool_line.append(tool_str)
             return '<br />'.join(tool_line)
@@ -1288,12 +1251,7 @@ class ValidCategoryGrid(CategoryGrid):
                            attach_popup=False)
     ]
     # Override these
-    default_filter = {}
-    global_actions = []
-    operations = []
-    standard_filters = []
     num_rows_per_page = 50
-    use_paging = False
 
 
 class ValidRepositoryGrid(RepositoryGrid):
@@ -1329,9 +1287,9 @@ class ValidRepositoryGrid(RepositoryGrid):
             """Display a SelectField whose options are the changeset_revision strings of all download-able revisions of this repository."""
             select_field = grids_util.build_changeset_revision_select_field(trans, repository, downloadable=True)
             if len(select_field.options) > 1:
-                tmpl = "<select name='%s'>" % select_field.name
+                tmpl = f"<select name='{select_field.name}'>"
                 for o in select_field.options:
-                    tmpl += "<option value='%s'>%s</option>" % (o[1], o[0])
+                    tmpl += f"<option value='{o[1]}'>{o[0]}</option>"
                 tmpl += "</select>"
                 return tmpl
             elif len(select_field.options) == 1:
@@ -1362,8 +1320,6 @@ class ValidRepositoryGrid(RepositoryGrid):
                                               key="free-text-search",
                                               visible=False,
                                               filterable="standard"))
-    operations = []
-    use_paging = False
 
     def build_initial_query(self, trans, **kwd):
         filter = trans.app.repository_grid_filter_manager.get_filter(trans)

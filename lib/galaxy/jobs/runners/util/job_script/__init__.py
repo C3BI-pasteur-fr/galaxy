@@ -3,24 +3,28 @@ import os
 import subprocess
 import time
 from string import Template
+from typing import Any, Dict
 
 from pkg_resources import resource_string
-from six import text_type
 
-from galaxy.util import unicodify
+from galaxy.job_execution.setup import JobIO
+from galaxy.util import (
+    RWXR_XR_X,
+    unicodify,
+)
 
 log = logging.getLogger(__name__)
 DEFAULT_SHELL = '/bin/bash'
 
 DEFAULT_JOB_FILE_TEMPLATE = Template(
-    resource_string(__name__, 'DEFAULT_JOB_FILE_TEMPLATE.sh').decode('UTF-8')
+    unicodify(resource_string(__name__, 'DEFAULT_JOB_FILE_TEMPLATE.sh'))
 )
 
 SLOTS_STATEMENT_CLUSTER_DEFAULT = \
-    resource_string(__name__, 'CLUSTER_SLOTS_STATEMENT.sh').decode('UTF-8')
+    unicodify(resource_string(__name__, 'CLUSTER_SLOTS_STATEMENT.sh'))
 
 MEMORY_STATEMENT_DEFAULT = \
-    resource_string(__name__, 'MEMORY_STATEMENT.sh').decode('UTF-8')
+    unicodify(resource_string(__name__, 'MEMORY_STATEMENT.sh'))
 
 SLOTS_STATEMENT_SINGLE = """
 GALAXY_SLOTS="1"
@@ -40,7 +44,7 @@ DEFAULT_INTEGRITY_CHECK = True
 DEFAULT_INTEGRITY_COUNT = 35
 DEFAULT_INTEGRITY_SLEEP = .25
 REQUIRED_TEMPLATE_PARAMS = ['working_directory', 'command', 'exit_code_path']
-OPTIONAL_TEMPLATE_PARAMS = {
+OPTIONAL_TEMPLATE_PARAMS: Dict[str, Any] = {
     'galaxy_lib': None,
     'galaxy_virtual_env': None,
     'headers': '',
@@ -77,13 +81,13 @@ def job_script(template=DEFAULT_JOB_FILE_TEMPLATE, **kwds):
     >>> script.startswith('#!/bin/bash\\n\\n#PBS -test\\n')
     True
     >>> script = job_script(working_directory='wd', command='uptime', exit_code_path='ec', slots_statement='GALAXY_SLOTS="$SLURM_JOB_NUM_NODES"')
-    >>> script.find('GALAXY_SLOTS="$SLURM_JOB_NUM_NODES"\\nexport GALAXY_SLOTS\\n') > 0
+    >>> script.find('GALAXY_SLOTS="$SLURM_JOB_NUM_NODES"\\n') > 0
     True
     >>> script = job_script(working_directory='wd', command='uptime', exit_code_path='ec', memory_statement='GALAXY_MEMORY_MB="32768"')
     >>> script.find('GALAXY_MEMORY_MB="32768"\\n') > 0
     True
     """
-    if any([param not in kwds for param in REQUIRED_TEMPLATE_PARAMS]):
+    if any(param not in kwds for param in REQUIRED_TEMPLATE_PARAMS):
         raise Exception("Failed to create job_script, a required parameter is missing.")
     job_instrumenter = kwds.get("job_instrumenter", None)
     if job_instrumenter:
@@ -103,31 +107,26 @@ def job_script(template=DEFAULT_JOB_FILE_TEMPLATE, **kwds):
     return template.safe_substitute(template_params)
 
 
-def check_script_integrity(config):
-    return getattr(config, "check_job_script_integrity", DEFAULT_INTEGRITY_CHECK)
-
-
-def write_script(path, contents, config, mode=0o755):
+def write_script(
+        path,
+        contents,
+        job_io: JobIO,
+        mode=RWXR_XR_X):
     dir = os.path.dirname(path)
     if not os.path.exists(dir):
         os.makedirs(dir)
 
-    with open(path, 'w') as f:
-        if isinstance(contents, text_type):
-            contents = contents.encode("UTF-8")
-        f.write(contents)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(unicodify(contents))
     os.chmod(path, mode)
-    _handle_script_integrity(path, config)
+    if job_io.check_job_script_integrity:
+        _handle_script_integrity(path, job_io.check_job_script_integrity_count, job_io.check_job_script_integrity_sleep)
 
 
-def _handle_script_integrity(path, config):
-    if not check_script_integrity(config):
-        return
+def _handle_script_integrity(path, check_job_script_integrity_count, check_job_script_integrity_sleep):
 
     script_integrity_verified = False
-    count = getattr(config, "check_job_script_integrity_count", DEFAULT_INTEGRITY_COUNT)
-    sleep_amt = getattr(config, "check_job_script_integrity_sleep", DEFAULT_INTEGRITY_SLEEP)
-    for i in range(count):
+    for _ in range(check_job_script_integrity_count):
         try:
             returncode = subprocess.call([path], env={"ABC_TEST_JOB_SCRIPT_INTEGRITY_XYZ": "1"})
             if returncode == 42:
@@ -149,14 +148,13 @@ def _handle_script_integrity(path, config):
         except Exception as exc:
             log.debug("Script not available yet: %s", unicodify(exc))
 
-        time.sleep(sleep_amt)
+        time.sleep(check_job_script_integrity_sleep)
 
     if not script_integrity_verified:
-        raise Exception("Failed to write job script '%s', could not verify job script integrity." % path)
+        raise Exception(f"Failed to write job script '{path}', could not verify job script integrity.")
 
 
 __all__ = (
-    'check_script_integrity',
     'job_script',
     'write_script',
     'INTEGRITY_INJECTION',

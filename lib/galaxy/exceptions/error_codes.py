@@ -3,8 +3,11 @@
 See the file error_codes.json for actual error code descriptions.
 """
 from json import loads
+from typing import Dict
 
 from pkg_resources import resource_string
+
+from galaxy.util import unicodify
 
 
 # Error codes are provided as a convience to Galaxy API clients, but at this
@@ -13,7 +16,7 @@ from pkg_resources import resource_string
 UNKNOWN_ERROR_MESSAGE = "Unknown error occurred while processing request."
 
 
-class ErrorCode(object):
+class ErrorCode:
     """Small class allowing object representation for error descriptions loaded from JSON."""
 
     def __init__(self, code, default_error_message):
@@ -42,7 +45,10 @@ def _from_dict(entry):
     return (name, ErrorCode(code, message))
 
 
-error_codes_json = resource_string(__name__, 'error_codes.json').decode("UTF-8")
+error_codes_json = unicodify(resource_string(__name__, 'error_codes.json'))
+error_codes_by_name: Dict[str, ErrorCode] = {}
+
 for entry in loads(error_codes_json):
     name, error_code_obj = _from_dict(entry)
     globals()[name] = error_code_obj
+    error_codes_by_name[name] = error_code_obj

@@ -2,6 +2,7 @@
 Batch API middleware
 
 Adds a single route to the installation that:
+
   1. accepts a POST call containing a JSON array of 'http-like' JSON
      dictionaries.
   2. Each dictionary describes a single API call within the batch and is routed
@@ -23,39 +24,48 @@ import io
 import json
 import logging
 import re
+from urllib.parse import urlparse
 
 import routes
-from paste import httpexceptions
-from six.moves.urllib.parse import urlparse
+import webob.exc
+
+from galaxy.util import (
+    smart_str,
+    unicodify
+)
 
 log = logging.getLogger(__name__)
 
 
-class BatchMiddleware(object):
+class BatchMiddleware:
     """
     Adds a URL endpoint for processing batch API calls formatted as a JSON
     array of JSON dictionaries. These dictionaries are in the form:
-    [
-        {
-            "url": "/api/histories",
-            "type": "POST",
-            "body": "{ \"name\": \"New History Name\" }"
-        },
-        ...
-    ]
+
+    .. code-block: json
+
+        [
+            {
+                "url": "/api/histories",
+                "type": "POST",
+                "body": "{ \"name\": \"New History Name\" }"
+            },
+            ...
+        ]
 
     where:
+
       * `url` is the url for the API call to be made including any query string
       * `type` is the HTTP method used (e.g. 'POST', 'PUT') - defaults to 'GET'
       * `body` is the text body of the request (optional)
       * `contentType` content-type request header (defaults to application/json)
     """
     DEFAULT_CONFIG = {
-        'route' : '/api/batch',
-        'allowed_routes' : [
-            '^api\/users.*',
-            '^api\/histories.*',
-            '^api\/jobs.*',
+        'route': '/api/batch',
+        'allowed_routes': [
+            r'^api\/users.*',
+            r'^api\/histories.*',
+            r'^api\/jobs.*',
         ]
     }
 
@@ -92,19 +102,19 @@ class BatchMiddleware(object):
             response = self._process_batch_request(request, request_environ, start_response)
             responses.append(response)
 
-        batch_response_body = json.dumps(responses)
+        batch_response_body = smart_str(json.dumps(responses))
         start_response('200 OK', [
-            ('Content-Length', len(batch_response_body)),
+            ('Content-Length', str(len(batch_response_body))),
             ('Content-Type', 'application/json'),
         ])
-        return batch_response_body
+        return [batch_response_body]
 
     def _read_post_payload(self, environ):
         request_body_size = int(environ.get('CONTENT_LENGTH', 0))
         request_body = environ['wsgi.input'].read(request_body_size) or '{}'
         # TODO: json decode error handling
         # log.debug( 'request_body: (%s)\n%s', type( request_body ), request_body )
-        payload = json.loads(request_body)
+        payload = json.loads(unicodify(request_body))
         return payload
 
     def _is_allowed_route(self, route):
@@ -116,9 +126,9 @@ class BatchMiddleware(object):
 
     def _disallowed_route_response(self, route):
         return dict(status=403, headers=self._default_headers(), body={
-            'err_msg'   : 'Disallowed route used for batch operation',
-            'route'     : route,
-            'allowed'   : self.config['allowed_routes']
+            'err_msg': 'Disallowed route used for batch operation',
+            'route': route,
+            'allowed': self.config['allowed_routes']
         })
 
     def _build_request_environ(self, original_environ, request):
@@ -132,21 +142,18 @@ class BatchMiddleware(object):
         # TODO: for now, do not overwrite the other headers used in the main api/batch request
         request_environ['CONTENT_TYPE'] = request.get('contentType', 'application/json')
         request_environ['REQUEST_METHOD'] = request.get('method', request.get('type', 'GET'))
-        url = '{0}://{1}{2}'.format(request_environ.get('wsgi.url_scheme'),
-                                    request_environ.get('HTTP_HOST'),
-                                    request['url'])
+        url = '{}://{}{}'.format(request_environ.get('wsgi.url_scheme'),
+                                 request_environ.get('HTTP_HOST'),
+                                 request['url'])
         parsed = urlparse(url)
         request_environ['PATH_INFO'] = parsed.path
         request_environ['QUERY_STRING'] = parsed.query
 
-        request_body = request.get('body', u'')
-        # set this to None so webob/request will copy the body using the raw bytes
-        # if we set it, webob will try to use the buffer interface on a unicode string
-        request_environ['CONTENT_LENGTH'] = None
-        # this may well need to change in py3
-        request_body = io.BytesIO(bytearray(request_body, encoding='utf8'))
+        request_body = request.get('body', '')
+        request_body = request_body.encode('utf8')
+        request_environ['CONTENT_LENGTH'] = len(request_body)
+        request_body = io.BytesIO(request_body)
         request_environ['wsgi.input'] = request_body
-        # log.debug( 'request_environ:\n%s', pprint.pformat( request_environ ) )
 
         return request_environ
 
@@ -161,7 +168,7 @@ class BatchMiddleware(object):
         try:
             response = self.galaxy.handle_request(environ, start_response, body_renderer=self.body_renderer)
         # handle errors from galaxy.handle_request (only 404s)
-        except httpexceptions.HTTPNotFound:
+        except webob.exc.HTTPNotFound:
             response = dict(status=404, headers=self._default_headers(), body={})
         return response
 
@@ -171,14 +178,14 @@ class BatchMiddleware(object):
         return dict(
             status=trans.response.status,
             headers=trans.response.headers,
-            body=json.loads(self.galaxy.make_body_iterable(trans, body)[0])
+            body=json.loads(unicodify(self.galaxy.make_body_iterable(trans, body)[0]))
         )
 
     def _default_headers(self):
         return {
             'x-frame-options': 'SAMEORIGIN',
-            'content-type'   : 'application/json',
-            'cache-control'  : 'max-age=0,no-cache,no-store'
+            'content-type': 'application/json',
+            'cache-control': 'max-age=0,no-cache,no-store'
         }
 
     def handle_exception(self, environ):

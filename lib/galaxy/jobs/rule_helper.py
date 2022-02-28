@@ -9,13 +9,14 @@ from galaxy import (
     model,
     util
 )
+from galaxy.tool_util.deps.dependencies import ToolInfo
 
 log = logging.getLogger(__name__)
 
 VALID_JOB_HASH_STRATEGIES = ["job", "user", "history", "workflow_invocation"]
 
 
-class RuleHelper(object):
+class RuleHelper:
     """ Utility to allow job rules to interface cleanly with the rest of
     Galaxy and shield them from low-level details of models, metrics, etc....
 
@@ -26,9 +27,14 @@ class RuleHelper(object):
     def __init__(self, app):
         self.app = app
 
-    def supports_docker(self, job_or_tool):
-        """ Job rules can pass this function a job, job_wrapper, or tool and
-        determine if the underlying tool believes it can be containered.
+    def supports_container(self, job_or_tool, container_type):
+        """
+        Job rules can pass this function a job, job_wrapper, or tool and
+        determine if the underlying tool believes it can be run with a specific container type.
+
+        :param job_or_tool:
+        :param container_type: either "docker" or "singularity" currently
+        :return: true if the tool supports the specified container type.
         """
         # Not a ton of logic in this method - but the idea is to shield rule
         # developers from the details and they shouldn't have to know how to
@@ -42,11 +48,28 @@ class RuleHelper(object):
         else:
             # Have a Job object.
             tool = self.app.toolbox.get_tool(job_or_tool.tool_id, tool_version=job_or_tool.tool_version)
-        # Can't import at top because circular import between galaxy.tools and galaxy.jobs.
-        import galaxy.tools.deps.containers
-        tool_info = galaxy.tools.deps.containers.ToolInfo(tool.containers, tool.requirements, tool.requires_galaxy_python_environment, tool.docker_env_pass_through)
-        container_description = self.app.container_finder.find_best_container_description(["docker"], tool_info)
+        tool_info = ToolInfo(tool.containers, tool.requirements, tool.requires_galaxy_python_environment,
+                             tool.docker_env_pass_through)
+        container_description = self.app.container_finder.find_best_container_description([container_type], tool_info)
         return container_description is not None
+
+    def supports_docker(self, job_or_tool):
+        """
+        Returns true if the tool or job supports running on a singularity container.
+
+        :param job_or_tool: the job or tool to test for.
+        :return: true if the tool/job can run in docker.
+        """
+        return self.supports_container(job_or_tool, container_type="docker")
+
+    def supports_singularity(self, job_or_tool):
+        """
+        Returns true if the tool or job supports running on a singularity container.
+
+        :param job_or_tool: the job or tool to test for.
+        :return: true if the tool/job can run in singularity.
+        """
+        return self.supports_container(job_or_tool, container_type="singularity")
 
     def job_count(
         self,
@@ -154,7 +177,7 @@ class RuleHelper(object):
 
         if not isinstance(hash_value, int):
             # Convert hash_value string into index
-            as_hex = hashlib.md5(hash_value).hexdigest()
+            as_hex = hashlib.md5(util.smart_str(hash_value)).hexdigest()
             hash_value = int(as_hex, 16)
         # else assumed to be 'random' int from 0-~Inf
         random_index = hash_value % len(lst)
@@ -188,7 +211,7 @@ class RuleHelper(object):
         invocation for jobs outside of workflows.
         """
         if hash_by not in VALID_JOB_HASH_STRATEGIES:
-            message = "Do not know how to hash jobs by %s, must be one of %s" % (hash_by, VALID_JOB_HASH_STRATEGIES)
+            message = f"Do not know how to hash jobs by {hash_by}, must be one of {VALID_JOB_HASH_STRATEGIES}"
             raise Exception(message)
 
         if hash_by == "workflow_invocation":

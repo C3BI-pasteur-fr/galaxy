@@ -3,23 +3,23 @@ API Controller providing Galaxy Webhooks
 """
 import imp
 import logging
+from typing import Any
 
-from galaxy.web import _future_expose_api_anonymous_and_sessionless as \
-    expose_api_anonymous_and_sessionless
-from galaxy.web.base.controller import BaseAPIController
+from galaxy.web import expose_api_anonymous_and_sessionless
+from galaxy.webapps.base.webapp import GalaxyWebTransaction
+from . import BaseGalaxyAPIController
 
 log = logging.getLogger(__name__)
 
 
-class WebhooksController(BaseAPIController):
-    def __init__(self, app):
-        super(WebhooksController, self).__init__(app)
+class WebhooksController(BaseGalaxyAPIController):
 
     @expose_api_anonymous_and_sessionless
-    def all_webhooks(self, trans, **kwd):
+    def all_webhooks(self, trans: GalaxyWebTransaction, **kwd):
         """
-        *GET /api/webhooks/
-        Returns all webhooks
+        GET /api/webhooks/
+
+        Return all webhooks.
         """
         return [
             webhook.to_dict()
@@ -27,22 +27,26 @@ class WebhooksController(BaseAPIController):
         ]
 
     @expose_api_anonymous_and_sessionless
-    def webhook_data(self, trans, webhook_id, **kwd):
+    def webhook_data(self, trans: Any, webhook_id, **kwd):
         """
-        *GET /api/webhooks/{webhook_id}/data/{params}
-        Returns the result of executing helper function
+        GET /api/webhooks/{webhook_id}/data/{params}
+
+        Return the result of executing helper function.
         """
         params = {}
 
         for key, value in kwd.items():
             params[key] = value
 
-        webhook = (
+        webhook = next(
             webhook
             for webhook in self.app.webhooks_registry.webhooks
             if webhook.id == webhook_id
-        ).next()
+        )
 
-        return imp.load_source(webhook.path, webhook.helper).main(
-            trans, webhook, params,
-        ) if webhook and webhook.helper != '' else {}
+        if webhook and webhook.helper != '':
+            return imp.load_source(webhook.path, webhook.helper).main(  # type: ignore[attr-defined]
+                trans, webhook, params,
+            )
+        else:
+            return {}

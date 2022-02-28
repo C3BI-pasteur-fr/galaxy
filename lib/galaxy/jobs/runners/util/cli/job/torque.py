@@ -1,22 +1,9 @@
 from logging import getLogger
-try:
-    import xml.etree.cElementTree as et
-except ImportError:
-    import xml.etree.ElementTree as et
 
-try:
-    from galaxy.model import Job
-    job_states = Job.states
-except ImportError:
-    # Not in Galaxy, map Galaxy job states to Pulsar ones.
-    from galaxy.util import enum
-    job_states = enum(RUNNING='running', OK='complete', QUEUED='queued')
-
-from ..job import BaseJobExec
+from galaxy.util import parse_xml_string
+from ..job import BaseJobExec, job_states
 
 log = getLogger(__name__)
-
-ERROR_MESSAGE_UNRECOGNIZED_ARG = 'Unrecognized long argument passed to Torque CLI plugin: %s'
 
 
 argmap = {'destination': '-q',
@@ -43,10 +30,7 @@ argmap = {'destination': '-q',
 
 class Torque(BaseJobExec):
 
-    def __init__(self, **params):
-        self.params = {}
-        for k, v in params.items():
-            self.params[k] = v
+    ERROR_MESSAGE_UNRECOGNIZED_ARG = 'Unrecognized long argument passed to Torque CLI plugin: %s'
 
     def job_script_kwargs(self, ofile, efile, job_name):
         pbsargs = {'-o': ofile,
@@ -60,23 +44,23 @@ class Torque(BaseJobExec):
                     k = argmap[k]
                 pbsargs[k] = v
             except KeyError:
-                log.warning(ERROR_MESSAGE_UNRECOGNIZED_ARG % k)
+                log.warning(self.ERROR_MESSAGE_UNRECOGNIZED_ARG, k)
         template_pbsargs = ''
         for k, v in pbsargs.items():
-            template_pbsargs += '#PBS %s %s\n' % (k, v)
+            template_pbsargs += f'#PBS {k} {v}\n'
         return dict(headers=template_pbsargs)
 
     def submit(self, script_file):
-        return 'qsub %s' % script_file
+        return f'qsub {script_file}'
 
     def delete(self, job_id):
-        return 'qdel %s' % job_id
+        return f'qdel {job_id}'
 
     def get_status(self, job_ids=None):
         return 'qstat -x'
 
     def get_single_status(self, job_id):
-        return 'qstat -f %s' % job_id
+        return f'qstat -f {job_id}'
 
     def parse_status(self, status, job_ids):
         # in case there's noise in the output, find the big blob 'o xml
@@ -84,13 +68,13 @@ class Torque(BaseJobExec):
         rval = {}
         for line in status.strip().splitlines():
             try:
-                tree = et.fromstring(line.strip())
+                tree = parse_xml_string(line.strip())
                 assert tree.tag == 'Data'
                 break
             except Exception:
                 tree = None
         if tree is None:
-            log.warning('No valid qstat XML return from `qstat -x`, got the following: %s' % status)
+            log.warning(f'No valid qstat XML return from `qstat -x`, got the following: {status}')
             return None
         else:
             for job in tree.findall('Job'):
@@ -104,7 +88,7 @@ class Torque(BaseJobExec):
     def parse_single_status(self, status, job_id):
         for line in status.splitlines():
             line = line.split(' = ')
-            if line[0] == 'job_state':
+            if line[0].strip() == 'job_state':
                 return self._get_job_state(line[1].strip())
         # no state found, job has exited
         return job_states.OK
@@ -118,7 +102,7 @@ class Torque(BaseJobExec):
                 'C': job_states.OK
             }.get(state)
         except KeyError:
-            raise KeyError("Failed to map torque status code [%s] to job state." % state)
+            raise KeyError(f"Failed to map torque status code [{state}] to job state.")
 
 
 __all__ = ('Torque',)

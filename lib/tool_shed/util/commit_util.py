@@ -1,9 +1,9 @@
+import bz2
 import gzip
 import json
 import logging
 import os
 import shutil
-import sys
 import tempfile
 from collections import namedtuple
 
@@ -15,14 +15,9 @@ from galaxy.util.path import safe_relpath
 from tool_shed.tools.data_table_manager import ShedToolDataTableManager
 from tool_shed.util import basic_util, hg_util, shed_util_common as suc
 
-if sys.version_info < (3, 3):
-    import bz2file as bz2
-else:
-    import bz2
-
 log = logging.getLogger(__name__)
 
-UNDESIRABLE_DIRS = ['.hg', '.svn', '.git', '.cvs']
+UNDESIRABLE_DIRS = ['.hg', '.svn', '.git', '.cvs', '.idea']
 UNDESIRABLE_FILES = ['.hg_archival.txt', 'hgrc', '.DS_Store', 'tool_test_output.html', 'tool_test_output.json']
 
 
@@ -46,13 +41,14 @@ def check_archive(repository, archive):
             undesirable_files.append(member)
             continue
         head = tail = member.name
-        try:
-            while tail:
-                head, tail = os.path.split(head)
-                if tail in UNDESIRABLE_DIRS:
-                    undesirable_dirs.append(member)
-                    assert False
-        except AssertionError:
+        found_undesirable_dir = False
+        while tail:
+            head, tail = os.path.split(head)
+            if tail in UNDESIRABLE_DIRS:
+                undesirable_dirs.append(member)
+                found_undesirable_dir = True
+                break
+        if found_undesirable_dir:
             continue
         if repository.type == rt_util.REPOSITORY_SUITE_DEFINITION and member.name != rt_util.REPOSITORY_DEPENDENCY_DEFINITION_FILENAME:
             errors.append('Repositories of type <b>Repository suite definition</b> can contain only a single file named <b>repository_dependencies.xml</b>.')
@@ -72,7 +68,7 @@ def check_file_contents_for_email_alerts(app):
     See if any admin users have chosen to receive email alerts when a repository is updated.
     If so, the file contents of the update must be checked for inappropriate content.
     """
-    sa_session = app.model.context.current
+    sa_session = app.model.session
     admin_users = app.config.get("admin_users", "").split(",")
     for repository in sa_session.query(app.model.Repository) \
                                 .filter(app.model.Repository.table.c.email_alerts != null()):
@@ -86,9 +82,9 @@ def check_file_contents_for_email_alerts(app):
 def check_file_content_for_html_and_images(file_path):
     message = ''
     if checkers.check_html(file_path):
-        message = 'The file "%s" contains HTML content.\n' % str(file_path)
+        message = f'The file "{str(file_path)}" contains HTML content.\n'
     elif checkers.check_image(file_path):
-        message = 'The file "%s" contains image content.\n' % str(file_path)
+        message = f'The file "{str(file_path)}" contains image content.\n'
     return message
 
 
@@ -134,33 +130,32 @@ def get_upload_point(repository, **kwd):
 
 
 def handle_bz2(repository, uploaded_file_name):
-    fd, uncompressed = tempfile.mkstemp(prefix='repo_%d_upload_bunzip2_' % repository.id,
-                                        dir=os.path.dirname(uploaded_file_name),
-                                        text=False)
-    bzipped_file = bz2.BZ2File(uploaded_file_name, 'rb')
-    while 1:
-        try:
-            chunk = bzipped_file.read(basic_util.CHUNK_SIZE)
-        except IOError:
-            os.close(fd)
-            os.remove(uncompressed)
-            log.exception('Problem uncompressing bz2 data "%s"', uploaded_file_name)
-            return
-        if not chunk:
-            break
-        os.write(fd, chunk)
-    os.close(fd)
-    bzipped_file.close()
-    shutil.move(uncompressed, uploaded_file_name)
+    with tempfile.NamedTemporaryFile(
+        mode='wb',
+        prefix=f'repo_{repository.id}_upload_bunzip2_',
+        dir=os.path.dirname(uploaded_file_name),
+        delete=False,
+    ) as uncompressed, bz2.BZ2File(uploaded_file_name, 'rb') as bzipped_file:
+        while 1:
+            try:
+                chunk = bzipped_file.read(basic_util.CHUNK_SIZE)
+            except OSError:
+                os.remove(uncompressed.name)
+                log.exception(f'Problem uncompressing bz2 data "{uploaded_file_name}"')
+                return
+            if not chunk:
+                break
+            uncompressed.write(chunk)
+    shutil.move(uncompressed.name, uploaded_file_name)
 
 
 def handle_directory_changes(app, host, username, repository, full_path, filenames_in_archive, remove_repo_files_not_in_tar,
                              new_repo_alert, commit_message, undesirable_dirs_removed, undesirable_files_removed):
-    repo = hg_util.get_repo_for_repository(app, repository=repository, repo_path=None, create=False)
+    repo_path = repository.repo_path(app)
     content_alert_str = ''
     files_to_remove = []
-    filenames_in_archive = [os.path.join(full_path, name) for name in filenames_in_archive]
-    if remove_repo_files_not_in_tar and not repository.is_new(app):
+    filenames_in_archive = [os.path.normpath(os.path.join(full_path, name)) for name in filenames_in_archive]
+    if remove_repo_files_not_in_tar and not repository.is_new():
         # We have a repository that is not new (it contains files), so discover those files that are in the
         # repository, but not in the uploaded archive.
         for root, dirs, files in os.walk(full_path):
@@ -181,27 +176,11 @@ def handle_directory_changes(app, host, username, repository, full_path, filenam
             # Remove files in the repository (relative to the upload point) that are not in
             # the uploaded archive.
             try:
-                hg_util.remove_file(repo.ui, repo, repo_file, force=True)
+                hg_util.remove_path(repo_path, repo_file)
             except Exception as e:
-                log.debug("Error removing files using the mercurial API, so trying a different approach, the error was: %s" % str(e))
-                relative_selected_file = repo_file.split('repo_%d' % repository.id)[1].lstrip('/')
-                repo.dirstate.remove(relative_selected_file)
-                repo.dirstate.write()
-                absolute_selected_file = os.path.abspath(repo_file)
-                if os.path.isdir(absolute_selected_file):
-                    try:
-                        os.rmdir(absolute_selected_file)
-                    except OSError as e:
-                        # The directory is not empty.
-                        pass
-                elif os.path.isfile(absolute_selected_file):
-                    os.remove(absolute_selected_file)
-                    dir = os.path.split(absolute_selected_file)[0]
-                    try:
-                        os.rmdir(dir)
-                    except OSError as e:
-                        # The directory is not empty.
-                        pass
+                error_message = (f"Error removing file {repo_file} in mercurial repo:\n{e}")
+                log.debug(error_message)
+                return 'error', error_message, files_to_remove, content_alert_str, 0, 0
     # See if any admin users have chosen to receive email alerts when a repository is updated.
     # If so, check every uploaded file to ensure content is appropriate.
     check_contents = check_file_contents_for_email_alerts(app)
@@ -209,7 +188,7 @@ def handle_directory_changes(app, host, username, repository, full_path, filenam
         # Check file content to ensure it is appropriate.
         if check_contents and os.path.isfile(filename_in_archive):
             content_alert_str += check_file_content_for_html_and_images(filename_in_archive)
-        hg_util.add_changeset(repo.ui, repo, filename_in_archive)
+        hg_util.add_changeset(repo_path, filename_in_archive)
         if filename_in_archive.endswith('tool_data_table_conf.xml.sample'):
             # Handle the special case where a tool_data_table_conf.xml.sample file is being uploaded
             # by parsing the file and adding new entries to the in-memory app.tool_data_tables
@@ -218,8 +197,7 @@ def handle_directory_changes(app, host, username, repository, full_path, filenam
             error, message = stdtm.handle_sample_tool_data_table_conf_file(filename_in_archive, persist=False)
             if error:
                 return False, message, files_to_remove, content_alert_str, undesirable_dirs_removed, undesirable_files_removed
-    hg_util.commit_changeset(repo.ui,
-                             repo,
+    hg_util.commit_changeset(repo_path,
                              full_path_to_changeset=full_path,
                              username=username,
                              message=commit_message)
@@ -234,24 +212,23 @@ def handle_directory_changes(app, host, username, repository, full_path, filenam
 
 
 def handle_gzip(repository, uploaded_file_name):
-    fd, uncompressed = tempfile.mkstemp(prefix='repo_%d_upload_gunzip_' % repository.id,
-                                        dir=os.path.dirname(uploaded_file_name),
-                                        text=False)
-    gzipped_file = gzip.GzipFile(uploaded_file_name, 'rb')
-    while 1:
-        try:
-            chunk = gzipped_file.read(basic_util.CHUNK_SIZE)
-        except IOError:
-            os.close(fd)
-            os.remove(uncompressed)
-            log.exception('Problem uncompressing gz data "%s"', uploaded_file_name)
-            return
-        if not chunk:
-            break
-        os.write(fd, chunk)
-    os.close(fd)
-    gzipped_file.close()
-    shutil.move(uncompressed, uploaded_file_name)
+    with tempfile.NamedTemporaryFile(
+        mode='wb',
+        prefix=f'repo_{repository.id}_upload_gunzip_',
+        dir=os.path.dirname(uploaded_file_name),
+        delete=False
+    ) as uncompressed, gzip.GzipFile(uploaded_file_name, 'rb') as gzipped_file:
+        while 1:
+            try:
+                chunk = gzipped_file.read(basic_util.CHUNK_SIZE)
+            except OSError:
+                os.remove(uncompressed.name)
+                log.exception(f'Problem uncompressing gz data "{uploaded_file_name}"')
+                return
+            if not chunk:
+                break
+            uncompressed.write(chunk)
+    shutil.move(uncompressed.name, uploaded_file_name)
 
 
 def uncompress(repository, uploaded_file_name, uploaded_file_filename, isgzip=False, isbz2=False):

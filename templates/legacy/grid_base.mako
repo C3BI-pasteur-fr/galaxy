@@ -1,5 +1,6 @@
 <%!
-    from galaxy.webapps.reports.framework.grids import TextColumn
+    from galaxy.util import unicodify
+    from galaxy.web.legacy_framework.grids import TextColumn
 
     def inherit(context):
         kwargs = context.get( 'kwargs', {} )
@@ -49,23 +50,15 @@
 
 ## creates grid
 <%def name="load( embedded=False, insert=None )">
-    <!-- grid_base.mako -->
-    ## imports
-    ${h.css(
-        "autocomplete_tagging",
-        "jquery.rating"
-    )}
-    ${h.js(
-        "libs/jquery/jquery.autocomplete",
-    )}
 
-    ## grid container
+    <!-- grid_base.mako, load -->
     <div id="grid-container"></div>
 
-    ## load javascript
     <script type="text/javascript">
-        $(function() {
-            var gridView = new window.bundleEntries.LegacyGridView( ${ h.dumps( self.get_grid_config( embedded=embedded, insert=insert ) ) } );
+        config.addInitialization(function() {
+            var legacyGridViewConfig = ${ h.dumps( self.get_grid_config( embedded=embedded, insert=insert ) ) };
+            console.log("grid_base.mako, javascript_app", legacyGridViewConfig);
+            new window.bundleEntries.LegacyGridView(legacyGridViewConfig);
         });
     </script>
 </%def>
@@ -216,8 +209,8 @@
                 value = column.get_value( trans, grid, item )
 
                 # Handle non-ascii chars.
-                if isinstance(value, str):
-                    value = unicode(value, 'utf-8')
+                if isinstance(value, bytes):
+                    value = unicodify(value, 'utf-8')
                     value = value.replace('/', '//')
                 endif
 

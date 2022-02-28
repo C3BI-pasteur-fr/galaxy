@@ -2,13 +2,17 @@ import logging
 
 import tool_shed.util.repository_util
 from galaxy.util import asbool, listify
-from tool_shed.util import (common_util, container_util, hg_util, metadata_util,
-    shed_util_common as suc)
+from tool_shed.util import (
+    common_util,
+    container_util,
+    metadata_util,
+    shed_util_common as suc
+)
 
 log = logging.getLogger(__name__)
 
 
-class RelationBuilder(object):
+class RelationBuilder:
 
     def __init__(self, app, repository, repository_metadata, tool_shed_url):
         self.all_repository_dependencies = {}
@@ -195,8 +199,7 @@ class RelationBuilder(object):
                         updated_key_rd_dicts.append(key_rd_dict)
                     else:
                         # The repository changeset_revision is no longer installable, so see if there's been an update.
-                        repo = hg_util.get_repo_for_repository(self.app, repository=repository, repo_path=None, create=False)
-                        changeset_revision = metadata_util.get_next_downloadable_changeset_revision(repository, repo, rd_changeset_revision)
+                        changeset_revision = metadata_util.get_next_downloadable_changeset_revision(self.app, repository, rd_changeset_revision)
                         if changeset_revision != rd_changeset_revision:
                             repository_metadata = \
                                 metadata_util.get_repository_metadata_by_repository_id_changeset_revision(self.app,
@@ -222,7 +225,7 @@ class RelationBuilder(object):
                                 rd_only_if_compiling_contained_td = 'False'
                             message = "The revision %s defined for repository %s owned by %s is invalid, so repository " % \
                                 (str(rd_changeset_revision), str(rd_name), str(rd_owner))
-                            message += "dependencies defined for repository %s will be ignored." % str(repository_name)
+                            message += f"dependencies defined for repository {str(repository_name)} will be ignored."
                             log.debug(message)
                 else:
                     repository_components_tuple = container_util.get_components_from_key(key)
@@ -230,7 +233,7 @@ class RelationBuilder(object):
                     toolshed, repository_name, repository_owner, repository_changeset_revision = components_list[0:4]
                     message = "The revision %s defined for repository %s owned by %s is invalid, so repository " % \
                         (str(rd_changeset_revision), str(rd_name), str(rd_owner))
-                    message += "dependencies defined for repository %s will be ignored." % str(repository_name)
+                    message += f"dependencies defined for repository {str(repository_name)} will be ignored."
                     log.debug(message)
         return updated_key_rd_dicts
 
@@ -286,7 +289,7 @@ class RelationBuilder(object):
             # The repository is in a different tool shed, so build an url and send a request.
             error_message = "Repository dependencies are currently supported only within the same Tool Shed.  "
             error_message += "Ignoring repository dependency definition for tool shed "
-            error_message += "%s, name %s, owner %s, changeset revision %s" % (toolshed, name, owner, changeset_revision)
+            error_message += f"{toolshed}, name {name}, owner {owner}, changeset revision {changeset_revision}"
             log.debug(error_message)
 
     def handle_next_repository_dependency(self):
@@ -463,7 +466,7 @@ class RelationBuilder(object):
                 common_util.parse_repository_dependency_tuple(repository_dependency)
             cleaned_toolshed = common_util.remove_protocol_from_tool_shed_url(toolshed)
             if cleaned_rd_toolshed == cleaned_toolshed and rd_name == name and rd_owner == owner:
-                debug_msg = "Removing repository dependency for repository %s owned by %s " % (name, owner)
+                debug_msg = f"Removing repository dependency for repository {name} owned by {owner} "
                 debug_msg += 'since it refers to a revision within itself.'
                 log.debug(debug_msg)
             else:

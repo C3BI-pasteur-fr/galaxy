@@ -41,18 +41,15 @@
 </%def>
 
 <%def name="render_item_links( visualization )">
-    <a
-        href="${h.url_for( controller='/visualization', action='imp', id=trans.security.encode_id( visualization.id ) )}"
-        class="icon-button import"
-        ## Needed to overwide initial width so that link is floated left appropriately.
-        style="width: 100%"
-        title="Import visualization">Import visualization</a>
+    <a href="${h.url_for( controller='/visualization', action='imp', id=trans.security.encode_id( visualization.id ) )}"
+        class="btn btn-secondary fa fa-plus float-right"
+        title="Import visualization"></a>
 </%def>
 
 <%def name="render_item( visualization, config )">
     <div id="${trans.security.encode_id( visualization.id )}" class="unified-panel-body" style="overflow:none;top:0px;">
         <iframe frameborder="0" width="100%" height="100%" sandbox="allow-forms allow-same-origin allow-scripts"
-                src="/visualization/saved?id=${encoded_visualization_id}&embedded=True">
+                src="/visualization/saved?id=${encoded_visualization_id}">
         </iframe>
     </div>
 </%def>

@@ -1,20 +1,29 @@
-import inspect
 import logging
 from functools import wraps
+from inspect import getfullargspec
 from json import loads
 from traceback import format_exc
 
 import paste.httpexceptions
-from six import string_types
+from pydantic import BaseModel
+from pydantic.error_wrappers import ValidationError
 
-from galaxy import util
-from galaxy.exceptions import error_codes, MessageException
+from galaxy.exceptions import (
+    error_codes,
+    MessageException,
+    RequestParameterInvalidException,
+    RequestParameterMissingException,
+)
+from galaxy.util import (
+    parse_non_hex_float,
+    unicodify
+)
 from galaxy.util.json import safe_dumps
 from galaxy.web.framework import url_for
 
 log = logging.getLogger(__name__)
 
-JSON_CONTENT_TYPE = "application/json"
+JSON_CONTENT_TYPE = "application/json; charset=UTF-8"
 JSONP_CONTENT_TYPE = "application/javascript"
 JSONP_CALLBACK_KEY = 'callback'
 
@@ -52,7 +61,7 @@ def json(func, pretty=False):
         else:
             trans.response.set_content_type(JSON_CONTENT_TYPE)
         rval = func(self, trans, *args, **kwargs)
-        return _format_return_as_json(rval, jsonp_callback, pretty=(pretty or trans.debug))
+        return format_return_as_json(rval, jsonp_callback, pretty=(pretty or trans.debug))
 
     if not hasattr(func, '_orig'):
         call_and_format._orig = func
@@ -66,16 +75,22 @@ def json_pretty(func):
     return json(func, pretty=True)
 
 
-def require_login(verb="perform this action", use_panels=False, webapp='galaxy'):
+def require_login(verb="perform this action", use_panels=False):
     def argcatcher(func):
         @wraps(func)
         def decorator(self, trans, *args, **kwargs):
             if trans.get_user():
                 return func(self, trans, *args, **kwargs)
             else:
+                redirect_url = url_for(controller=trans.controller, action=trans.action)
+                query_string = trans.environ.get('QUERY_STRING', '')
+                if query_string:
+                    redirect_url = f"{redirect_url}?{query_string}"
+                href = url_for(controller='login', redirect=redirect_url)
                 return trans.show_error_message(
-                    'You must be <a target="galaxy_main" href="%s">logged in</a> to %s.'
-                    % (url_for(controller='user', action='login', webapp=webapp), verb), use_panels=use_panels)
+                    f'You must be <a target="galaxy_main" href="{href}">logged in</a> to {verb}.',
+                    use_panels=use_panels
+                )
         return decorator
     return argcatcher
 
@@ -83,24 +98,46 @@ def require_login(verb="perform this action", use_panels=False, webapp='galaxy')
 def require_admin(func):
     @wraps(func)
     def decorator(self, trans, *args, **kwargs):
-        if not trans.user_is_admin():
-            msg = "You must be an administrator to access this feature."
-            user = trans.get_user()
-            if not trans.app.config.admin_users_list:
-                msg = "You must be logged in as an administrator to access this feature, but no administrators are set in the Galaxy configuration."
-            elif not user:
-                msg = "You must be logged in as an administrator to access this feature."
+        if not trans.user_is_admin:
+            msg = require_admin_message(trans.app.config, trans.get_user())
             trans.response.status = 403
-            if trans.response.get_content_type() == 'application/json':
-                return msg
+            content_type = trans.response.get_content_type()
+            # content_type for instance may be... application/json; charset=UTF-8
+            if 'application/json' in content_type:
+                return __api_error_dict(
+                    trans, status_code=403, err_code=error_codes.ADMIN_REQUIRED, err_msg=msg
+                )
             else:
                 return trans.show_error_message(msg)
         return func(self, trans, *args, **kwargs)
     return decorator
 
 
+def require_admin_message(config, user):
+    if not config.admin_users_list:
+        msg = "You must be logged in as an administrator to access this feature, but no administrators are set in the Galaxy configuration."
+    elif not user:
+        msg = "You must be logged in as an administrator to access this feature."
+    else:
+        msg = "You must be an administrator to access this feature."
+    return msg
+
+
+def do_not_cache(func):
+    """
+    Sets cache-prevention headers for the request.
+    """
+    @wraps(func)
+    def set_nocache_headers(self, trans, *args, **kwargs):
+        trans.response.headers['Cache-Control'] = ['no-cache', 'no-store', 'must-revalidate']
+        trans.response.headers['Pragma'] = 'no-cache'
+        trans.response.headers['Expires'] = '0'
+        return func(self, trans, *args, **kwargs)
+    return set_nocache_headers
+
+
 # ----------------------------------------------------------------------------- (original) api decorators
-def expose_api(func, to_json=True, user_required=True):
+def legacy_expose_api(func, to_json=True, user_required=True):
     """
     Expose this function via the API.
     """
@@ -135,17 +172,16 @@ def expose_api(func, to_json=True, user_required=True):
 
         # Perform api_run_as processing, possibly changing identity
         if 'payload' in kwargs and isinstance(kwargs['payload'], dict) and 'run_as' in kwargs['payload']:
-            if not trans.user_can_do_run_as():
+            if not trans.user_can_do_run_as:
                 error_message = 'User does not have permissions to run jobs as another user'
                 return error
             try:
                 decoded_user_id = trans.security.decode_id(kwargs['payload']['run_as'])
             except TypeError:
                 trans.response.status = 400
-                return "Malformed user id ( %s ) specified, unable to decode." % str(kwargs['payload']['run_as'])
+                return f"Malformed user id ( {str(kwargs['payload']['run_as'])} ) specified, unable to decode."
             try:
                 user = trans.sa_session.query(trans.app.model.User).get(decoded_user_id)
-                trans.api_inherit_admin = trans.user_is_admin()
                 trans.set_user(user)
             except Exception:
                 trans.response.status = 400
@@ -153,7 +189,7 @@ def expose_api(func, to_json=True, user_required=True):
         try:
             rval = func(self, trans, *args, **kwargs)
             if to_json:
-                rval = _format_return_as_json(rval, jsonp_callback, pretty=trans.debug)
+                rval = format_return_as_json(rval, jsonp_callback, pretty=trans.debug)
             return rval
         except paste.httpexceptions.HTTPException:
             raise  # handled
@@ -173,54 +209,57 @@ def __extract_payload_from_request(trans, func, kwargs):
         # in the payload. Therefore, the decorated method's formal arguments are discovered through reflection and removed from
         # the payload dictionary. This helps to prevent duplicate argument conflicts in downstream methods.
         payload = kwargs.copy()
-        named_args, _, _, _ = inspect.getargspec(func)
+        named_args = getfullargspec(func).args
         for arg in named_args:
             payload.pop(arg, None)
         for k, v in payload.items():
-            if isinstance(v, string_types):
+            if isinstance(v, str):
                 try:
                     # note: parse_non_hex_float only needed here for single string values where something like
                     # 40000000000000e5 will be parsed as a scientific notation float. This is as opposed to hex strings
                     # in larger JSON structures where quoting prevents this (further below)
-                    payload[k] = loads(v, parse_float=util.parse_non_hex_float)
+                    payload[k] = loads(v, parse_float=parse_non_hex_float)
                 except Exception:
                     # may not actually be json, just continue
                     pass
-        payload = util.recursively_stringify_dictionary_keys(payload)
+    elif content_type == 'application/offset+octet-stream':
+        return unicodify(trans.request.body)
     else:
         # Assume application/json content type and parse request body manually, since wsgi won't do it. However, the order of this check
         # should ideally be in reverse, with the if clause being a check for application/json and the else clause assuming a standard encoding
         # such as multipart/form-data. Leaving it as is for backward compatibility, just in case.
-        payload = util.recursively_stringify_dictionary_keys(loads(trans.request.body))
+        payload = loads(unicodify(trans.request.body))
+    run_as = trans.request.headers.get('run-as')
+    if run_as:
+        payload['run_as'] = run_as
     return payload
 
 
-def expose_api_raw(func):
+def legacy_expose_api_raw(func):
     """
     Expose this function via the API but don't dump the results
     to JSON.
     """
-    return expose_api(func, to_json=False)
+    return legacy_expose_api(func, to_json=False)
 
 
-def expose_api_raw_anonymous(func):
+def legacy_expose_api_raw_anonymous(func):
     """
     Expose this function via the API but don't dump the results
     to JSON.
     """
-    return expose_api(func, to_json=False, user_required=False)
+    return legacy_expose_api(func, to_json=False, user_required=False)
 
 
-def expose_api_anonymous(func, to_json=True):
+def legacy_expose_api_anonymous(func, to_json=True):
     """
     Expose this function via the API but don't require a set user.
     """
-    return expose_api(func, to_json=to_json, user_required=False)
+    return legacy_expose_api(func, to_json=to_json, user_required=False)
 
 
 # ----------------------------------------------------------------------------- (new) api decorators
-# TODO: rename as expose_api and make default.
-def _future_expose_api(func, to_json=True, user_required=True, user_or_session_required=True, handle_jsonp=True):
+def expose_api(func, to_json=True, user_required=True, user_or_session_required=True, handle_jsonp=True):
     """
     Expose this function via the API.
     """
@@ -238,7 +277,7 @@ def _future_expose_api(func, to_json=True, user_required=True, user_or_session_r
             # error if anon and no session
             if not trans.galaxy_session and user_or_session_required:
                 return __api_error_response(trans, status_code=403, err_code=error_codes.USER_NO_API_KEY,
-                                            err_msg="API authentication required for this request")
+                                            err_msg="API authentication or Galaxy session required for this request")
 
         if trans.request.body:
             try:
@@ -261,26 +300,28 @@ def _future_expose_api(func, to_json=True, user_required=True, user_or_session_r
         # TODO: Refactor next block out into a helper procedure.
         # Perform api_run_as processing, possibly changing identity
         if 'payload' in kwargs and 'run_as' in kwargs['payload']:
-            if not trans.user_can_do_run_as():
+            if not trans.user_can_do_run_as:
                 error_code = error_codes.USER_CANNOT_RUN_AS
                 return __api_error_response(trans, err_code=error_code, status_code=403)
             try:
                 decoded_user_id = trans.security.decode_id(kwargs['payload']['run_as'])
-            except TypeError:
-                error_message = "Malformed user id ( %s ) specified, unable to decode." % str(kwargs['payload']['run_as'])
+            except (TypeError, ValueError):
+                error_message = f"Malformed user id ( {str(kwargs['payload']['run_as'])} ) specified, unable to decode."
                 error_code = error_codes.USER_INVALID_RUN_AS
                 return __api_error_response(trans, err_code=error_code, err_msg=error_message, status_code=400)
             try:
                 user = trans.sa_session.query(trans.app.model.User).get(decoded_user_id)
-                trans.api_inherit_admin = trans.user_is_admin()
                 trans.set_user(user)
             except Exception:
                 error_code = error_codes.USER_INVALID_RUN_AS
                 return __api_error_response(trans, err_code=error_code, status_code=400)
         try:
-            rval = func(self, trans, *args, **kwargs)
+            try:
+                rval = func(self, trans, *args, **kwargs)
+            except ValidationError as e:
+                raise validation_error_to_message_exception(e)
             if to_json:
-                rval = _format_return_as_json(rval, jsonp_callback, pretty=trans.debug)
+                rval = format_return_as_json(rval, jsonp_callback, pretty=trans.debug)
             return rval
         except MessageException as e:
             traceback_string = format_exc()
@@ -306,20 +347,37 @@ def _future_expose_api(func, to_json=True, user_required=True, user_or_session_r
     return decorator
 
 
-def _format_return_as_json(rval, jsonp_callback=None, pretty=False):
+def format_return_as_json(rval, jsonp_callback=None, pretty=False):
     """
     Formats a return value as JSON or JSONP if `jsonp_callback` is present.
 
     Use `pretty=True` to return pretty printed json.
     """
     dumps_kwargs = dict(indent=4, sort_keys=True) if pretty else {}
-    json = safe_dumps(rval, **dumps_kwargs)
+    if isinstance(rval, BaseModel):
+        json = rval.json(**dumps_kwargs)
+    else:
+        json = safe_dumps(rval, **dumps_kwargs)
     if jsonp_callback:
-        json = "{}({});".format(jsonp_callback, json)
+        json = f"{jsonp_callback}({json});"
     return json
 
 
-def __api_error_message(trans, **kwds):
+def validation_error_to_message_exception(e):
+    invalid_found = False
+    missing_found = False
+    for error in e.errors():
+        if error["type"] == "value_error.missing" or error["type"] == "type_error.none.not_allowed":
+            missing_found = True
+        elif error["type"].startswith("type_error"):
+            invalid_found = True
+    if missing_found and not invalid_found:
+        return RequestParameterMissingException(str(e), validation_errors=loads(e.json()))
+    else:
+        return RequestParameterInvalidException(str(e), validation_errors=loads(e.json()))
+
+
+def api_error_message(trans, **kwds):
     exception = kwds.get("exception", None)
     if exception:
         # If we are passed a MessageException use err_msg.
@@ -345,13 +403,13 @@ def __api_error_message(trans, **kwds):
     # err_msg used a good number of places already. Might as well not change
     # it?
     error_response = dict(err_msg=err_msg, err_code=error_code, **extra_error_info)
-    if trans.debug:  # TODO: Should admins get to see traceback as well?
+    if trans and trans.debug:  # TODO: Should admins get to see traceback as well?
         error_response["traceback"] = traceback_string
     return error_response
 
 
-def __api_error_response(trans, **kwds):
-    error_dict = __api_error_message(trans, **kwds)
+def __api_error_dict(trans, **kwds):
+    error_dict = api_error_message(trans, **kwds)
     exception = kwds.get("exception", None)
     # If we are given an status code directly - use it - otherwise check
     # the exception for a status_code attribute.
@@ -367,34 +425,39 @@ def __api_error_response(trans, **kwds):
         # non-success (i.e. not 200 or 201) has been set, do not override
         # underlying controller.
         response.status = status_code
+    return error_dict
+
+
+def __api_error_response(trans, **kwds):
+    error_dict = __api_error_dict(trans, **kwds)
     return safe_dumps(error_dict)
 
 
-def _future_expose_api_anonymous(func, to_json=True):
+def expose_api_anonymous(func, to_json=True):
     """
     Expose this function via the API but don't require a set user.
     """
-    return _future_expose_api(func, to_json=to_json, user_required=False)
+    return expose_api(func, to_json=to_json, user_required=False)
 
 
-def _future_expose_api_anonymous_and_sessionless(func, to_json=True):
+def expose_api_anonymous_and_sessionless(func, to_json=True):
     """
     Expose this function via the API but don't require a user or a galaxy_session.
     """
-    return _future_expose_api(func, to_json=to_json, user_required=False, user_or_session_required=False)
+    return expose_api(func, to_json=to_json, user_required=False, user_or_session_required=False)
 
 
-def _future_expose_api_raw(func):
-    return _future_expose_api(func, to_json=False, user_required=True)
+def expose_api_raw(func):
+    return expose_api(func, to_json=False, user_required=True)
 
 
-def _future_expose_api_raw_anonymous(func):
-    return _future_expose_api(func, to_json=False, user_required=False)
+def expose_api_raw_anonymous(func):
+    return expose_api(func, to_json=False, user_required=False)
 
 
-def _future_expose_api_raw_anonymous_and_sessionless(func):
+def expose_api_raw_anonymous_and_sessionless(func):
     # TODO: tool_shed api implemented JSONP first on a method-by-method basis, don't overwrite that for now
-    return _future_expose_api(
+    return expose_api(
         func,
         to_json=False,
         user_required=False,

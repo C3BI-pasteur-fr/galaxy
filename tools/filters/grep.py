@@ -70,14 +70,14 @@ def main():
 
     # replace if input has been escaped, remove sq
     # characters that are allowed but need to be escaped
-    mapped_chars = {'>' : '__gt__',
-                    '<' : '__lt__',
+    mapped_chars = {'>': '__gt__',
+                    '<': '__lt__',
                     '\'': '__sq__',
-                    '"' : '__dq__',
-                    '[' : '__ob__',
-                    ']' : '__cb__',
-                    '{' : '__oc__',
-                    '}' : '__cc__'}
+                    '"': '__dq__',
+                    '[': '__ob__',
+                    ']': '__cb__',
+                    '{': '__oc__',
+                    '}': '__cc__'}
 
     # with new sanitizing we only need to replace for single quote,
     # but this needs to remain for backwards compatibility
@@ -85,8 +85,8 @@ def main():
         pattern = pattern.replace(value, key)
 
     # match filename and invert flag
-    fileRegEx = re.compile("^[A-Za-z0-9./\-_]+$")
-    invertRegEx = re.compile("(true)|(false)")
+    fileRegEx = re.compile(r"^[A-Za-z0-9./\-_]+$")
+    invertRegEx = re.compile(r"(true)|(false)")
 
     # verify that filename and inversion flag are in the correct format
     if not fileRegEx.match(outputfile):

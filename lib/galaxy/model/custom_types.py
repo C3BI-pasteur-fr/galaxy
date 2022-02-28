@@ -6,9 +6,12 @@ import uuid
 from collections import deque
 from itertools import chain
 from sys import getsizeof
+from typing import Optional
 
+import numpy
 import sqlalchemy
 from sqlalchemy.ext.mutable import Mutable
+from sqlalchemy.inspection import inspect
 from sqlalchemy.types import (
     CHAR,
     LargeBinary,
@@ -16,17 +19,32 @@ from sqlalchemy.types import (
     TypeDecorator
 )
 
-from galaxy.util import unicodify
+from galaxy.util import (
+    smart_str,
+    unicodify
+)
 from galaxy.util.aliaspickler import AliasPickleModule
 
 log = logging.getLogger(__name__)
 
-# Default JSON encoder and decoder
-json_encoder = json.JSONEncoder(sort_keys=True)
+
+class SafeJsonEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, numpy.int_):
+            return int(obj)
+        elif isinstance(obj, numpy.float_):
+            return float(obj)
+        elif isinstance(obj, bytes):
+            return unicodify(obj)
+        # Let the base class default method raise the TypeError
+        return json.JSONEncoder.default(self, obj)
+
+
+json_encoder = SafeJsonEncoder(sort_keys=True)
 json_decoder = json.JSONDecoder()
 
 # Galaxy app will set this if configured to avoid circular dependency
-MAX_METADATA_VALUE_SIZE = None
+MAX_METADATA_VALUE_SIZE: Optional[int] = None
 
 
 def _sniffnfix_pg9_hex(value):
@@ -36,7 +54,7 @@ def _sniffnfix_pg9_hex(value):
     try:
         if value[0] == 'x':
             return binascii.unhexlify(value[1:])
-        elif value.startswith('\\x'):
+        elif smart_str(value).startswith(b'\\x'):
             return binascii.unhexlify(value[2:])
         else:
             return value
@@ -44,7 +62,24 @@ def _sniffnfix_pg9_hex(value):
         return value
 
 
-class JSONType(sqlalchemy.types.TypeDecorator):
+class GalaxyLargeBinary(LargeBinary):
+
+    # This hack is necessary because the LargeBinary result processor
+    # does not specify an encoding in the `bytes` call ,
+    # likely because `result` should be binary.
+    # This doesn't seem to be the case in galaxy.
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is not None:
+                if isinstance(value, str):
+                    value = bytes(value, encoding='utf-8')
+                else:
+                    value = bytes(value)
+            return value
+        return process
+
+
+class JSONType(TypeDecorator):
     """
     Represents an immutable structure as a json-encoded string.
 
@@ -55,11 +90,12 @@ class JSONType(sqlalchemy.types.TypeDecorator):
     # TODO: Figure out why this is a large binary, and provide a migratino to
     # something like sqlalchemy.String, or even better, when applicable, native
     # sqlalchemy.dialects.postgresql.JSON
-    impl = LargeBinary
+    impl = GalaxyLargeBinary
+    cache_ok = True
 
     def process_bind_param(self, value, dialect):
         if value is not None:
-            value = json_encoder.encode(value)
+            value = json_encoder.encode(value).encode()
         return value
 
     def process_result_value(self, value, dialect):
@@ -80,6 +116,10 @@ class JSONType(sqlalchemy.types.TypeDecorator):
         return (x == y)
 
 
+class MutableJSONType(JSONType):
+    """Associated with MutationObj"""
+
+
 class MutationObj(Mutable):
     """
     Mutable JSONType for SQLAlchemy from original gist:
@@ -90,6 +130,12 @@ class MutationObj(Mutable):
 
     And other minor changes to make it work for us.
     """
+
+    def __new__(cls, *args, **kwds):
+        self = super().__new__(cls, *args, **kwds)
+        self._key = None
+        return self
+
     @classmethod
     def coerce(cls, key, value):
         if isinstance(value, dict) and not isinstance(value, MutationDict):
@@ -113,15 +159,15 @@ class MutationObj(Mutable):
                 val = cls.coerce(key, val)
                 state.dict[key] = val
             if isinstance(val, cls):
-                val._parents[state.obj()] = key
+                val._parents[state] = key
 
         def set(target, value, oldvalue, initiator):
             if not isinstance(value, cls):
                 value = cls.coerce(key, value)
             if isinstance(value, cls):
-                value._parents[target.obj()] = key
+                value._parents[target] = key
             if isinstance(oldvalue, cls):
-                oldvalue._parents.pop(target.obj(), None)
+                oldvalue._parents.pop(inspect(target), None)
             return value
 
         def pickle(state, state_dict):
@@ -134,7 +180,7 @@ class MutationObj(Mutable):
         def unpickle(state, state_dict):
             if 'ext.mutable.values' in state_dict:
                 for val in state_dict['ext.mutable.values']:
-                    val._parents[state.obj()] = key
+                    val._parents[state] = key
 
         sqlalchemy.event.listen(parent_cls, 'load', load, raw=True, propagate=True)
         sqlalchemy.event.listen(parent_cls, 'refresh', load, raw=True, propagate=True)
@@ -152,13 +198,12 @@ class MutationDict(MutationObj, dict):
         return self
 
     def __setitem__(self, key, value):
-        if hasattr(self, '_key'):
-            value = MutationObj.coerce(self._key, value)
-        dict.__setitem__(self, key, value)
+        value = MutationObj.coerce(self._key, value)
+        super().__setitem__(key, value)
         self.changed()
 
     def __delitem__(self, key):
-        dict.__delitem__(self, key)
+        super().__delitem__(key)
         self.changed()
 
     def __getstate__(self):
@@ -167,29 +212,39 @@ class MutationDict(MutationObj, dict):
     def __setstate__(self, state):
         self.update(state)
 
+    def pop(self, *args, **kw):
+        value = super().pop(*args, **kw)
+        self.changed()
+        return value
+
+    def update(self, *args, **kwargs):
+        value = super().update(*args, **kwargs)
+        self.changed()
+        return value
+
 
 class MutationList(MutationObj, list):
     @classmethod
     def coerce(cls, key, value):
         """Convert plain list to MutationList"""
-        self = MutationList((MutationObj.coerce(key, v) for v in value))
+        self = MutationList(MutationObj.coerce(key, v) for v in value)
         self._key = key
         return self
 
     def __setitem__(self, idx, value):
-        list.__setitem__(self, idx, MutationObj.coerce(self._key, value))
+        super().__setitem__(idx, MutationObj.coerce(self._key, value))
         self.changed()
 
     def __setslice__(self, start, stop, values):
-        list.__setslice__(self, start, stop, (MutationObj.coerce(self._key, v) for v in values))
+        super().__setslice__(start, stop, (MutationObj.coerce(self._key, v) for v in values))
         self.changed()
 
     def __delitem__(self, idx):
-        list.__delitem__(self, idx)
+        super().__delitem__(idx)
         self.changed()
 
     def __delslice__(self, start, stop):
-        list.__delslice__(self, start, stop)
+        super().__delslice__(start, stop)
         self.changed()
 
     def __copy__(self):
@@ -199,35 +254,37 @@ class MutationList(MutationObj, list):
         return MutationList(MutationObj.coerce(self._key, copy.deepcopy(self[:])))
 
     def append(self, value):
-        list.append(self, MutationObj.coerce(self._key, value))
+        super().append(MutationObj.coerce(self._key, value))
         self.changed()
 
     def insert(self, idx, value):
-        list.insert(self, idx, MutationObj.coerce(self._key, value))
+        super().insert(self, idx, MutationObj.coerce(self._key, value))
         self.changed()
 
     def extend(self, values):
-        list.extend(self, (MutationObj.coerce(self._key, v) for v in values))
+        values = (MutationObj.coerce(self._key, value) for value in values)
+        super().extend(values)
         self.changed()
 
     def pop(self, *args, **kw):
-        value = list.pop(self, *args, **kw)
+        value = super().pop(*args, **kw)
         self.changed()
         return value
 
     def remove(self, value):
-        list.remove(self, value)
+        super().remove(value)
         self.changed()
 
 
-MutationObj.associate_with(JSONType)
+MutationObj.associate_with(MutableJSONType)
+
 
 metadata_pickler = AliasPickleModule({
     ("cookbook.patterns", "Bunch"): ("galaxy.util.bunch", "Bunch")
 })
 
 
-def total_size(o, handlers={}, verbose=False):
+def total_size(o, handlers=None, verbose=False):
     """ Returns the approximate memory footprint an object and all of its contents.
 
     Automatically finds the contents of the following builtin containers and
@@ -239,6 +296,8 @@ def total_size(o, handlers={}, verbose=False):
 
     Recipe from:  https://code.activestate.com/recipes/577504-compute-memory-footprint-of-an-object-and-its-cont/
     """
+    handlers = handlers or {}
+
     def dict_handler(d):
         return chain.from_iterable(d.items())
 
@@ -280,8 +339,8 @@ class MetadataType(JSONType):
                     sz = total_size(v)
                     if sz > MAX_METADATA_VALUE_SIZE:
                         del value[k]
-                        log.warning('Refusing to bind metadata key %s due to size (%s)' % (k, sz))
-            value = json_encoder.encode(value)
+                        log.warning(f'Refusing to bind metadata key {k} due to size ({sz})')
+            value = json_encoder.encode(value).encode()
         return value
 
     def process_result_value(self, value, dialect):
@@ -289,12 +348,12 @@ class MetadataType(JSONType):
             return None
         ret = None
         try:
-            ret = metadata_pickler.loads(str(value))
+            ret = metadata_pickler.loads(unicodify(value))
             if ret:
                 ret = dict(ret.__dict__)
         except Exception:
             try:
-                ret = json_decoder.decode(str(_sniffnfix_pg9_hex(value)))
+                ret = json_decoder.decode(unicodify(_sniffnfix_pg9_hex(value)))
             except Exception:
                 ret = None
         return ret
@@ -310,6 +369,7 @@ class UUIDType(TypeDecorator):
     CHAR(32), storing as stringified hex values.
     """
     impl = CHAR
+    cache_ok = True
 
     def load_dialect_impl(self, dialect):
         return dialect.type_descriptor(CHAR(32))
@@ -319,10 +379,8 @@ class UUIDType(TypeDecorator):
             return value
         else:
             if not isinstance(value, uuid.UUID):
-                return "%.32x" % uuid.UUID(value)
-            else:
-                # hexstring
-                return "%.32x" % value
+                value = uuid.UUID(value)
+            return value.hex
 
     def process_result_value(self, value, dialect):
         if value is None:
@@ -333,9 +391,10 @@ class UUIDType(TypeDecorator):
 
 class TrimmedString(TypeDecorator):
     impl = String
+    cache_ok = True
 
     def process_bind_param(self, value, dialect):
         """Automatically truncate string values"""
         if self.impl.length and value is not None:
-            value = value[0:self.impl.length]
+            value = unicodify(value)[0:self.impl.length]
         return value

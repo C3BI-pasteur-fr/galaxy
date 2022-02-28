@@ -1,5 +1,9 @@
-<tool id="aggregate_scores_in_intervals2" name="Aggregate datapoints" version="1.1.3">
+<tool id="aggregate_scores_in_intervals2" name="Aggregate datapoints" version="1.1.4" profile="16.04">
   <description>Appends the average, min, max of datapoints per interval</description>
+  <requirements>
+    <requirement type="package" version="19.9">galaxy-util</requirement>
+    <requirement type="package" version="0.8.6">bx-python</requirement>
+  </requirements>
   <command>
 python '$__tool_directory__/aggregate_scores_in_intervals.py'
 #if $score_source_type.score_source == "user"
@@ -38,6 +42,7 @@ python '$__tool_directory__/aggregate_scores_in_intervals.py'
     <data format="interval" name="out_file1" metadata_source="input1"/>
   </outputs>
   <tests>
+      <!-- no clue where to find the 'datasets' files
     <test>
       <param name="input1" value="6.bed" dbkey="hg17" ftype="bed"/>
       <param name="score_source" value="cached"/>
@@ -50,11 +55,12 @@ python '$__tool_directory__/aggregate_scores_in_intervals.py'
       <param name="datasets" value="/galaxy/data/binned_scores/hg18/phastCons17way/ba" />
       <output name="out_file1" file="aggregate_binned_scores_in_intervals2.interval" />
     </test>
+    -->
     <test>
       <param name="input1" value="6.bed" dbkey="hg17" ftype="bed"/>
       <param name="score_source" value="user"/>
       <param name="input2" value="aggregate_binned_scores_3.wig" dbkey="hg17" ftype="wig"/>
-      <output name="out_file1" file="aggregate_binned_scores_in_intervals3.out"/>
+      <output name="out_file1" file="aggregate_binned_scores_in_intervals3.out" lines_diff="2"/>
     </test>
   </tests>
   <help>

@@ -1,6 +1,7 @@
 <%inherit file="/webapps/reports/base_panels.mako"/>
 
 <%def name="init()">
+    ${parent.init()}
     <%
         self.has_left_panel=True
         self.has_right_panel=False
@@ -11,17 +12,10 @@
 <%def name="stylesheets()">
     ${parent.stylesheets()}
     ## Include "base.css" for styling tool menu and forms (details)
-    ${h.css( "base", "autocomplete_tagging" )}
+    ${h.css( "base" )}
 
     ## But make sure styles for the layout take precedence
     ${parent.stylesheets()}
-
-    <style type="text/css">
-        body { margin: 0; padding: 0; overflow: hidden; }
-        #left {
-            background: #f0f0f0  top repeat-x;
-        }
-    </style>
 </%def>
 
 <%def name="javascripts()">
@@ -35,12 +29,12 @@
     %>
     <div class="unified-panel-header" unselectable="on">
         <div class='unified-panel-header-inner'><span>Reports</span>
-            <a target="galaxy_main" href="${h.url_for( controller='home', action='run_stats' )}">
-                <button id="reports_home" data-toggle="tooltip" data-placement="top" title="Dashboard" class="btn btn-secondary primary-button" type="button"><span class="fa fa-home"></span></button>
+            <a target="galaxy_main" href="${h.url_for( controller='home', action='run_stats' )}" class="float-right">
+                <span class="fa fa-home"></span>
             </a>
         </div>
     </div>
-    <div class="page-container reports-panel-container">
+    <div class="unified-panel-body">
         <div class="toolMenu">
             <div class="toolSectionList">
                 <div class="toolSectionPad"></div>
@@ -54,8 +48,10 @@
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='specified_month_in_error', sort_id='default', order='default' )}">Jobs in error per day this month</a></div>
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='specified_date_handler', operation='unfinished', sort_id='default', order='default' )}">All unfinished jobs</a></div>
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='per_month_all', sort_id='default', order='default' )}">Jobs per month</a></div>
+                        <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='per_month_all', by_destination=True, sort_id='default', order='default' )}">Jobs per month by user / node type</a></div>
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='per_month_in_error', sort_id='default', order='default' )}">Jobs in error per month</a></div>
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='per_user', sort_id='default', order='default' )}">Jobs per user</a></div>
+                        <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='per_user', by_destination=True, sort_id='default', order='default' )}">Jobs per user / node type</a></div>
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='per_tool', sort_id='default', order='default' )}">Jobs per tool</a></div>
                         <div class="toolTitle"><a target="galaxy_main" href="${h.url_for( controller='jobs', action='errors_per_tool', sort_id='default', order='default', spark_time='')}">Errors per tool</a></div>
                     </div>

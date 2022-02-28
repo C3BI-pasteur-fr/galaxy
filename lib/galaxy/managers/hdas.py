@@ -7,6 +7,9 @@ history.
 import gettext
 import logging
 import os
+from typing import Any, Dict, List
+
+from sqlalchemy.orm.session import object_session
 
 from galaxy import (
     datatypes,
@@ -15,13 +18,20 @@ from galaxy import (
 )
 from galaxy.managers import (
     annotatable,
+    base,
     datasets,
     secured,
     taggable,
-    users
+    users,
 )
+from galaxy.model.tags import GalaxyTagHandler
+from galaxy.structured_app import MinimalManagerApp, StructuredApp
 
 log = logging.getLogger(__name__)
+
+
+class HistoryDatasetAssociationNoHistoryException(Exception):
+    pass
 
 
 class HDAManager(datasets.DatasetAssociationManager,
@@ -36,16 +46,24 @@ class HDAManager(datasets.DatasetAssociationManager,
 
     tag_assoc = model.HistoryDatasetAssociationTagAssociation
     annotation_assoc = model.HistoryDatasetAssociationAnnotationAssociation
+    app: MinimalManagerApp
 
     # TODO: move what makes sense into DatasetManager
     # TODO: which of these are common with LDDAs and can be pushed down into DatasetAssociationManager?
 
-    def __init__(self, app):
+    def __init__(self, app: MinimalManagerApp, user_manager: users.UserManager, tag_handler: GalaxyTagHandler):
         """
         Set up and initialize other managers needed by hdas.
         """
-        super(HDAManager, self).__init__(app)
-        self.user_manager = users.UserManager(app)
+        super().__init__(app)
+        self.user_manager = user_manager
+        self.tag_handler = tag_handler
+
+    def get_owned_ids(self, object_ids, history=None):
+        """Get owned IDs.
+        """
+        filters = [self.model_class.table.c.id.in_(object_ids), self.model_class.table.c.history_id == history.id]
+        return self.list(filters=filters)
 
     # .... security and permissions
     def is_accessible(self, hda, user, **kwargs):
@@ -57,15 +75,17 @@ class HDAManager(datasets.DatasetAssociationManager,
         #   I can not access that dataset even if it's in my history
         # if self.is_owner( hda, user, **kwargs ):
         #     return True
-        return super(HDAManager, self).is_accessible(hda, user)
+        return super().is_accessible(hda, user, **kwargs)
 
     def is_owner(self, hda, user, current_history=None, **kwargs):
         """
         Use history to see if current user owns HDA.
         """
-        history = hda.history
-        if self.user_manager.is_admin(user):
+        if self.user_manager.is_admin(user, trans=kwargs.get("trans", None)):
             return True
+        history = hda.history
+        if history is None:
+            raise HistoryDatasetAssociationNoHistoryException
         # allow anonymous user to access current history
         # TODO: some dup here with historyManager.is_owner but prevents circ import
         # TODO: awkward kwarg (which is my new band name); this may not belong here - move to controller?
@@ -97,51 +117,24 @@ class HDAManager(datasets.DatasetAssociationManager,
             self.session().flush()
         return hda
 
-    def copy(self, hda, history=None, **kwargs):
+    def copy(self, hda, history=None, hide_copy=False, flush=True, **kwargs):
         """
-        Copy and return the given HDA.
+        Copy hda, including annotation and tags, add to history and return the given HDA.
         """
-        # TODO:?? not using the following as this fn does not set history and COPIES hid (this doesn't seem correct)
-        # return hda.copy()
-        copy = model.HistoryDatasetAssociation(
-            name=hda.name,
-            info=hda.info,
-            blurb=hda.blurb,
-            peek=hda.peek,
-            tool_version=hda.tool_version,
-            extension=hda.extension,
-            dbkey=hda.dbkey,
-            dataset=hda.dataset,
-            visible=hda.visible,
-            deleted=hda.deleted,
-            parent_id=kwargs.get('parent_id', None),
-        )
-        # add_dataset will update the hid to the next avail. in history
+        copy = hda.copy(parent_id=kwargs.get('parent_id'), copy_hid=False, copy_tags=hda.tags, flush=flush)
+        if hide_copy:
+            copy.visible = False
         if history:
-            history.add_dataset(copy)
+            history.stage_addition(copy)
 
-        copy.copied_from_history_dataset_association = hda
         copy.set_size()
 
         original_annotation = self.annotation(hda)
-        self.annotate(copy, original_annotation, user=history.user)
-
-        # TODO: update from kwargs?
-
-        # Need to set after flushed, as MetadataFiles require dataset.id
-        self.session().add(copy)
-        self.session().flush()
-        copy.metadata = hda.metadata
-
-        # In some instances peek relies on dataset_id, i.e. gmaj.zip for viewing MAFs
-        if not hda.datatype.copy_safe_peek:
-            copy.set_peek()
-
-        self.session().flush()
-
-        # these use a second session flush and need to be after the first
-        original_tags = self.get_tags(hda)
-        self.set_tags(copy, original_tags, user=history.user)
+        self.annotate(copy, original_annotation, user=hda.history.user, flush=False)
+        if flush:
+            if history:
+                history.add_pending_items()
+            object_session(copy).flush()
 
         return copy
 
@@ -153,6 +146,13 @@ class HDAManager(datasets.DatasetAssociationManager,
 
     # .... deletion and purging
     def purge(self, hda, flush=True):
+        if self.app.config.enable_celery_tasks:
+            from galaxy.celery.tasks import purge_hda
+            purge_hda.delay(hda_id=hda.id)
+        else:
+            self._purge(hda, flush=flush)
+
+    def _purge(self, hda, flush=True):
         """
         Purge this HDA and the dataset underlying it.
         """
@@ -160,11 +160,10 @@ class HDAManager(datasets.DatasetAssociationManager,
         quota_amount_reduction = 0
         if user:
             quota_amount_reduction = hda.quota_amount(user)
-        super(HDAManager, self).purge(hda, flush=flush)
+        super().purge(hda, flush=flush)
         # decrease the user's space used
         if quota_amount_reduction:
             user.adjust_total_disk_usage(-quota_amount_reduction)
-        return hda
 
     # .... states
     def error_if_uploading(self, hda):
@@ -241,15 +240,34 @@ class HDAManager(datasets.DatasetAssociationManager,
         # override to scope to history owner
         return self._user_annotation(hda, hda.history.user)
 
+    def _set_permissions(self, trans, hda, role_ids_dict):
+        # The user associated the DATASET_ACCESS permission on the dataset with 1 or more roles.  We
+        # need to ensure that they did not associate roles that would cause accessibility problems.
+        security_agent = trans.app.security_agent
+        permissions, in_roles, error, message = \
+            security_agent.derive_roles_from_access(trans, hda.dataset.id, 'root', **role_ids_dict)
+        if error:
+            # Keep the original role associations for the DATASET_ACCESS permission on the dataset.
+            access_action = security_agent.get_action(security_agent.permitted_actions.DATASET_ACCESS.action)
+            permissions[access_action] = hda.dataset.get_access_roles(security_agent)
+            trans.sa_session.refresh(hda.dataset)
+            raise exceptions.RequestParameterInvalidException(message)
+        else:
+            error = security_agent.set_all_dataset_permissions(hda.dataset, permissions)
+            trans.sa_session.refresh(hda.dataset)
+            if error:
+                raise exceptions.RequestParameterInvalidException(error)
+
 
 class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerializer,
-        datasets.DatasetAssociationSerializer,
+        datasets.DatasetAssociationSerializer[HDAManager],
         taggable.TaggableSerializerMixin,
         annotatable.AnnotatableSerializerMixin):
     model_manager_class = HDAManager
+    app: StructuredApp
 
-    def __init__(self, app):
-        super(HDASerializer, self).__init__(app)
+    def __init__(self, app: StructuredApp):
+        super().__init__(app)
         self.hda_manager = self.manager
 
         self.default_view = 'summary'
@@ -275,6 +293,7 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
             'history_id', 'hid',
             # why include if model_class is there?
             'hda_ldda',
+            'copied_from_ldda_id',
             # TODO: accessible needs to go away
             'accessible',
 
@@ -297,12 +316,18 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
             'display_types',
             'visualizations',
 
+            'validated_state',
+            'validated_state_message',
+
             # 'url',
             'download_url',
 
             'annotation',
 
-            'api_type'
+            'api_type',
+            'created_from_basename',
+            'hashes',
+            'sources',
         ], include_keys_from='summary')
 
         self.add_view('extended', [
@@ -316,48 +341,111 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
             'state', 'deleted', 'visible'
         ])
 
+        # fields for new beta web client, there is no summary/detailed split any more
+        self.add_view('betawebclient', [
+            # common to hdca
+            'create_time',
+            'deleted',
+            'hid',
+            'history_content_type',
+            'history_id',
+            'id',
+            'name',
+            'tags',
+            'type',
+            'type_id',
+            'update_time',
+            'url',
+            'visible',
+            # dataset only
+            'accessible',
+            'api_type',
+            'annotation',
+            'created_from_basename',
+            'creating_job',
+            'dataset_id',
+            'data_type',
+            'display_apps',
+            'display_types',
+            'download_url',
+            'extension',
+            'file_ext',
+            'file_name',
+            'file_size',
+            'genome_build',
+            'hda_ldda',
+            'meta_files',
+            'misc_blurb',
+            'misc_info',
+            'model_class',
+            'peek',
+            'purged',
+            'rerunnable',
+            'resubmitted',
+            'state',
+            'uuid',
+            'validated_state',
+            'validated_state_message',
+            'hashes',
+            'sources',
+        ])
+
+    def serialize_copied_from_ldda_id(self, item, key, **context):
+        """
+        Serialize an id attribute of `item`.
+        """
+        if item.copied_from_library_dataset_dataset_association is not None:
+            return self.app.security.encode_id(item.copied_from_library_dataset_dataset_association.id)
+        return None
+
     def add_serializers(self):
-        super(HDASerializer, self).add_serializers()
+        super().add_serializers()
         taggable.TaggableSerializerMixin.add_serializers(self)
         annotatable.AnnotatableSerializerMixin.add_serializers(self)
 
-        self.serializers.update({
-            'model_class'   : lambda *a, **c: 'HistoryDatasetAssociation',
-            'history_content_type': lambda *a, **c: 'dataset',
-            'hda_ldda'      : lambda *a, **c: 'hda',
-            'type_id'       : self.serialize_type_id,
-
-            'history_id'    : self.serialize_id,
+        serializers: Dict[str, base.Serializer] = {
+            'model_class': lambda item, key, **context: 'HistoryDatasetAssociation',
+            'history_content_type': lambda item, key, **context: 'dataset',
+            'hda_ldda': lambda item, key, **context: 'hda',
+            'type_id': self.serialize_type_id,
+            'copied_from_ldda_id': self.serialize_copied_from_ldda_id,
+            'history_id': self.serialize_id,
 
             # remapped
-            'misc_info'     : self._remap_from('info'),
-            'misc_blurb'    : self._remap_from('blurb'),
-            'file_ext'      : self._remap_from('extension'),
-            'file_path'     : self._remap_from('file_name'),
-            'resubmitted'   : lambda i, k, **c: self.hda_manager.has_been_resubmitted(i),
-            'display_apps'  : self.serialize_display_apps,
-            'display_types' : self.serialize_old_display_applications,
+            'misc_info': self._remap_from('info'),
+            'misc_blurb': self._remap_from('blurb'),
+            'file_ext': self._remap_from('extension'),
+            'file_path': self._remap_from('file_name'),
+            'resubmitted': lambda item, key, **context: self.hda_manager.has_been_resubmitted(item),
+            'display_apps': self.serialize_display_apps,
+            'display_types': self.serialize_old_display_applications,
             'visualizations': self.serialize_visualization_links,
 
             # 'url'   : url_for( 'history_content_typed', history_id=encoded_history_id, id=encoded_id, type="dataset" ),
             # TODO: this intermittently causes a routes.GenerationException - temp use the legacy route to prevent this
             #   see also: https://trello.com/c/5d6j4X5y
             #   see also: https://sentry.galaxyproject.org/galaxy/galaxy-main/group/20769/events/9352883/
-            'url'           : lambda i, k, **c: self.url_for('history_content',
-                                                             history_id=self.app.security.encode_id(i.history_id),
-                                                             id=self.app.security.encode_id(i.id)),
-            'urls'          : self.serialize_urls,
+            'url': lambda item, key, **context: self.url_for('history_content',
+                                                             history_id=self.app.security.encode_id(item.history_id),
+                                                             id=self.app.security.encode_id(item.id),
+                                                             context=context),
+            'urls': self.serialize_urls,
 
             # TODO: backwards compat: need to go away
-            'download_url'  : lambda i, k, **c: self.url_for('history_contents_display',
-                                                             history_id=self.app.security.encode_id(i.history.id),
-                                                             history_content_id=self.app.security.encode_id(i.id)),
-            'parent_id'     : self.serialize_id,
+            'download_url': lambda item, key, **context: self.url_for('history_contents_display',
+                                                                      history_id=self.app.security.encode_id(item.history.id),
+                                                                      history_content_id=self.app.security.encode_id(item.id),
+                                                                      context=context),
+            'parent_id': self.serialize_id,
             # TODO: to DatasetAssociationSerializer
-            'accessible'    : lambda i, k, user=None, **c: self.manager.is_accessible(i, user),
-            'api_type'      : lambda *a, **c: 'file',
-            'type'          : lambda *a, **c: 'file'
-        })
+            'accessible': lambda item, key, user=None, **c: self.manager.is_accessible(item, user, **c),
+            'api_type': lambda item, key, **context: 'file',
+            'type': lambda item, key, **context: 'file',
+            'created_from_basename': lambda item, key, **context: item.created_from_basename,
+            'hashes': lambda item, key, **context: [h.to_dict() for h in item.hashes],
+            'sources': lambda item, key, **context: [s.to_dict() for s in item.sources],
+        }
+        self.serializers.update(serializers)
 
     def serialize(self, hda, keys, user=None, **context):
         """
@@ -366,13 +454,14 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
         # TODO: to DatasetAssociationSerializer
         if not self.manager.is_accessible(hda, user, **context):
             keys = self._view_to_keys('inaccessible')
-        return super(HDASerializer, self).serialize(hda, keys, user=user, **context)
+        return super().serialize(hda, keys, user=user, **context)
 
-    def serialize_display_apps(self, hda, key, trans=None, **context):
+    def serialize_display_apps(self, item, key, trans=None, **context):
         """
         Return dictionary containing new-style display app urls.
         """
-        display_apps = []
+        hda = item
+        display_apps: List[Dict[str, Any]] = []
         for display_app in hda.get_display_applications(trans).values():
 
             app_links = []
@@ -387,11 +476,12 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
 
         return display_apps
 
-    def serialize_old_display_applications(self, hda, key, trans=None, **context):
+    def serialize_old_display_applications(self, item, key, trans=None, **context):
         """
         Return dictionary containing old-style display app urls.
         """
-        display_apps = []
+        hda = item
+        display_apps: List[Dict[str, Any]] = []
         if not self.app.config.enable_old_display_applications:
             return display_apps
 
@@ -414,35 +504,37 @@ class HDASerializer(  # datasets._UnflattenedMetadataDatasetAssociationSerialize
 
         return display_apps
 
-    def serialize_visualization_links(self, hda, key, trans=None, **context):
+    def serialize_visualization_links(self, item, key, trans=None, **context):
         """
         Return a list of dictionaries with links to visualization pages
         for those visualizations that apply to this hda.
         """
+        hda = item
         # use older system if registry is off in the config
         if not self.app.visualizations_registry:
             return hda.get_visualizations()
         return self.app.visualizations_registry.get_visualizations(trans, hda)
 
-    def serialize_urls(self, hda, key, **context):
+    def serialize_urls(self, item, key, **context):
         """
         Return web controller urls useful for this HDA.
         """
+        hda = item
         url_for = self.url_for
         encoded_id = self.app.security.encode_id(hda.id)
         urls = {
-            'purge'         : url_for(controller='dataset', action='purge_async', dataset_id=encoded_id),
-            'display'       : url_for(controller='dataset', action='display', dataset_id=encoded_id, preview=True),
-            'edit'          : url_for(controller='dataset', action='edit', dataset_id=encoded_id),
-            'download'      : url_for(controller='dataset', action='display',
-                                      dataset_id=encoded_id, to_ext=hda.extension),
-            'report_error'  : url_for(controller='dataset', action='errors', id=encoded_id),
-            'rerun'         : url_for(controller='tool_runner', action='rerun', id=encoded_id),
-            'show_params'   : url_for(controller='dataset', action='show_params', dataset_id=encoded_id),
-            'visualization' : url_for(controller='visualization', action='index',
-                                      id=encoded_id, model='HistoryDatasetAssociation'),
-            'meta_download' : url_for(controller='dataset', action='get_metadata_file',
-                                      hda_id=encoded_id, metadata_name=''),
+            'purge': url_for(controller='dataset', action='purge_async', dataset_id=encoded_id),
+            'display': url_for(controller='dataset', action='display', dataset_id=encoded_id, preview=True),
+            'edit': url_for(controller='dataset', action='edit', dataset_id=encoded_id),
+            'download': url_for(controller='dataset', action='display',
+                                dataset_id=encoded_id, to_ext=hda.extension),
+            'report_error': url_for(controller='dataset', action='errors', id=encoded_id),
+            'rerun': url_for(controller='tool_runner', action='rerun', id=encoded_id),
+            'show_params': url_for(controller='dataset', action='details', dataset_id=encoded_id),
+            'visualization': url_for(controller='visualization', action='index',
+                                     id=encoded_id, model='HistoryDatasetAssociation'),
+            'meta_download': url_for(controller='dataset', action='get_metadata_file',
+                                     hda_id=encoded_id, metadata_name=''),
         }
         return urls
 
@@ -455,21 +547,22 @@ class HDADeserializer(datasets.DatasetAssociationDeserializer,
     """
     model_manager_class = HDAManager
 
-    def __init__(self, app):
-        super(HDADeserializer, self).__init__(app)
+    def __init__(self, app: MinimalManagerApp):
+        super().__init__(app)
         self.hda_manager = self.manager
+        self.tag_handler = app.tag_handler
 
     def add_deserializers(self):
-        super(HDADeserializer, self).add_deserializers()
+        super().add_deserializers()
         taggable.TaggableDeserializerMixin.add_deserializers(self)
         annotatable.AnnotatableDeserializerMixin.add_deserializers(self)
 
         self.deserializers.update({
-            'visible'       : self.deserialize_bool,
+            'visible': self.deserialize_bool,
             # remapped
-            'genome_build'  : lambda i, k, v, **c: self.deserialize_genome_build(i, 'dbkey', v),
-            'misc_info'     : lambda i, k, v, **c: self.deserialize_basestring(i, 'info', v,
-                                                                               convert_none_to_empty=True),
+            'genome_build': lambda item, key, val, **c: self.deserialize_genome_build(item, 'dbkey', val),
+            'misc_info': lambda item, key, val, **c: self.deserialize_basestring(item, 'info', val,
+                                                                                 convert_none_to_empty=True),
         })
         self.deserializable_keyset.update(self.deserializers.keys())
 
@@ -481,6 +574,6 @@ class HDAFilterParser(datasets.DatasetAssociationFilterParser,
     model_class = model.HistoryDatasetAssociation
 
     def _add_parsers(self):
-        super(HDAFilterParser, self)._add_parsers()
+        super()._add_parsers()
         taggable.TaggableFilterMixin._add_parsers(self)
         annotatable.AnnotatableFilterMixin._add_parsers(self)

@@ -10,20 +10,16 @@ from paste import httpexceptions
 
 import galaxy.model
 import galaxy.model.mapping
-import galaxy.web.framework.webapp
+import galaxy.webapps.base.webapp
 from galaxy.util import asbool
 from galaxy.util.properties import load_app_properties
-from galaxy.webapps.util import (
-    build_template_error_formatters,
-    MiddlewareWrapUnsupported,
-    wrap_if_allowed,
-    wrap_if_allowed_or_fail
-)
+from galaxy.webapps.base.webapp import build_url_map
+from galaxy.webapps.util import wrap_if_allowed
 
 log = logging.getLogger(__name__)
 
 
-class ReportsWebApplication(galaxy.web.framework.webapp.WebApplication):
+class ReportsWebApplication(galaxy.webapps.base.webapp.WebApplication):
     pass
 
 
@@ -32,13 +28,13 @@ def add_ui_controllers(webapp, app):
     Search for controllers in the 'galaxy.webapps.controllers' module and add
     them to the webapp.
     """
-    from galaxy.web.base.controller import BaseUIController
+    from galaxy.webapps.base.controller import BaseUIController
     import galaxy.webapps.reports.controllers
     controller_dir = galaxy.webapps.reports.controllers.__path__[0]
     for fname in os.listdir(controller_dir):
         if not fname.startswith("_") and fname.endswith(".py"):
             name = fname[:-3]
-            module_name = "galaxy.webapps.reports.controllers." + name
+            module_name = f"galaxy.webapps.reports.controllers.{name}"
             module = __import__(module_name)
             for comp in module_name.split(".")[1:]:
                 module = getattr(module, comp)
@@ -49,9 +45,10 @@ def add_ui_controllers(webapp, app):
                     webapp.add_ui_controller(name, T(app))
 
 
-def app_factory(global_conf, load_app_kwds={}, **kwargs):
+def app_factory(global_conf, load_app_kwds=None, **kwargs):
     """Return a wsgi application serving the root object"""
     # Create the Galaxy application unless passed in
+    load_app_kwds = load_app_kwds or {}
     kwargs = load_app_properties(
         kwds=kwargs,
         **load_app_kwds
@@ -73,15 +70,9 @@ def app_factory(global_conf, load_app_kwds={}, **kwargs):
     if kwargs.get('middleware', True):
         webapp = wrap_in_middleware(webapp, global_conf, app.application_stack, **kwargs)
     if asbool(kwargs.get('static_enabled', True)):
-        webapp = wrap_if_allowed(webapp, app.application_stack, wrap_in_static,
+        webapp = wrap_if_allowed(webapp, app.application_stack, build_url_map,
                                  args=(global_conf,),
                                  kwargs=kwargs)
-    # Close any pooled database connections before forking
-    try:
-        galaxy.model.mapping.metadata.bind.dispose()
-    except Exception:
-        log.exception("Unable to dispose of pooled galaxy model database connections.")
-    # Return
     return webapp
 
 
@@ -118,23 +109,9 @@ def wrap_in_middleware(app, global_conf, application_stack, **local_conf):
         if asbool(conf.get('use_printdebug', True)):
             from paste.debug import prints
             app = wrap_if_allowed(app, stack, prints.PrintDebugMiddleware, args=(conf,))
-    if debug and asbool(conf.get('use_interactive', False)):
-        # Interactive exception debugging, scary dangerous if publicly
-        # accessible, if not enabled we'll use the regular error printing
-        # middleware.
-        try:
-            from weberror import evalexception
-            app = wrap_if_allowed_or_fail(app, stack, evalexception.EvalException,
-                                          args=(conf,),
-                                          kwargs=dict(templating_formatters=build_template_error_formatters()))
-        except MiddlewareWrapUnsupported as exc:
-            log.warning(str(exc))
-            import galaxy.web.framework.middleware.error
-            app = wrap_if_allowed(app, stack, galaxy.web.framework.middleware.error.ErrorMiddleware, args=(conf,))
-    else:
-        # Not in interactive debug mode, just use the regular error middleware
-        import galaxy.web.framework.middleware.error
-        app = wrap_if_allowed(app, stack, galaxy.web.framework.middleware.error.ErrorMiddleware, args=(conf,))
+    # Error middleware
+    import galaxy.web.framework.middleware.error
+    app = wrap_if_allowed(app, stack, galaxy.web.framework.middleware.error.ErrorMiddleware, args=(conf,))
     # Transaction logging (apache access.log style)
     if asbool(conf.get('use_translogger', True)):
         from paste.translogger import TransLogger
@@ -145,10 +122,5 @@ def wrap_in_middleware(app, global_conf, application_stack, **local_conf):
     return app
 
 
-def wrap_in_static(app, global_conf, **local_conf):
-    urlmap, _ = galaxy.web.framework.webapp.build_url_map(app, global_conf, local_conf)
-    return urlmap
-
-
 def uwsgi_app():
-    return galaxy.web.framework.webapp.build_native_uwsgi_app(app_factory, "reports")
+    return galaxy.webapps.base.webapp.build_native_uwsgi_app(app_factory, "reports")

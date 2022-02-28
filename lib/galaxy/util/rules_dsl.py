@@ -1,24 +1,29 @@
 import abc
 import itertools
 import re
+from typing import List, Type
 
-import six
-from six.moves import map
+import yaml
+from pkg_resources import resource_stream
+
+
+def get_rules_specification():
+    return yaml.safe_load(resource_stream(__name__, 'rules_dsl_spec.yml'))
 
 
 def _ensure_rule_contains_keys(rule, keys):
     for key, instance_class in keys.items():
         if key not in rule:
-            raise ValueError("Rule of type [%s] does not contain key [%s]." % (rule["type"], key))
+            raise ValueError(f"Rule of type [{rule['type']}] does not contain key [{key}].")
         value = rule[key]
         if not isinstance(value, instance_class):
-            raise ValueError("Rule of type [%s] does not contain correct value type for key [%s]." % (rule["type"], key))
+            raise ValueError(f"Rule of type [{rule['type']}] does not contain correct value type for key [{key}].")
 
 
 def _ensure_key_value_in(rule, key, values):
     value = rule[key]
     if value not in values:
-        raise ValueError("Invalid value [%s] for [%s] encountered." % (value, key))
+        raise ValueError(f"Invalid value [{value}] for [{key}] encountered.")
 
 
 def _ensure_valid_pattern(expression):
@@ -33,7 +38,7 @@ def apply_regex(regex, target, data, replacement=None, group_count=None):
         if replacement is None:
             match = pattern.search(source)
             if not match:
-                raise Exception("Problem applying regular expression [%s] to [%s]." % (regex, source))
+                raise Exception(f"Problem applying regular expression [{regex}] to [{source}].")
 
             if group_count:
                 if len(match.groups()) != group_count:
@@ -51,8 +56,7 @@ def apply_regex(regex, target, data, replacement=None, group_count=None):
     return new_data
 
 
-@six.add_metaclass(abc.ABCMeta)
-class BaseRuleDefinition(object):
+class BaseRuleDefinition(metaclass=abc.ABCMeta):
 
     @abc.abstractproperty
     def rule_type(self):
@@ -71,15 +75,54 @@ class AddColumnMetadataRuleDefinition(BaseRuleDefinition):
     rule_type = "add_column_metadata"
 
     def validate_rule(self, rule):
-        _ensure_rule_contains_keys(rule, {"value": six.string_types})
+        _ensure_rule_contains_keys(rule, {"value": str})
 
     def apply(self, rule, data, sources):
         rule_value = rule["value"]
-        identifier_index = int(rule_value[len("identifier"):])
+        if rule_value.startswith("identifier"):
+            identifier_index = int(rule_value[len("identifier"):])
+
+            new_rows = []
+            for index, row in enumerate(data):
+                new_rows.append(row + [sources[index]["identifiers"][identifier_index]])
+
+        elif rule_value == "tags":
+
+            def sorted_tags(index):
+                tags = sorted(sources[index]["tags"])
+                return [",".join(tags)]
+
+            new_rows = []
+            for index, row in enumerate(data):
+                new_rows.append(row + sorted_tags(index))
+
+        return new_rows, sources
+
+
+class AddColumnGroupTagValueRuleDefinition(BaseRuleDefinition):
+    rule_type = "add_column_group_tag_value"
+
+    def validate_rule(self, rule):
+        _ensure_rule_contains_keys(rule, {"value": str})
+
+    def apply(self, rule, data, sources):
+        rule_value = rule["value"]
+        tag_prefix = f"group:{rule_value}:"
 
         new_rows = []
         for index, row in enumerate(data):
-            new_rows.append(row + [sources[index]["identifiers"][identifier_index]])
+            group_tag_value = None
+            source = sources[index]
+            tags = source["tags"]
+            for tag in sorted(tags):
+                if tag.startswith(tag_prefix):
+                    group_tag_value = tag[len(tag_prefix):]
+                    break
+
+            if group_tag_value is None:
+                group_tag_value = rule.get("default_value", "")
+
+            new_rows.append(row + [group_tag_value])
 
         return new_rows, sources
 
@@ -95,7 +138,7 @@ class AddColumnConcatenateRuleDefinition(BaseRuleDefinition):
         column_1 = rule["target_column_1"]
 
         new_rows = []
-        for index, row in enumerate(data):
+        for row in data:
             new_rows.append(row + [row[column_0] + row[column_1]])
 
         return new_rows, sources
@@ -117,7 +160,7 @@ class AddColumnRegexRuleDefinition(BaseRuleDefinition):
     rule_type = "add_column_regex"
 
     def validate_rule(self, rule):
-        _ensure_rule_contains_keys(rule, {"target_column": int, "expression": six.string_types})
+        _ensure_rule_contains_keys(rule, {"target_column": int, "expression": str})
         _ensure_valid_pattern(rule["expression"])
 
     def apply(self, rule, data, sources):
@@ -149,13 +192,13 @@ class AddColumnValueRuleDefinition(BaseRuleDefinition):
     rule_type = "add_column_value"
 
     def validate_rule(self, rule):
-        _ensure_rule_contains_keys(rule, {"value": six.string_types})
+        _ensure_rule_contains_keys(rule, {"value": str})
 
     def apply(self, rule, data, sources):
         value = rule["value"]
 
         new_rows = []
-        for index, row in enumerate(data):
+        for row in data:
             new_rows.append(row + [str(value)])
 
         return new_rows, sources
@@ -168,7 +211,7 @@ class AddColumnSubstrRuleDefinition(BaseRuleDefinition):
         _ensure_rule_contains_keys(rule, {
             "target_column": int,
             "length": int,
-            "substr_type": six.string_types,
+            "substr_type": str,
         })
         _ensure_key_value_in(rule, "substr_type", ["keep_prefix", "drop_prefix", "keep_suffix", "drop_suffix"])
 
@@ -237,7 +280,7 @@ class AddFilterRegexRuleDefinition(BaseRuleDefinition):
         _ensure_rule_contains_keys(rule, {
             "target_column": int,
             "invert": bool,
-            "expression": six.string_types,
+            "expression": str,
         })
         _ensure_valid_pattern(rule["expression"])
 
@@ -262,7 +305,7 @@ class AddFilterCountRuleDefinition(BaseRuleDefinition):
         _ensure_rule_contains_keys(rule, {
             "count": int,
             "invert": bool,
-            "which": six.string_types,
+            "which": str,
         })
         _ensure_key_value_in(rule, "which", ["first", "last"])
 
@@ -296,7 +339,8 @@ class AddFilterEmptyRuleDefinition(BaseRuleDefinition):
         target_column = rule["target_column"]
 
         def _filter(index):
-            return not invert if len(data[target_column]) == 0 else invert
+            non_empty = len(data[index][target_column]) != 0
+            return not invert if non_empty else invert
 
         return _filter_index(_filter, data), _filter_index(_filter, sources)
 
@@ -308,7 +352,7 @@ class AddFilterMatchesRuleDefinition(BaseRuleDefinition):
         _ensure_rule_contains_keys(rule, {
             "target_column": int,
             "invert": bool,
-            "value": six.string_types,
+            "value": str,
         })
 
     def apply(self, rule, data, sources):
@@ -331,7 +375,7 @@ class AddFilterCompareRuleDefinition(BaseRuleDefinition):
         _ensure_rule_contains_keys(rule, {
             "target_column": int,
             "value": int,
-            "compare_type": six.string_types,
+            "compare_type": str,
         })
         _ensure_key_value_in(rule, "compare_type", ["less_than", "less_than_equal", "greater_than", "greater_than_equal"])
 
@@ -372,21 +416,13 @@ class SortRuleDefinition(BaseRuleDefinition):
 
         sortable = zip(data, sources)
 
-        def sort_func(a, b):
-            a_val = a[0][target]
-            b_val = b[0][target]
+        def sort_func(item):
+            a_val = item[0][target]
             if numeric:
                 a_val = float(a_val)
-                b_val = float(b_val)
+            return a_val
 
-            if a_val < b_val:
-                return -1
-            elif b_val < a_val:
-                return 1
-            else:
-                return 0
-
-        sorted_data = sorted(sortable, sort_func)
+        sorted_data = sorted(sortable, key=sort_func)
 
         new_data = []
         new_sources = []
@@ -457,7 +493,7 @@ def flat_map(f, items):
     return list(itertools.chain.from_iterable(map(f, items)))
 
 
-class RuleSet(object):
+class RuleSet:
 
     def __init__(self, rule_set_as_dict):
         self.raw_rules = rule_set_as_dict["rules"]
@@ -524,14 +560,15 @@ class RuleSet(object):
     @property
     def display(self):
         message = "Rules:\n"
-        message += "".join(["- %s\n" % r for r in self.raw_rules])
+        message += "".join(f"- {r}\n" for r in self.raw_rules)
         message += "Column Definitions:\n"
-        message += "".join(["- %s\n" % m for m in self.raw_mapping])
+        message += "".join(f"- {m}\n" for m in self.raw_mapping)
         return message
 
 
-RULES_DEFINITION_CLASSES = [
+RULES_DEFINITION_CLASSES: List[Type[BaseRuleDefinition]] = [
     AddColumnMetadataRuleDefinition,
+    AddColumnGroupTagValueRuleDefinition,
     AddColumnConcatenateRuleDefinition,
     AddColumnBasenameRuleDefinition,
     AddColumnRegexRuleDefinition,

@@ -24,52 +24,49 @@ import os
 import re
 import shutil
 import tempfile
+import unittest
+from typing import Dict, TextIO, Union
 
-from base import integration_util
-from base.api_util import (
+from galaxy_test.base.api_util import (
     TEST_USER,
 )
-from base.constants import (
+from galaxy_test.base.constants import (
     ONE_TO_SIX_ON_WINDOWS,
     ONE_TO_SIX_WITH_SPACES,
     ONE_TO_SIX_WITH_TABS,
 )
-from base.populators import (
+from galaxy_test.base.populators import (
     DatasetPopulator,
     LibraryPopulator,
     skip_without_datatype,
 )
+from galaxy_test.driver import integration_util
 
 
 SCRIPT_DIR = os.path.normpath(os.path.dirname(__file__))
 TEST_DATA_DIRECTORY = os.path.join(SCRIPT_DIR, os.pardir, os.pardir, "test-data")
 
 
-class BaseUploadContentConfigurationTestCase(integration_util.IntegrationTestCase):
+class BaseUploadContentConfigurationInstance(integration_util.IntegrationInstance):
 
     framework_tool_and_types = True
 
     def setUp(self):
-        super(BaseUploadContentConfigurationTestCase, self).setUp()
+        super().setUp()
         self.dataset_populator = DatasetPopulator(self.galaxy_interactor)
         self.library_populator = LibraryPopulator(self.galaxy_interactor)
         self.history_id = self.dataset_populator.new_history()
 
-    def fetch_target(self, target, assert_ok=False, attach_test_file=False):
-        payload = {
+    def fetch_target(self, target, assert_ok=False, attach_test_file=False, wait=False):
+        payload: Dict[str, Union[str, Dict[str, TextIO]]] = {
             "history_id": self.history_id,
             "targets": json.dumps([target]),
         }
         if attach_test_file:
             payload["__files"] = {"files_0|file_data": open(self.test_data_resolver.get_filename("4.bed"))}
 
-        response = self.dataset_populator.fetch(payload, assert_ok=assert_ok)
+        response = self.dataset_populator.fetch(payload, assert_ok=assert_ok, wait=wait)
         return response
-
-    @classmethod
-    def temp_config_dir(cls, name):
-        # realpath here to get around problems with symlinks being blocked.
-        return os.path.realpath(os.path.join(cls._test_driver.galaxy_test_tmp_dir, name))
 
     def _write_file(self, dir_path, content, filename="test"):
         """Helper for writing ftp/server dir files."""
@@ -82,6 +79,10 @@ class BaseUploadContentConfigurationTestCase(integration_util.IntegrationTestCas
     def _ensure_directory(self, path):
         if not os.path.exists(path):
             os.makedirs(path)
+
+
+class BaseUploadContentConfigurationTestCase(BaseUploadContentConfigurationInstance, unittest.TestCase):
+    pass
 
 
 class InvalidFetchRequestsTestCase(BaseUploadContentConfigurationTestCase):
@@ -207,6 +208,18 @@ class AdminsCanPasteFilePathsTestCase(BaseUploadContentConfigurationTestCase):
         assert response.status_code == 200
         # Test regression where this was getting deleted in this mode.
         assert os.path.exists(path)
+
+    def test_admin_path_paste_libraries_link(self):
+        library = self.library_populator.new_private_library("pathpasteallowedlibraries")
+        path = "%s/1.txt" % TEST_DATA_DIRECTORY
+        assert os.path.exists(path)
+        payload, files = self.library_populator.create_dataset_request(library, upload_option="upload_paths", paths=path, link_data=True)
+        response = self.library_populator.raw_library_contents_create(library["id"], payload, files=files)
+        assert response.status_code == 200
+        dataset = response.json()[0]
+        self.library_populator.wait_on_library_dataset(library["id"], dataset["id"])
+        # We should probably verify the linking, but this was enough for now to exhibit
+        # https://github.com/galaxyproject/galaxy/issues/8756
 
     def test_admin_fetch(self):
         path = os.path.join(TEST_DATA_DIRECTORY, "1.txt")
@@ -422,8 +435,7 @@ class SimpleFtpUploadConfigurationTestCase(BaseFtpUploadConfigurationTestCase):
             "collection_type": "list",
             "name": "cool collection",
         }
-        response = self.fetch_target(target)
-        self._assert_status_code_is(response, 200)
+        response = self.fetch_target(target, assert_ok=True, wait=True)
         response_object = response.json()
         assert "output_collections" in response_object
         output_collections = response_object["output_collections"]
@@ -518,8 +530,8 @@ class AdvancedFtpUploadFetchTestCase(BaseFtpUploadConfigurationTestCase):
             "elements": elements,
             "collection_type": "list:list",
         }
-        self.fetch_target(target, assert_ok=True)
-        hdca = self.dataset_populator.get_history_collection_details(self.history_id, hid=1)
+        self.fetch_target(target, assert_ok=True, wait=True)
+        hdca = self.dataset_populator.get_history_collection_details(self.history_id, history_content_type='dataset_collection')
         assert len(hdca["elements"]) == 2, hdca
         element0 = hdca["elements"][0]
         assert element0["element_identifier"] == "subdirel1"
@@ -669,7 +681,7 @@ class ServerDirectoryValidUsageTestCase(BaseUploadContentConfigurationTestCase):
         full_dir_path = os.path.join(self.server_dir(), dir_to_import)
         os.makedirs(full_dir_path)
         file_content = "hello world\n"
-        with tempfile.NamedTemporaryFile(dir=full_dir_path, delete=False) as fh:
+        with tempfile.NamedTemporaryFile(mode='w', dir=full_dir_path, delete=False) as fh:
             fh.write(file_content)
             file_to_import = fh.name
 
@@ -681,7 +693,7 @@ class ServerDirectoryValidUsageTestCase(BaseUploadContentConfigurationTestCase):
 
         assert library_dataset["file_size"] == 12, library_dataset
 
-    def link_data_only(self):
+    def test_link_data_only(self):
         content = "hello world\n"
         dir_path = os.path.join(self.server_dir(), "lib1")
         file_path = self._write_file(dir_path, content)
@@ -691,7 +703,7 @@ class ServerDirectoryValidUsageTestCase(BaseUploadContentConfigurationTestCase):
         response = self.library_populator.raw_library_contents_create(library["id"], payload, files=files)
         assert response.status_code == 200, response.json()
         dataset = response.json()[0]
-        ok_dataset = self.library_populator.wait_on_library_dataset(library, dataset)
+        ok_dataset = self.library_populator.wait_on_library_dataset(library["id"], dataset["id"])
         assert ok_dataset["file_size"] == 12, ok_dataset
         assert ok_dataset["file_name"] == file_path, ok_dataset
 
@@ -700,7 +712,7 @@ class ServerDirectoryValidUsageTestCase(BaseUploadContentConfigurationTestCase):
         return cls.temp_config_dir("server")
 
 
-class ServerDirectoryRestrictedToAdminsUsageTestCase(BaseUploadContentConfigurationTestCase):
+class UserServerDirectoryOffByDefaultTestCase(BaseUploadContentConfigurationTestCase):
 
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
@@ -712,6 +724,36 @@ class ServerDirectoryRestrictedToAdminsUsageTestCase(BaseUploadContentConfigurat
         payload, files = self.library_populator.create_dataset_request(library, upload_option="upload_directory", server_dir="library")
         response = self.library_populator.raw_library_contents_create(library["id"], payload, files=files)
         assert response.status_code == 403, response.json()
+
+
+class UserServerDirectoryValidUsageTestCase(BaseUploadContentConfigurationTestCase):
+
+    @classmethod
+    def user_server_dir(cls):
+        return cls.temp_config_dir("user_library_import_dir")
+
+    @classmethod
+    def handle_galaxy_config_kwds(cls, config):
+        user_server_dir = cls.user_server_dir()
+        os.makedirs(user_server_dir)
+        config["user_library_import_dir"] = os.path.join(user_server_dir)
+
+    def test_valid_user_server_dir_uploads_okay(self):
+        dir_to_import = 'library'
+        full_dir_path = os.path.join(self.user_server_dir(), TEST_USER, dir_to_import)
+        os.makedirs(full_dir_path)
+        file_content = "hello world\n"
+        with tempfile.NamedTemporaryFile(mode='w', dir=full_dir_path, delete=False) as fh:
+            fh.write(file_content)
+            file_to_import = fh.name
+
+        library_dataset = self.library_populator.new_library_dataset("serverdirupload", upload_option="upload_directory", server_dir=dir_to_import)
+        # Check the file is still there and was not modified
+        with open(file_to_import) as fh:
+            read_content = fh.read()
+        assert read_content == file_content
+
+        assert library_dataset["file_size"] == 12, library_dataset
 
 
 class FetchByPathTestCase(BaseUploadContentConfigurationTestCase):
@@ -834,8 +876,30 @@ class FetchByPathTestCase(BaseUploadContentConfigurationTestCase):
         }
         self.dataset_populator.fetch(payload)
         libraries = self.library_populator.get_libraries()
-        matching = [l for l in libraries if l["name"] == "My Cool Library"]
+        matching = [library for library in libraries if library["name"] == "My Cool Library"]
         assert len(matching) == 1
         library = matching[0]
         dataset = self.library_populator.get_library_contents_with_path(library["id"], "/file1")
         assert dataset["file_size"] == 6, dataset
+
+
+class TestDirectoryAndCompressedTypes(BaseUploadContentConfigurationTestCase):
+
+    require_admin_user = True
+
+    @classmethod
+    def handle_galaxy_config_kwds(cls, config):
+        config["allow_path_paste"] = True
+
+    def test_tar_to_directory(self):
+        dataset = self.dataset_populator.new_dataset(
+            self.history_id, 'file://%s/testdir.tar' % TEST_DATA_DIRECTORY, file_type="tar", auto_decompress=False, wait=True
+        )
+        dataset = self.dataset_populator.get_history_dataset_details(self.history_id, dataset=dataset)
+        assert dataset["file_ext"] == "tar", dataset
+        response = self.dataset_populator.run_tool(
+            tool_id="CONVERTER_tar_to_directory",
+            inputs={"input1": {"src": "hda", "id": dataset["id"]}},
+            history_id=self.history_id,
+        )
+        self.dataset_populator.wait_for_job(response["jobs"][0]["id"])

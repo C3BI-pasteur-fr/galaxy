@@ -1,10 +1,8 @@
-from __future__ import print_function
-
 import argparse
 import os
 import sys
+from configparser import ConfigParser
 
-from six.moves.configparser import SafeConfigParser
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.orm import scoped_session, sessionmaker
 
@@ -18,16 +16,16 @@ def main(opts, session, model):
     Find all tool shed repositories with the bad path and update with the correct path.
     '''
     for row in session.query(model.ToolShedRepository).all():
-        if 'shed_config_filename' in row.metadata:
-            if row.metadata['shed_config_filename'] == opts.bad_filename:
-                row.metadata['shed_config_filename'] = opts.good_filename
+        if 'shed_config_filename' in row.metadata_:
+            if row.metadata_['shed_config_filename'] == opts.bad_filename:
+                row.metadata_['shed_config_filename'] = opts.good_filename
                 session.add(row)
                 session.flush()
     return 0
 
 
 def create_database(config_file):
-    parser = SafeConfigParser()
+    parser = ConfigParser()
     parser.read(config_file)
     # Determine which database connection to use.
     database_connection = parser.get('app:main', 'install_database_connection')
@@ -39,7 +37,6 @@ def create_database(config_file):
         print('Unable to determine correct database connection.')
         exit(1)
 
-    '''Initialize the database file.'''
     # Initialize the database connection.
     engine = create_engine(database_connection)
     MetaData(bind=engine)

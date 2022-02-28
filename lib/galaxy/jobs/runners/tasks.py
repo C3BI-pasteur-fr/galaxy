@@ -20,7 +20,7 @@ class TaskedJobRunner(BaseJobRunner):
 
     def __init__(self, app, nworkers):
         """Start the job runner with 'nworkers' worker threads"""
-        super(TaskedJobRunner, self).__init__(app, nworkers)
+        super().__init__(app, nworkers)
         self._init_worker_threads()
 
     def queue_job(self, job_wrapper):
@@ -54,7 +54,7 @@ class TaskedJobRunner(BaseJobRunner):
                 splitter = getattr(__import__('galaxy.jobs.splitters', globals(), locals(), [parallelism.method]), parallelism.method)
             except Exception:
                 job_wrapper.change_state(model.Job.states.ERROR)
-                job_wrapper.fail("Job Splitting Failed, no match for '%s'" % parallelism)
+                job_wrapper.fail(f"Job Splitting Failed, no match for '{parallelism}'")
                 return
             tasks = splitter.do_split(job_wrapper)
             # Not an option for now.  Task objects don't *do* anything
@@ -111,7 +111,7 @@ class TaskedJobRunner(BaseJobRunner):
                     if sleep_time < 8:
                         sleep_time *= 2
             job_wrapper.reclaim_ownership()      # if running as the actual user, change ownership before merging.
-            log.debug('execution finished - beginning merge: %s' % command_line)
+            log.debug(f'execution finished - beginning merge: {command_line}')
             stdout, stderr = splitter.do_merge(job_wrapper, task_wrappers)
         except Exception:
             job_wrapper.fail("failure running job", exception=True)
@@ -129,15 +129,16 @@ class TaskedJobRunner(BaseJobRunner):
             log.exception("Job wrapper finish method failed")
             job_wrapper.fail("Unable to finish job", exception=True)
 
-    def stop_job(self, job):
+    def stop_job(self, job_wrapper):
         # We need to stop all subtasks. This is going to stay in the task
         # runner because the task runner also starts all the tasks.
-        # First, get the list of tasks from job.tasks, which uses SQL
-        # alchemy to retrieve a job's list of tasks.
+        # First, get the list of tasks from job.tasks, which uses SQLAlchemy
+        # to retrieve a job's list of tasks.
+        job = job_wrapper.get_job()
         tasks = job.get_tasks()
         if (len(tasks) > 0):
             for task in tasks:
-                log.debug("Killing task's job " + str(task.get_id()))
+                log.debug(f"Killing task's job {task.id}")
                 self.app.job_manager.job_handler.dispatcher.stop(task)
 
         # There were no subtasks, so just kill the job. We'll touch
@@ -145,12 +146,13 @@ class TaskedJobRunner(BaseJobRunner):
         # parallelism.
         else:
             # if our local job has JobExternalOutputMetadata associated, then our primary job has to have already finished
-            if job.external_output_metadata:
-                pid = job.external_output_metadata[0].job_runner_external_pid  # every JobExternalOutputMetadata has a pid set, we just need to take from one of them
+            job_ext_output_metadata = job.get_external_output_metadata()
+            if job_ext_output_metadata:
+                pid = job_ext_output_metadata[0].job_runner_external_pid  # every JobExternalOutputMetadata has a pid set, we just need to take from one of them
             else:
                 pid = job.job_runner_external_id
             if pid in [None, '']:
-                log.warning("stop_job(): %s: no PID in database for job, unable to stop" % job.id)
+                log.warning(f"stop_job(): {job.id}: no PID in database for job, unable to stop")
                 return
             self._stop_pid(pid, job.id)
 
@@ -188,7 +190,7 @@ class TaskedJobRunner(BaseJobRunner):
             task_state = task.get_state()
             if (model.Task.states.QUEUED == task_state):
                 log.debug("_cancel_job for job %d: Task %d is not running; setting state to DELETED"
-                          % (job.get_id(), task.get_id()))
+                          % (job.id, task.id))
                 task_wrapper.change_state(task.states.DELETED)
         # If a task failed, then the caller will have waited a few seconds
         # before recognizing the failure. In that time, a queued task could
@@ -200,7 +202,7 @@ class TaskedJobRunner(BaseJobRunner):
             if (model.Task.states.RUNNING == task_wrapper.get_state()):
                 task = task_wrapper.get_task()
                 log.debug("_cancel_job for job %d: Stopping running task %d"
-                          % (job.get_id(), task.get_id()))
+                          % (job.id, task.id))
                 job_wrapper.app.job_manager.job_handler.dispatcher.stop(task)
 
     def _check_pid(self, pid):
@@ -215,7 +217,7 @@ class TaskedJobRunner(BaseJobRunner):
         job's id (which is used for logging messages only right now).
         """
         pid = int(pid)
-        log.debug("Stopping pid %s" % pid)
+        log.debug(f"Stopping pid {pid}")
         if not self._check_pid(pid):
             log.warning("_stop_pid(): %s: PID %d was already dead or can't be signaled" % (job_id, pid))
             return
