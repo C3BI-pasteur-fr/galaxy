@@ -1,8 +1,10 @@
 <script setup>
 import { ref, computed } from "vue";
-import { useFetch } from "./composables/fetch";
-const yCardMargin = ref("my-5");
+import { useFetch } from "@/composables/fetch";
+import ClusterLoad from "@/components/ClusterLoad.vue";
 
+const yCardMargin = ref("my-5");
+const numToolsToDisplay = ref(20);
 const howTos = ref([
   {
     title: "How to use Galaxy",
@@ -86,26 +88,29 @@ const pasteurUserInfos = ref([
   },
 ]);
 
-const { data: clusterLoad, error } = useFetch(
-  "https://galaxy.pasteur.fr/static/pasteur/cluster-load.json"
-);
-console.log(error);
-
 const { data: tools } = useFetch(
   "https://galaxy.pasteur.fr/static/pasteur/tools.json"
 );
 const computedTools = computed(() => {
   return tools.value
-    ? tools.value.map((tool) => ({
-        ...tool,
-        create_time: new Date(tool.create_time),
-      }))
+    ? tools.value
+        .map((tool) => ({
+          ...tool,
+          create_time: new Date(tool.create_time),
+        }))
+        .sort((a, b) => b.create_time - a.create_time)
+        .slice(0, numToolsToDisplay.value)
     : [];
 });
+
+const sectionClass = computed(
+  () => containerClass.value + " " + yCardMargin.value
+);
+const containerClass = ref("container");
 </script>
 <template>
   <div class="py-4">
-    <div class="container" :class="yCardMargin">
+    <div :class="sectionClass">
       <div class="jumbotron">
         <div class="container">
           <h1>Welcome to Galaxy@Pasteur</h1>
@@ -140,7 +145,7 @@ const computedTools = computed(() => {
         </div>
       </div>
     </div>
-    <div class="container" :class="yCardMargin">
+    <div :class="sectionClass">
       <div class="card">
         <div class="card-header border-bottom-0">
           <h3>Pasteur users</h3>
@@ -160,20 +165,23 @@ const computedTools = computed(() => {
         </div>
       </div>
     </div>
-    <div class="container" :class="yCardMargin">
-      {{ clusterLoad }}
+    <div :class="sectionClass">
+      <ClusterLoad />
     </div>
-    <div id="new-tools" class="container" :class="yCardMargin">
+    <div id="new-tools" :class="sectionClass">
       <div class="card">
         <div class="card-header"><h3>Tools</h3></div>
         <div class="card-body">
           <div class="warningmessagelarge" style="font-size: 1.2rem">
-            Warning! When xml are updated, workflows using them must be adapted.
+            Warning! When tools are updated, workflows using them must be
+            adapted.
           </div>
 
           <div class="card">
             <div class="card-body">
-              <h4 class="card-title font-weight-bold">New xml versions for:</h4>
+              <h4 class="card-title font-weight-bold">
+                New tools versions for:
+              </h4>
               <div class="table-responsive">
                 <table class="table table-borderless table-sm">
                   <thead>
@@ -190,7 +198,7 @@ const computedTools = computed(() => {
                       <th scope="row">{{ i + 1 }}</th>
                       <td>{{ tool.name }}</td>
                       <td>{{ tool.version }}</td>
-                      <td>{{ tool.create_time }}</td>
+                      <td>{{ tool.create_time.toDateString() }}</td>
                       <td>{{ tool.description }}</td>
                     </tr>
                   </tbody>
@@ -201,7 +209,7 @@ const computedTools = computed(() => {
         </div>
       </div>
     </div>
-    <div class="container" :class="yCardMargin">
+    <div :class="sectionClass">
       <div
         class="infomessagelarge"
         :class="yCardMargin"
@@ -216,7 +224,7 @@ const computedTools = computed(() => {
         >.
       </div>
     </div>
-    <div class="container" :class="yCardMargin">
+    <div :class="sectionClass">
       <p>
         <a target="_blank" class="reference" href="http://galaxyproject.org/">
           Galaxy</a
@@ -262,6 +270,5 @@ const computedTools = computed(() => {
 </template>
 
 <style>
-@import "@/assets/base.css";
-@import "@/assets/pasteur.css";
+@import "../../../static/style/base.css";
 </style>
