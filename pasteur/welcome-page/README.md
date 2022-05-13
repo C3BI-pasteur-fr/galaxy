@@ -2,38 +2,23 @@
 
 This template should help get you started developing with Vue 3 in Vite.
 
-
 ## file setup
 
 Before starting developping the Pasteur Galaxy welcome page, few things need to be done manually.
 
-### Get the `base.css` from Galaxy code src
+### build galaxy js client
 
-To do this you need to: 
-
-1. Clone the repo
-   ```sh
-   git clone https://github.com/C3BI-pasteur-fr/galaxy
-   ```
-2. Checkout to the correct branch
-   ```sh
-   git checkout pasteur_release_[version]
-   ```
-3. go to the client directory
+1. go to the client directory
    ```sh
    cd ./client
    ```
-4. install js dependencies
+2. install js dependencies
    ```sh
    yarn install
    ```
-5. Build production dist
+3. Build production dist
    ```sh
    yarn build-production
-   ```
-6. Copy `base.css`
-   ```sh
-   cp ../static/style/base.css [galaxy_prod_conf_ROOTDIR]/pasteur/welcome-page/src/assets/
    ```
 
 ## Recommended IDE Setup
