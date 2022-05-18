@@ -20,9 +20,11 @@ from fastapi import (
     Request,
     Response,
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi.params import Depends
 from fastapi_utils.cbv import cbv
 from fastapi_utils.inferring_router import InferringRouter
+from pydantic import ValidationError
 from pydantic.main import BaseModel
 from starlette.routing import NoMatchFound
 try:
@@ -83,12 +85,11 @@ class GalaxyTypeDepends(Depends):
         self.galaxy_type_depends = dep_type
 
 
-def depends(dep_type: Type[T]) -> Any:
-
+def depends(dep_type: Type[T]) -> T:
     def _do_resolve(request: Request):
         return get_app().resolve(dep_type)
 
-    return GalaxyTypeDepends(_do_resolve, dep_type)
+    return cast(T, GalaxyTypeDepends(_do_resolve, dep_type))
 
 
 def get_session_manager(app: StructuredApp = DependsOnApp) -> GalaxySessionManager:
@@ -298,7 +299,10 @@ def as_form(cls: Type[BaseModel]):
     ]
 
     async def _as_form(**data):
-        return cls(**data)
+        try:
+            return cls(**data)
+        except ValidationError as e:
+            raise RequestValidationError(e.raw_errors)
 
     sig = inspect.signature(_as_form)
     sig = sig.replace(parameters=new_params)

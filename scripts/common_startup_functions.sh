@@ -45,7 +45,7 @@ parse_common_args() {
             --daemon|start)
                 gravity_args="start"
                 paster_args="$paster_args --daemon"
-                gunicorn_args="$gunicorn_args --daemon"
+                gunicorn_args="$gunicorn_args --daemon --capture-output"
                 add_pid_arg=1
                 add_log_arg=1
                 # --daemonize2 waits until after the application has loaded
@@ -137,7 +137,7 @@ setup_gravity_state_dir() {
         echo "Setting \$GRAVITY_STATE_DIR in ${GALAXY_VIRTUAL_ENV}/bin/activate"
         echo '' >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
         echo '# Galaxy Gravity per-instance state directory configured by Galaxy common_startup.sh' >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
-        echo "GRAVITY_STATE_DIR='$(pwd)/database/gravity'" >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
+        echo "GRAVITY_STATE_DIR=\${GRAVITY_STATE_DIR:-'$(pwd)/database/gravity'}" >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
         echo 'export GRAVITY_STATE_DIR' >> "${GALAXY_VIRTUAL_ENV}/bin/activate"
     fi
 }
@@ -163,10 +163,10 @@ find_server() {
             ;;
         reports)
             # TODO: is this really the only way to configure the port?
-            GUNICORN_CMD_ARGS=${GUNICORN_CMD_ARGS:-"--bind=localhost:9001"}
+            GUNICORN_CMD_ARGS=${GUNICORN_CMD_ARGS:-"--bind=localhost:9001 --config lib/galaxy/web_stack/gunicorn_config.py"}
             ;;
         tool_shed)
-            GUNICORN_CMD_ARGS=${GUNICORN_CMD_ARGS:-"--bind=localhost:9009"}
+            GUNICORN_CMD_ARGS=${GUNICORN_CMD_ARGS:-"--bind=localhost:9009 --config lib/galaxy/web_stack/gunicorn_config.py"}
     esac
 
     APP_WEBSERVER=${APP_WEBSERVER:-$default_webserver}
@@ -220,6 +220,7 @@ find_server() {
             run_server="galaxyctl"
             server_args="$gravity_args"
         else
+            galaxyctl update --force
             run_server="galaxy"
             server_args=
         fi

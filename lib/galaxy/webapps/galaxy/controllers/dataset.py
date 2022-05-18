@@ -29,6 +29,7 @@ from galaxy.util import (
 )
 from galaxy.util.checkers import check_binary
 from galaxy.util.sanitize_html import sanitize_html
+from galaxy.util.zipstream import ZipstreamWrapper
 from galaxy.web import form_builder
 from galaxy.web.framework.helpers import iff
 from galaxy.webapps.base.controller import BaseUIController, ERROR, SUCCESS, url_for, UsesExtendedMetadataMixin
@@ -188,7 +189,12 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
         # Ensure ck_size is an integer before passing through to datatypes.
         if ck_size:
             ck_size = int(ck_size)
-        display_data, headers = data.datatype.display_data(trans, data, preview, filename, to_ext, offset=offset, ck_size=ck_size, **kwd)
+        display_data, headers = data.datatype.display_data(
+            trans, data, preview, filename, to_ext, offset=offset, ck_size=ck_size, **kwd
+        )
+        if isinstance(display_data, ZipstreamWrapper):
+            trans.response.headers.update(headers)
+            return display_data.response()
         trans.response.headers.update(headers)
         return display_data
 
@@ -228,6 +234,7 @@ class DatasetInterface(BaseUIController, UsesAnnotations, UsesItemRatings, UsesE
                 'type': 'text',
                 'area': True,
                 'label': 'Annotation',
+                'optional': True,
                 'value': self.get_item_annotation_str(trans.sa_session, trans.user, data),
                 'help': 'Add an annotation or notes to a dataset; annotations are available when a history is viewed.'
             }]

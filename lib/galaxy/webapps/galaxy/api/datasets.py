@@ -2,6 +2,7 @@
 API operations on the contents of a history dataset.
 """
 import logging
+from io import IOBase
 from typing import (
     Any,
     cast,
@@ -38,6 +39,7 @@ from galaxy.schema.schema import (
     DatasetSourceType,
     UpdateDatasetPermissionsPayload,
 )
+from galaxy.util.zipstream import ZipstreamWrapper
 from galaxy.webapps.galaxy.api.common import (
     get_filter_query_params,
     get_query_parameters_from_request_excluding,
@@ -248,7 +250,15 @@ class FastAPIDatasets:
     ):
         """Streams the preview contents of a dataset to be displayed in a browser."""
         extra_params = get_query_parameters_from_request_excluding(request, {"preview", "filename", "to_ext", "raw"})
-        display_data, headers = self.service.display(trans, history_content_id, history_id, preview, filename, to_ext, raw, **extra_params)
+        display_data, headers = self.service.display(
+            trans, history_content_id, history_id, preview, filename, to_ext, raw, **extra_params
+        )
+        if isinstance(display_data, IOBase):
+            file_name = getattr(display_data, "name", None)
+            if file_name:
+                return FileResponse(file_name, headers=headers)
+        elif isinstance(display_data, ZipstreamWrapper):
+            return StreamingResponse(display_data.response(), headers=headers)
         return StreamingResponse(display_data, headers=headers)
 
     @router.get(
@@ -445,6 +455,8 @@ class DatasetsController(BaseGalaxyAPIController):
             trans, history_content_id, history_id, preview, filename, to_ext, raw, **kwd
         )
         trans.response.headers.update(headers)
+        if isinstance(display_data, ZipstreamWrapper):
+            return display_data.response()
         return display_data
 
     @web.expose_api
