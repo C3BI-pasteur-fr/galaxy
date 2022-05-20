@@ -170,42 +170,42 @@ const containerClass = ref("container");
     </div>
     <div id="new-tools" :class="sectionClass">
       <div class="card">
-        <div class="card-header"><h3>Tools</h3></div>
+        <div class="card-header"><h3>New tools</h3></div>
         <div class="card-body">
           <div class="warningmessagelarge" style="font-size: 1.2rem">
-            Warning! When tools are updated, workflows using them must be
-            adapted.
+            When tools are updated, workflows using them might need to be
+            updated as well.
           </div>
 
-          <div class="card">
-            <div class="card-body">
-              <h4 class="card-title font-weight-bold">
+          <!-- <div class="card">
+            <div class="card-body"> -->
+          <!-- <h4 class="card-title font-weight-bold">
                 New tools versions for:
-              </h4>
-              <div class="table-responsive">
-                <table class="table table-borderless table-sm">
-                  <thead>
-                    <tr>
-                      <th scope="col">#</th>
-                      <th scope="col">Tool name</th>
-                      <th scope="col">Version</th>
-                      <th scope="col">Update time</th>
-                      <th scope="col">Description</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(tool, i) in computedTools" :key="tool.id">
-                      <th scope="row">{{ i + 1 }}</th>
-                      <td>{{ tool.name }}</td>
-                      <td>{{ tool.version }}</td>
-                      <td>{{ tool.create_time.toDateString() }}</td>
-                      <td>{{ tool.description }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
+              </h4> -->
+          <div class="table-responsive">
+            <table class="table table-borderless table-sm">
+              <thead>
+                <tr>
+                  <th scope="col">#</th>
+                  <th scope="col">Tool name</th>
+                  <th scope="col">Version</th>
+                  <th scope="col">Update time</th>
+                  <th scope="col">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(tool, i) in computedTools" :key="tool.id">
+                  <th scope="row">{{ i + 1 }}</th>
+                  <td>{{ tool.name }}</td>
+                  <td>{{ tool.version }}</td>
+                  <td>{{ tool.create_time.toDateString() }}</td>
+                  <td>{{ tool.description }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+          <!-- </div>
+          </div> -->
         </div>
       </div>
     </div>
