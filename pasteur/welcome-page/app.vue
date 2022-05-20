@@ -1,7 +1,5 @@
 <script setup>
 import { ref, computed } from "vue";
-import { useFetch } from "@/composables/fetch";
-import ClusterLoad from "@/components/ClusterLoad.vue";
 
 const yCardMargin = ref("my-5");
 const numToolsToDisplay = ref(20);
@@ -88,7 +86,7 @@ const pasteurUserInfos = ref([
   },
 ]);
 
-const { data: tools } = useFetch(
+const { data: tools } = await useLazyFetch(
   "https://galaxy.pasteur.fr/static/pasteur/tools.json"
 );
 const computedTools = computed(() => {
@@ -270,5 +268,5 @@ const containerClass = ref("container");
 </template>
 
 <style>
-@import "../../../static/style/base.css";
+@import "../../static/style/base.css";
 </style>

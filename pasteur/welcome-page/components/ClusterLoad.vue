@@ -1,13 +1,11 @@
 <script setup>
-import { reactive, watch, computed } from "vue";
-import { useFetch } from "@vueuse/core";
+import { reactive, computed, onMounted } from "vue";
 import * as Plot from "@observablehq/plot";
 
-const { data, error } = useFetch(
+const { data, error } = await useLazyFetch(
   "https://galaxy.pasteur.fr/static/pasteur/cluster-load-over-time.json"
-)
-  .get()
-  .json();
+);
+console.log(data.value);
 const domain = reactive([0, 100]);
 const computedData = computed(() => {
   if (data.value) {
@@ -74,12 +72,14 @@ const chart = computed(() => {
   }
 });
 
-watch(chart, (newChart) => {
-  if (newChart) {
-    document.getElementById("cluster-load-chard").appendChild(newChart);
+onMounted(() => {
+  const clusterLoadChartElem = document.getElementById("cluster-load-chard");
+  if (clusterLoadChartElem) {
+    clusterLoadChartElem.appendChild(chart.value);
   }
 });
-console.log(computedData);
+// useNuxtApp().hook("app:suspense:resolve", );
+//
 </script>
 <template>
   <div class="card">
@@ -91,3 +91,4 @@ console.log(computedData);
     </div>
   </div>
 </template>
+
