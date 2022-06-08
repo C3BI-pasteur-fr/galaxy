@@ -1,6 +1,23 @@
 <script setup>
+import "bootstrap/dist/js/bootstrap.js";
 import { ref, computed } from "vue";
 
+function getDateBeforeDays(days, date) {
+  const daysInMs = days * 24 * 60 * 60 * 1000;
+  return new Date(date.getTime() - daysInMs);
+}
+
+function hasToDisplayMessage(start, end, current) {
+  return current >= start && current <= end;
+}
+const stringDateOptions = ref({
+  weekday: "short",
+  // year: "",
+  month: "long",
+  day: "numeric",
+  hour: "numeric",
+});
+const daysBeforeEventMessageIsDisplayed = ref(21);
 const yCardMargin = ref("my-5");
 const numToolsToDisplay = ref(20);
 const howTos = ref([
@@ -105,9 +122,71 @@ const sectionClass = computed(
   () => containerClass.value + " " + yCardMargin.value
 );
 const containerClass = ref("container");
+
+const { data: maintenanceMessages } = await useAsyncData(
+  "maintenance-msg",
+  () => queryContent("/maintenance").find()
+);
+
+const sanitizedMaintenanceMessages = computed(() =>
+  maintenanceMessages.value.map((msg) => {
+    const startingDate = new Date(msg.startingDate);
+    return {
+      ...msg,
+      startingDate,
+      endingDate: new Date(msg.endingDate),
+      displayingMessageStartingDate: getDateBeforeDays(
+        daysBeforeEventMessageIsDisplayed.value,
+        startingDate
+      ),
+    };
+  })
+);
+const filteredMaintenanceMessages = computed(() =>
+  sanitizedMaintenanceMessages.value.filter((msg) =>
+    hasToDisplayMessage(
+      msg.displayingMessageStartingDate,
+      msg.endingDate,
+      Date.now()
+    )
+  )
+);
 </script>
 <template>
   <div class="py-4">
+    <div v-if="filteredMaintenanceMessages" :class="sectionClass">
+      <div
+        v-for="maintenanceMessage in filteredMaintenanceMessages"
+        :key="maintenanceMessage.title"
+        class="warningmessagelarge"
+      >
+        <div class="d-flex justify-content-between">
+          <h3 class="alert-heading">
+            {{ maintenanceMessage.title }}
+          </h3>
+          <span>
+            <span>
+              {{
+                maintenanceMessage.startingDate.toLocaleDateString(
+                  undefined,
+                  stringDateOptions
+                )
+              }}
+            </span>
+            &#129146;
+            <span>
+              {{
+                maintenanceMessage.endingDate.toLocaleDateString(
+                  undefined,
+                  stringDateOptions
+                )
+              }}
+            </span>
+          </span>
+        </div>
+        <ContentRenderer :value="maintenanceMessage" />
+      </div>
+    </div>
     <div :class="sectionClass">
       <div class="jumbotron">
         <div class="container">

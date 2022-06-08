@@ -6,4 +6,9 @@ export default defineNuxtConfig({
     app: {
         buildAssetsDir: "/static/_nuxt/",
     },
+    modules: ['@nuxt/content'],
+    content: {
+        // https://content.nuxtjs.org/api/configuration
+
+    }
 })
