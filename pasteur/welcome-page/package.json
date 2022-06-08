@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@observablehq/plot": "^0.4.3",
-    "bootstrap": "^4.6.1"
+    "bootstrap": "^4.6.1",
+    "jquery": "^3.5.1",
+    "popper.js": "^1.16.1"
   }
 }
