@@ -23,7 +23,7 @@ def module_prepare(app, command_line, job, working_directory):
             dict_module = {'source_module':app.config.use_modules, 'modules': dependency_module[0]}
             script = module_template % ( dict_module )
             module_path = os.path.join( working_directory, "module.sh" )
-            modulefile = file( module_path, "w" )
+            modulefile = open( module_path, "w" )
             modulefile.write( script )
             modulefile.close()
             os.chmod( module_path, stat.S_IRWXU + stat.S_IRGRP + stat.S_IXGRP )
