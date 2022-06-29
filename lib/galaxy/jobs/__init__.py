@@ -1211,7 +1211,6 @@ class JobWrapper(HasResourceParameters):
         #PASTEUR MAREUIL
         self.dependency_module_commands = module_prepare(self.app, self.command_line, job, self.working_directory)
         # Shell fragment to inject dependencies
-        self.dependency_shell_commands = self.tool.build_dependency_shell_commands(job_directory=self.working_directory)
         if self.tool.requires_galaxy_python_environment or self.remote_command_line:
             # These tools (upload, metadata, data_source) may need access to the datatypes registry.
             self.app.datatypes_registry.to_xml_file(os.path.join(self.working_directory, 'registry.xml'))
