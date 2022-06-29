@@ -51,7 +51,7 @@ def module_dependency( job_tool_id, job_tool_version, module_sample_path ):
             module_name = rootchild.attrib["module"]
             tooldict[tool_id, tool_version] = [module_name]
     log.debug('MODULE DEBUG : Job id %s version %s' % (job_tool_id, job_tool_version))
-    if tooldict.has_key((job_tool_id, job_tool_version)):
+    if (job_tool_id, job_tool_version) in tooldict:
         return tooldict[job_tool_id, job_tool_version]
 
 
