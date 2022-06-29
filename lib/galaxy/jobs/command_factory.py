@@ -41,6 +41,7 @@ def build_command(
     create_tool_working_directory=True,
     remote_command_params=None,
     remote_job_directory=None,
+    stream_stdout_stderr=False,
 ):
     """
     Compose the sequence of commands necessary to execute a job. This will
@@ -97,7 +98,7 @@ def build_command(
 
     for_pulsar = 'script_directory' in remote_command_params
     if not for_pulsar:
-        commands_builder.capture_stdout_stderr('../outputs/tool_stdout', '../outputs/tool_stderr')
+        commands_builder.capture_stdout_stderr('../outputs/tool_stdout', '../outputs/tool_stderr', stream_stdout_stderr=stream_stdout_stderr)
 
     # Don't need to create a separate tool working directory for Pulsar
     # jobs - that is handled by Pulsar.
@@ -280,12 +281,15 @@ class CommandsBuilder:
     def append_commands(self, commands):
         self.append_command("; ".join(c for c in commands if c))
 
-    def capture_stdout_stderr(self, stdout_file, stderr_file):
-        trap_command = """trap 'rm "$__out" "$__err"' EXIT"""
+    def capture_stdout_stderr(self, stdout_file, stderr_file, stream_stdout_stderr=False):
+        if not stream_stdout_stderr:
+            self.append_command(f"> '{stdout_file}' 2> '{stderr_file}'", sep="")
+            return
+        trap_command = """trap 'rm -f "$__out" "$__err"' EXIT"""
         if TRAP_KILL_CONTAINER in self.commands:
             # We need to replace the container kill trap with one that removes the named pipes and kills the container
             self.commands = self.commands.replace(TRAP_KILL_CONTAINER, "")
-            trap_command = """trap 'rm "$__out" "$__err" 2> /dev/null || true; _on_exit' EXIT"""
+            trap_command = """trap 'rm -f "$__out" "$__err"; _on_exit' EXIT"""
         self.prepend_command(
             f"""__out="${{TMPDIR:-.}}/out.$$" __err="${{TMPDIR:-.}}/err.$$"
 mkfifo "$__out" "$__err"
