@@ -1,0 +1,14 @@
+<tool id="CONVERTER_phylip_to_nexus_0" name="Convert Phylip to Nexus" version="1.0.0" hidden="true">
+    <requirements>
+        <requirement type="package" version="0.3.1">goalign</requirement>
+    </requirements>
+    <command>goalign reformat nexus --phylip -i '$input1' > '$output1'</command>
+    <inputs>
+        <param format="phylip" name="input1" type="data" label="Choose Phylip"/>
+    </inputs>
+    <outputs>
+        <data format="nex" name="output1"/>
+    </outputs>
+    <help>
+    </help>
+</tool>

@@ -1,0 +1,14 @@
+<tool id="CONVERTER_fasta_to_nexus_0" name="Convert FASTA to Nexus" version="1.0.0" hidden="true">
+    <requirements>
+        <requirement type="package" version="0.3.1">goalign</requirement>
+    </requirements>
+    <command>goalign reformat nexus -i '$input1' > '$output1'</command>
+    <inputs>
+        <param format="fasta" name="input1" type="data" label="Choose Fasta"/>
+    </inputs>
+    <outputs>
+        <data format="nex" name="output1"/>
+    </outputs>
+    <help>
+    </help>
+</tool>
