@@ -3,8 +3,8 @@ CLC datatype
 """
 
 from galaxy.datatypes.binary import Binary
+from galaxy.datatypes import data
 import binascii
-import data
 import logging
 
 log = logging.getLogger(__name__)

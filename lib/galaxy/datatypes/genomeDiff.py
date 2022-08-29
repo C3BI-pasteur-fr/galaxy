@@ -9,7 +9,7 @@ genomeDiff datatype sniffer
 """
 
 from galaxy.datatypes.tabular import Tabular
-from metadata import MetadataElement
+from galaxy.datatypes.metadata import MetadataElement
 
 class GenomeDiff( Tabular ):
     """Tab delimited data Genomdiff file"""

@@ -9,7 +9,7 @@ biom datatype sniffer
 """
 
 from galaxy.datatypes.text import Json
-from metadata import MetadataElement
+from galaxy.datatypes.metadata import MetadataElement
 import json
 import os
 
