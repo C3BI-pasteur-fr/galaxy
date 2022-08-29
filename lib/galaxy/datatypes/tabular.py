@@ -1091,7 +1091,6 @@ class BaseCSV(TabularData):
             return False
         return True
 
-
     def set_meta(self, dataset, **kwd):
         column_types = []
         header_row = []
