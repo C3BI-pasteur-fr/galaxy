@@ -1,9 +1,7 @@
 <tool id="Sff_extractor" name="SFF converter" version="1.0.1">
     <description></description>
     <requirements>
-<<<<<<< HEAD
-        <requirement type="package" version="2">ssaha2</requirement>
-	<requirement type="package" version="2.7.17">Python</requirement>
+        <requirement type="package" version="2.7">python</requirement>
     </requirements>
     <command>
 #if   str($fastq_output) == "fastq_false"  #python  '$__tool_directory__/sff_extract.py' $clip --seq_file='$out_file3' --qual_file='$out_file4' --xml_file='$out_file2' '$input'
