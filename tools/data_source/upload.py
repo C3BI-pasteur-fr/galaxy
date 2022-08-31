@@ -127,7 +127,6 @@ def add_file(dataset, registry, output_path: str) -> Dict[str, str]:
             raise UploadProblemException('Unable to fetch %s\n%s' % (dataset.path, unicodify(e)))
 
     # See if we have an empty file
-
     if not os.path.exists(dataset.path):
         raise UploadProblemException('Uploaded temporary file (%s) does not exist.' % dataset.path)
 
