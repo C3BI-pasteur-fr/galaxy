@@ -3,7 +3,10 @@ related to running and queued jobs.
 """
 import logging
 
-from galaxy import exceptions, util
+from galaxy import (
+    exceptions,
+    util,
+)
 from galaxy.managers.context import ProvidesUserContext
 from galaxy.model import (
     InteractiveToolEntryPoint,
@@ -17,7 +20,6 @@ log = logging.getLogger(__name__)
 
 
 class ToolEntryPointsAPIController(BaseGalaxyAPIController):
-
     def __init__(self, app: StructuredApp):
         self.app = app
         self.interactivetool_manager = app.interactivetool_manager
@@ -44,7 +46,9 @@ class ToolEntryPointsAPIController(BaseGalaxyAPIController):
             raise exceptions.RequestParameterInvalidException("Currently this API must passed a job id or running=true")
 
         if job_id is not None and running:
-            raise exceptions.RequestParameterInvalidException("Currently this API must passed only a job id or running=true")
+            raise exceptions.RequestParameterInvalidException(
+                "Currently this API must passed only a job id or running=true"
+            )
 
         if job_id is not None:
             job = trans.sa_session.query(Job).get(self.decode_id(job_id))
@@ -92,8 +96,8 @@ class ToolEntryPointsAPIController(BaseGalaxyAPIController):
             entry_point_id = self.decode_id(id)
             entry_point = trans.sa_session.query(InteractiveToolEntryPoint).get(entry_point_id)
         except Exception:
-            raise exceptions.RequestParameterInvalidException("entry point '{id}' invalid")
+            raise exceptions.RequestParameterInvalidException("entry point invalid")
         if self.app.interactivetool_manager.can_access_entry_point(trans, entry_point):
             self.app.interactivetool_manager.stop(trans, entry_point)
         else:
-            raise exceptions.ItemAccessibilityException(f"entry point '{id}' is not accessible")
+            raise exceptions.ItemAccessibilityException("entry point is not accessible")

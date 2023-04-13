@@ -1,6 +1,7 @@
 """This module contains a linting functions for tool error detection."""
 import re
 
+from galaxy.util import etree
 from .command import get_command
 
 
@@ -20,9 +21,15 @@ def lint_stdio(tool_source, lint_ctx):
         command = get_command(tool_xml) if tool_xml else None
         if command is None or not command.get("detect_errors"):
             if tool_source.parse_profile() <= "16.01":
-                lint_ctx.info("No stdio definition found, tool indicates error conditions with output written to stderr.", node=tool_node)
+                lint_ctx.info(
+                    "No stdio definition found, tool indicates error conditions with output written to stderr.",
+                    node=tool_node,
+                )
             else:
-                lint_ctx.info("No stdio definition found, tool indicates error conditions with non-zero exit codes.", node=tool_node)
+                lint_ctx.info(
+                    "No stdio definition found, tool indicates error conditions with non-zero exit codes.",
+                    node=tool_node,
+                )
         return
 
     if len(stdios) > 1:
@@ -31,6 +38,8 @@ def lint_stdio(tool_source, lint_ctx):
 
     stdio = stdios[0]
     for child in list(stdio):
+        if child.tag is etree.Comment:
+            continue
         if child.tag == "regex":
             _lint_regex(tool_xml, child, lint_ctx)
         elif child.tag == "exit_code":

@@ -4,27 +4,55 @@ from abc import (
     ABCMeta,
     abstractproperty,
 )
-from typing import Union
-
-from selenium.webdriver.common.by import By
+from typing import (
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from galaxy.util.bunch import Bunch
 
 
-class Target(metaclass=ABCMeta):
+class By:
+    """
+    Set of supported locator strategies.
+    """
 
+    ID = "id"
+    XPATH = "xpath"
+    LINK_TEXT = "link text"
+    PARTIAL_LINK_TEXT = "partial link text"
+    NAME = "name"
+    TAG_NAME = "tag name"
+    CLASS_NAME = "class name"
+    CSS_SELECTOR = "css selector"
+
+
+LocatorT = Tuple[By, str]
+
+
+class Target(metaclass=ABCMeta):
     @abstractproperty
-    def description(self):
+    def description(self) -> str:
         """Return a plain-text description of the browser target for logging/messages."""
 
     @abstractproperty
-    def element_locator(self):
+    def element_locator(self) -> LocatorT:
         """Return a (by, selector) Selenium elment locator tuple for this selector."""
 
 
 class SelectorTemplate(Target):
-
-    def __init__(self, selector: str, selector_type: str, children=None, kwds=None, with_classes=None, with_data=None):
+    def __init__(
+        self,
+        selector: Union[str, List[str]],
+        selector_type: str,
+        children=None,
+        kwds=None,
+        with_classes=None,
+        with_data=None,
+    ):
         if selector_type == "data-description":
             selector_type = "css"
             selector = f'[data-description="{selector}"]'
@@ -45,13 +73,27 @@ class SelectorTemplate(Target):
 
     def with_class(self, class_):
         assert self.selector_type == "css"
-        return SelectorTemplate(self._selector, self.selector_type, kwds=self.__kwds, with_classes=self.with_classes + [class_], with_data=self._with_data.copy(), children=self._children)
+        return SelectorTemplate(
+            self._selector,
+            self.selector_type,
+            kwds=self.__kwds,
+            with_classes=self.with_classes + [class_],
+            with_data=self._with_data.copy(),
+            children=self._children,
+        )
 
     def with_data(self, key, value):
         assert self.selector_type == "css"
         with_data = self._with_data.copy()
         with_data[key] = value
-        return SelectorTemplate(self._selector, self.selector_type, kwds=self.__kwds, with_classes=self.with_classes, with_data=with_data, children=self._children)
+        return SelectorTemplate(
+            self._selector,
+            self.selector_type,
+            kwds=self.__kwds,
+            with_classes=self.with_classes,
+            with_data=with_data,
+            children=self._children,
+        )
 
     def descendant(self, has_selector):
         assert self.selector_type == "css"
@@ -60,12 +102,16 @@ class SelectorTemplate(Target):
         else:
             selector = has_selector
 
-        return SelectorTemplate(f"{self.selector} {selector}", self.selector_type, kwds=self.__kwds, children=self._children)
+        return SelectorTemplate(
+            f"{self.selector} {selector}", self.selector_type, kwds=self.__kwds, children=self._children
+        )
 
     def __call__(self, **kwds):
         new_kwds = self.__kwds.copy()
         new_kwds.update(**kwds)
-        return SelectorTemplate(self._selector, self.selector_type, kwds=new_kwds, with_classes=self.with_classes, children=self._children)
+        return SelectorTemplate(
+            self._selector, self.selector_type, kwds=new_kwds, with_classes=self.with_classes, children=self._children
+        )
 
     @property
     def description(self):
@@ -79,9 +125,24 @@ class SelectorTemplate(Target):
 
     @property
     def selector(self):
-        selector = self._selector
+        raw_selector = self._selector
         if self.__kwds is not None:
-            selector = string.Template(selector).substitute(self.__kwds)
+            if isinstance(raw_selector, list):
+                selector = None
+                last_error = None
+                for raw_selector_str in raw_selector:
+                    try:
+                        selector = string.Template(raw_selector_str).substitute(self.__kwds)
+                        break
+                    except KeyError as e:
+                        last_error = e
+                if selector is None:
+                    assert last_error
+                    raise last_error
+            else:
+                selector = string.Template(raw_selector).substitute(self.__kwds)
+
+        assert selector
         selector = selector + "".join(f".{c}" for c in self.with_classes)
         if self._with_data:
             for key, value in self._with_data.items():
@@ -103,8 +164,16 @@ class SelectorTemplate(Target):
     @property
     def as_css_class(self):
         assert self.selector_type == "css"
-        assert re.compile(r"\.\w+").match(self._selector)
-        return self._selector[1:]
+        selector = self._selector
+        assert isinstance(selector, str)
+        assert re.compile(r"\.\w+").match(selector)
+        return selector[1:]
+
+    def resolve_element_locator(self, path: Optional[str] = None) -> LocatorT:
+        if path:
+            return self[path].element_locator
+        else:
+            return self.element_locator
 
     def __getattr__(self, name):
         if name in self._children:
@@ -116,7 +185,6 @@ class SelectorTemplate(Target):
 
 
 class Label(Target):
-
     def __init__(self, text):
         self.text = text
 
@@ -130,7 +198,6 @@ class Label(Target):
 
 
 class Text(Target):
-
     def __init__(self, text):
         self.text = text
 
@@ -145,9 +212,10 @@ class Text(Target):
 
 HasText = Union[Label, Text]
 
+CALL_ARGUMENTS_RE = re.compile(r"(?P<SUBCOMPONENT>[^.(]*)(\((?P<ARGS>[^)]+)\))?(?:\.(?P<REST>.*))?")
+
 
 class Component:
-
     def __init__(self, name, sub_components, selectors, labels, text):
         self._name = name
         self._sub_components = sub_components
@@ -165,6 +233,44 @@ class Component:
             return self._selectors["_"]
         else:
             raise Exception(f"No _ selector for [{self}]")
+
+    def resolve_element_locator(self, path: Optional[str] = None) -> LocatorT:
+        if not path:
+            return self._selectors["_"].resolve_element_locator()
+
+        def arguments() -> Tuple[str, Optional[Dict[str, str]], Optional[str]]:
+            assert path
+            match = CALL_ARGUMENTS_RE.match(path)
+            if match:
+                component_name = match.group("SUBCOMPONENT")
+                expression = match.group("ARGS")
+                rest = match.group("REST")
+                if expression:
+                    parts = expression.split(",")
+                    parameters = {}
+                    for part in parts:
+                        key, val = part.split("=", 1)
+                        parameters[key.strip()] = val.strip()
+                    return component_name, parameters, rest
+                return component_name, None, rest
+            elif "." in path:
+                component_name, rest = path.split(".", 1)
+            else:
+                component_name = path
+                rest = None
+            return component_name, None, rest
+
+        component_name, parameters, rest = arguments()
+        if not rest:
+            if parameters:
+                return getattr(self, component_name)(**parameters).resolve_element_locator()
+            else:
+                return getattr(self, component_name).resolve_element_locator()
+        else:
+            if parameters:
+                return getattr(self, component_name)(**parameters).resolve_element_locator(rest)
+            else:
+                return getattr(self, component_name).resolve_element_locator(rest)
 
     @staticmethod
     def from_dict(name, raw_value):
@@ -209,6 +315,9 @@ class Component:
             return self._text[attr]
         else:
             raise AttributeError(f"Failed to find referenced sub-component/selector/label/text [{attr}]")
+
+    def __call__(self, **kwds):
+        return self._selectors["_"](**kwds)
 
     __getitem__ = __getattr__
 

@@ -5,9 +5,13 @@ import os
 import sys
 from configparser import ConfigParser
 
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy import text
+from sqlalchemy.exc import (
+    OperationalError,
+    ProgrammingError,
+)
 
-sys.path.insert(1, os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, 'lib'))
+sys.path.insert(1, os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, "lib"))
 
 import tool_shed.webapp.model.mapping as tool_shed_model
 from tool_shed.util import xml_util
@@ -19,13 +23,13 @@ def check_db(config: ToolShedAppConfiguration):
 
     sa_session = None
 
-    database_exists_message = 'The database configured for this Tool Shed is not new, so bootstrapping is not allowed.  '
-    database_exists_message += 'Create a new database that has not been migrated before attempting to bootstrap.'
+    database_exists_message = (
+        "The database configured for this Tool Shed is not new, so bootstrapping is not allowed.  "
+    )
+    database_exists_message += "Create a new database that has not been migrated before attempting to bootstrap."
 
     try:
-        model = tool_shed_model.init(
-            config.file_path, dburi, engine_options={}, create_tables=False
-        )
+        model = tool_shed_model.init(config.file_path, dburi, engine_options={}, create_tables=False)
         sa_session = model.context.current
         sys.exit(database_exists_message)
     except ProgrammingError:
@@ -35,7 +39,7 @@ def check_db(config: ToolShedAppConfiguration):
 
     try:
         if sa_session is not None:
-            result = sa_session.execute('SELECT version FROM migrate_version').first()
+            result = sa_session.execute(text("SELECT version FROM migrate_version")).first()
             if result[0] >= 2:
                 sys.exit(database_exists_message)
             else:
@@ -50,7 +54,7 @@ def check_db(config: ToolShedAppConfiguration):
         if not os.path.exists(hgweb_config_file):
             sys.exit(0)
         hgweb_config_parser.read(hgweb_config_file)
-        configured_repos = hgweb_config_parser.items('paths')
+        configured_repos = hgweb_config_parser.items("paths")
         if len(configured_repos) >= 1:
             message = "This Tool Shed's hgweb.config file contains entries, so bootstrapping is not allowed.  Delete"
             message += " the current hgweb.config file along with all associated repositories in the configured "
@@ -63,7 +67,9 @@ def check_db(config: ToolShedAppConfiguration):
 
 
 def admin_user_info():
-    user_info_config = os.path.abspath(os.path.join(os.getcwd(), 'scripts/tool_shed/bootstrap_tool_shed', 'user_info.xml'))
+    user_info_config = os.path.abspath(
+        os.path.join(os.getcwd(), "scripts/tool_shed/bootstrap_tool_shed", "user_info.xml")
+    )
     tree, error_message = xml_util.parse_xml(user_info_config)
     username = None
     email = None
@@ -75,11 +81,11 @@ def admin_user_info():
     else:
         root = tree.getroot()
         for elem in root:
-            if elem.tag == 'email':
+            if elem.tag == "email":
                 email = elem.text
-            elif elem.tag == 'password':
+            elif elem.tag == "password":
                 password = elem.text
-            elif elem.tag == 'username':
+            elif elem.tag == "username":
                 username = elem.text
     return (username, email, password)
 
@@ -91,7 +97,7 @@ def main(args):
         return check_db(config)
     elif args.method == "admin_user_info":
         (username, email, password) = admin_user_info()
-        print(f'{username}__SEP__{email}__SEP__{password}')
+        print(f"{username}__SEP__{email}__SEP__{password}")
         return 0
     else:
         return 1

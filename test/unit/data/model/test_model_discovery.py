@@ -15,14 +15,16 @@ def test_model_create_context_persist_hdas():
         "destination": {
             "type": "hdas",
         },
-        "elements": [{
-            "filename": "file1.txt",
-            "ext": "txt",
-            "dbkey": "hg19",
-            "name": "my file",
-            "md5": "e5d21b1ea57fc9a31f8ea0110531bf3d",
-            "tags": ["name:value"]
-        }],
+        "elements": [
+            {
+                "filename": "file1.txt",
+                "ext": "txt",
+                "dbkey": "hg19",
+                "name": "my file",
+                "md5": "e5d21b1ea57fc9a31f8ea0110531bf3d",
+                "tags": ["name:value"],
+            }
+        ],
     }
     app = _mock_app()
     temp_directory = mkdtemp()
@@ -54,9 +56,11 @@ def test_model_create_context_persist_error_hda():
         "destination": {
             "type": "hdas",
         },
-        "elements": [{
-            "error_message": "Failed to download some URL I guess",
-        }],
+        "elements": [
+            {
+                "error_message": "Failed to download some URL I guess",
+            }
+        ],
     }
     app = _mock_app()
     temp_directory = mkdtemp()
@@ -82,12 +86,14 @@ def test_persist_target_library_dataset():
             "description": "Example Library Description",
             "synopsis": "Example Library Synopsis",
         },
-        "elements": [{
-            "filename": "file1.txt",
-            "ext": "txt",
-            "dbkey": "hg19",
-            "name": "my file",
-        }],
+        "elements": [
+            {
+                "filename": "file1.txt",
+                "ext": "txt",
+                "dbkey": "hg19",
+                "name": "my file",
+            }
+        ],
     }
     sa_session = _import_library_target(target, work_directory)
     new_library = _assert_one_library_created(sa_session)
@@ -118,17 +124,21 @@ def test_persist_target_library_folder():
             "description": "Example Library Description",
             "synopsis": "Example Library Synopsis",
         },
-        "items": [{
-            "name": "Folder 1",
-            "description": "Folder 1 Description",
-            "items": [{
-                "filename": "file1.txt",
-                "ext": "txt",
-                "dbkey": "hg19",
-                "info": "dataset info",
-                "name": "my file",
-            }]
-        }],
+        "items": [
+            {
+                "name": "Folder 1",
+                "description": "Folder 1 Description",
+                "items": [
+                    {
+                        "filename": "file1.txt",
+                        "ext": "txt",
+                        "dbkey": "hg19",
+                        "info": "dataset info",
+                        "name": "my file",
+                    }
+                ],
+            }
+        ],
     }
     sa_session = _import_library_target(target, work_directory)
     new_library = _assert_one_library_created(sa_session)
@@ -160,19 +170,22 @@ def test_persist_target_hdca():
         },
         "name": "My HDCA",
         "collection_type": "list",
-        "elements": [{
-            "filename": "file1.txt",
-            "ext": "txt",
-            "dbkey": "hg19",
-            "info": "dataset info",
-            "name": "my file",
-        }, {
-            "filename": "file2.txt",
-            "ext": "txt",
-            "dbkey": "hg18",
-            "info": "dataset info 2",
-            "name": "my file 2",
-        }]
+        "elements": [
+            {
+                "filename": "file1.txt",
+                "ext": "txt",
+                "dbkey": "hg19",
+                "info": "dataset info",
+                "name": "my file",
+            },
+            {
+                "filename": "file2.txt",
+                "ext": "txt",
+                "dbkey": "hg18",
+                "info": "dataset info 2",
+                "name": "my file 2",
+            },
+        ],
     }
 
     app = _mock_app()
@@ -212,7 +225,9 @@ def _import_library_target(target, work_directory):
     u = model.User(email="library@example.com", password="password")
 
     import_options = store.ImportOptions(allow_dataset_object_edit=True, allow_library_creation=True)
-    import_model_store = store.get_import_model_store_for_directory(temp_directory, app=app, user=u, import_options=import_options)
+    import_model_store = store.get_import_model_store_for_directory(
+        temp_directory, app=app, user=u, import_options=import_options
+    )
     import_model_store.perform_import()
 
     sa_session = app.model.context
@@ -232,7 +247,9 @@ def _import_directory_to_history(app, target, work_directory):
     assert len(import_history.datasets) == 0
 
     import_options = store.ImportOptions(allow_dataset_object_edit=True)
-    import_model_store = store.get_import_model_store_for_directory(target, app=app, user=u, import_options=import_options, tag_handler=app.tag_handler.create_tag_handler_session())
+    import_model_store = store.get_import_model_store_for_directory(
+        target, app=app, user=u, import_options=import_options, tag_handler=app.tag_handler.create_tag_handler_session()
+    )
     with import_model_store.target_history(default_history=import_history):
         import_model_store.perform_import(import_history)
 

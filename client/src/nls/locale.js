@@ -13,7 +13,6 @@ define({
         Visualization: false,
         "New Track Browser": false,
         "Saved Visualizations": false,
-        "Interactive Environments": false,
         Admin: false,
         Help: false,
         Support: false,
@@ -231,9 +230,9 @@ define({
         "Local data": false,
         "Form Definitions": false,
 
-        // ---------------------------------------------------------------------------- Scratchbook
-        "Enable/Disable Scratchbook": false,
-        "Show/Hide Scratchbook": false,
+        // ---------------------------------------------------------------------------- Window Manager
+        "Enable/Disable Window Manager": false,
+        "Show/Hide Window Manager": false,
 
         // ---------------------------------------------------------------------------- misc. MVC
         Tags: false,
@@ -436,7 +435,7 @@ define({
         "Create new Build": false,
         "Delete custom build.": false,
         "Provide the data source.": false,
-        // ---------------------------------------------------------------------------- scratchbook
+        // ---------------------------------------------------------------------------- Window Manager
         "Next in History": false,
         "Previous in History": false,
         // ---------------------------------------------------------------------------- generic-nav-view

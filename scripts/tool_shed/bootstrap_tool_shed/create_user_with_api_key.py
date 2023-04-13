@@ -5,18 +5,19 @@ import optparse
 import os
 import sys
 
-sys.path.insert(1, os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, 'lib'))
+sys.path.insert(1, os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, "lib"))
 sys.path.insert(1, os.path.join(os.path.dirname(__file__)))
+
+from bootstrap_util import admin_user_info  # noqa: I100,I201
 
 import tool_shed.webapp.config as tool_shed_config
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.security.validate_user_input import (
     validate_email_str,
     validate_password_str,
-    validate_publicname_str
+    validate_publicname_str,
 )
 from tool_shed.webapp.model import mapping
-from bootstrap_util import admin_user_info  # noqa: I100,I201
 
 log = logging.getLogger(__name__)
 
@@ -31,12 +32,11 @@ class BootstrapApplication:
         self.config = config
         if not self.config.database_connection:
             self.config.database_connection = "sqlite:///%s?isolation_level=IMMEDIATE" % str(config.database)
-        print('Using database connection: ', self.config.database_connection)
+        print("Using database connection: ", self.config.database_connection)
         # Setup the database engine and ORM
-        self.model = mapping.init(self.config.file_path,
-                                  self.config.database_connection,
-                                  engine_options={},
-                                  create_tables=False)
+        self.model = mapping.init(
+            self.config.file_path, self.config.database_connection, engine_options={}, create_tables=False
+        )
         self.security = IdEncodingHelper(id_secret=self.config.id_secret)
 
     @property
@@ -78,9 +78,9 @@ def create_user(app):
 
 
 def validate(email, password, username):
-    message = "\n".join([validate_email_str(email),
-                         validate_password_str(password),
-                         validate_publicname_str(username)]).rstrip()
+    message = "\n".join(
+        [validate_email_str(email), validate_password_str(password), validate_publicname_str(username)]
+    ).rstrip()
     return message
 
 
@@ -93,7 +93,11 @@ if __name__ == "__main__":
     user = create_user(app)
     if user is not None:
         api_key = create_api_key(app, user)
-        print("Created new user with public username '", user.username, ".  An API key was also created and associated with the user.")
+        print(
+            "Created new user with public username '",
+            user.username,
+            ".  An API key was also created and associated with the user.",
+        )
         sys.exit(0)
     else:
         sys.exit("Problem creating a new user and an associated API key.")

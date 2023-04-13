@@ -14,7 +14,7 @@ async function getDataset({ id }) {
     }
 }
 
-async function datasetAttributes({ id }) {
+async function getDatasetAttributes({ id }) {
     const url = `${getAppRoot()}dataset/get_edit?dataset_id=${id}`;
     try {
         const { data } = await axios.get(url);
@@ -24,5 +24,5 @@ async function datasetAttributes({ id }) {
     }
 }
 
-export const DatasetAttributesProvider = SingleQueryProvider(datasetAttributes);
+export const DatasetAttributesProvider = SingleQueryProvider(getDatasetAttributes);
 export default SingleQueryProvider(getDataset, stateIsTerminal);

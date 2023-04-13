@@ -6,7 +6,13 @@ import shutil
 import sys
 import tempfile
 from io import StringIO
-from typing import Any, Dict, List, Tuple
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+)
 
 import bdbag.bdbag_api
 
@@ -16,10 +22,20 @@ from galaxy.datatypes.upload_util import (
     handle_upload,
     UploadProblemException,
 )
-from galaxy.util import in_directory, safe_makedirs
+from galaxy.files.uris import (
+    stream_to_file,
+    stream_url_to_file,
+)
+from galaxy.util import (
+    in_directory,
+    safe_makedirs,
+)
 from galaxy.util.bunch import Bunch
 from galaxy.util.compression_utils import CompressedFile
-from galaxy.util.hash_util import HASH_NAMES, memory_bound_hexdigest
+from galaxy.util.hash_util import (
+    HASH_NAMES,
+    memory_bound_hexdigest,
+)
 
 DESCRIPTION = """Data Import Script"""
 
@@ -28,25 +44,37 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     args = _arg_parser().parse_args(argv)
-
     registry = Registry()
     registry.load_datatypes(root_dir=args.galaxy_root, config=args.datatypes_registry)
+    do_fetch(args.request, working_directory=args.working_directory or os.getcwd(), registry=registry)
 
-    request_path = args.request
+
+def do_fetch(
+    request_path: str,
+    working_directory: str,
+    registry: Registry,
+    file_sources_dict: Optional[Dict] = None,
+):
     assert os.path.exists(request_path)
     with open(request_path) as f:
         request = json.load(f)
 
-    working_directory = args.working_directory or os.getcwd()
     allow_failed_collections = request.get("allow_failed_collections", False)
-    upload_config = UploadConfig(request, registry, working_directory, allow_failed_collections)
+    upload_config = UploadConfig(
+        request,
+        registry,
+        working_directory,
+        allow_failed_collections,
+        file_sources_dict,
+    )
     galaxy_json = _request_to_galaxy_json(upload_config, request)
     galaxy_json_path = os.path.join(working_directory, "galaxy.json")
     with open(galaxy_json_path, "w") as f:
         json.dump(galaxy_json, f)
+    return working_directory
 
 
-def _request_to_galaxy_json(upload_config, request):
+def _request_to_galaxy_json(upload_config: "UploadConfig", request):
     targets = request.get("targets", [])
     fetched_targets = []
 
@@ -57,7 +85,7 @@ def _request_to_galaxy_json(upload_config, request):
     return {"__unnamed_outputs": fetched_targets}
 
 
-def _fetch_target(upload_config, target):
+def _fetch_target(upload_config: "UploadConfig", target):
     destination = target.get("destination", None)
     assert destination, "No destination defined."
 
@@ -152,10 +180,10 @@ def _fetch_target(upload_config, target):
                 metadata=metadata,
             )
             writable_files = datatype.get_writable_files_for_dataset(dataset)
-            primary_file = sniff.stream_to_file(
+            primary_file = stream_to_file(
                 StringIO(datatype.generate_primary_file(dataset)),
                 prefix="upload_auto_primary_file",
-                dir=".",
+                dir=upload_config.working_directory,
             )
             extra_files_path = f"{primary_file}_extra"
             os.mkdir(extra_files_path)
@@ -186,7 +214,7 @@ def _fetch_target(upload_config, target):
                     extra_files_path,
                     key,
                     writable_file.is_binary,
-                    ".",
+                    upload_config.working_directory,
                     f"{os.path.basename(extra_files_path)}_",
                     composite_item,
                 )
@@ -210,7 +238,13 @@ def _fetch_target(upload_config, target):
         error_message = None
         converted_path = None
 
-        name, path = _has_src_to_path(upload_config, item, is_dataset=True)
+        deferred = upload_config.get_option(item, "deferred")
+        name: str
+        path: Optional[str]
+        if not deferred:
+            name, path = _has_src_to_path(upload_config, item, is_dataset=True)
+        else:
+            name, path = _has_src_to_name(item) or "Deferred Dataset", None
         sources = []
 
         url = item.get("url")
@@ -235,24 +269,27 @@ def _fetch_target(upload_config, target):
 
         ext = "data"
         staged_extra_files = None
-        if not error_message:
-            requested_ext = item.get("ext", "auto")
-            to_posix_lines = upload_config.get_option(item, "to_posix_lines")
-            space_to_tab = upload_config.get_option(item, "space_to_tab")
-            auto_decompress = upload_config.get_option(item, "auto_decompress")
+
+        requested_ext = item.get("ext", "auto")
+        to_posix_lines = upload_config.get_option(item, "to_posix_lines")
+        space_to_tab = upload_config.get_option(item, "space_to_tab")
+        auto_decompress = upload_config.get_option(item, "auto_decompress")
+
+        effective_state = "ok"
+        if not deferred and not error_message:
             in_place = item.get("in_place", False)
             purge_source = item.get("purge_source", True)
 
             registry = upload_config.registry
             check_content = upload_config.check_content
-
+            assert path  # if deferred won't be in this branch.
             stdout, ext, datatype, is_binary, converted_path, converted_newlines, converted_spaces = handle_upload(
                 registry=registry,
                 path=path,
                 requested_ext=requested_ext,
                 name=name,
-                tmp_prefix='data_fetch_upload_',
-                tmp_dir=".",
+                tmp_prefix="data_fetch_upload_",
+                tmp_dir=upload_config.working_directory,
                 check_content=check_content,
                 link_data_only=link_data_only,
                 in_place=in_place,
@@ -268,8 +305,10 @@ def _fetch_target(upload_config, target):
             if link_data_only:
                 # Never alter a file that will not be copied to Galaxy's local file store.
                 if datatype.dataset_content_needs_grooming(path):
-                    err_msg = 'The uploaded files need grooming, so change your <b>Copy data into Galaxy?</b> selection to be ' + \
-                        '<b>Copy files into Galaxy</b> instead of <b>Link to files without copying into Galaxy</b> so grooming can be performed.'
+                    err_msg = (
+                        "The uploaded files need grooming, so change your <b>Copy data into Galaxy?</b> selection to be "
+                        + "<b>Copy files into Galaxy</b> instead of <b>Link to files without copying into Galaxy</b> so grooming can be performed."
+                    )
                     raise UploadProblemException(err_msg)
 
             # If this file is not in the workdir make sure it gets there.
@@ -307,6 +346,7 @@ def _fetch_target(upload_config, target):
                             if not os.path.exists(parent_dir):
                                 safe_makedirs(parent_dir)
                             shutil.move(src_path, file_output_path)
+
                 walk_extra_files(extra_files.get("elements", []))
 
             # TODO:
@@ -315,17 +355,34 @@ def _fetch_target(upload_config, target):
             needs_grooming = not link_data_only and datatype and datatype.dataset_content_needs_grooming(path)
             if needs_grooming:
                 # Groom the dataset content if necessary
-                transform.append({
-                    "action": "datatype_groom",
-                    "datatype_ext": ext,
-                    "datatype_class": datatype.__class__.__name__
-                })
+                transform.append(
+                    {"action": "datatype_groom", "datatype_ext": ext, "datatype_class": datatype.__class__.__name__}
+                )
                 datatype.groom_dataset_content(path)
 
             if len(transform) > 0:
                 source_dict["transform"] = transform
-
-        rval = {"name": name, "filename": path, "dbkey": dbkey, "ext": ext, "link_data_only": link_data_only, "sources": sources, "hashes": hashes, "info": f"uploaded {ext} file"}
+        elif not error_message:
+            transform = []
+            if to_posix_lines:
+                transform.append({"action": "to_posix_lines"})
+            if space_to_tab:
+                transform.append({"action": "spaces_to_tabs"})
+            effective_state = "deferred"
+            registry = upload_config.registry
+            ext = sniff.guess_ext_from_file_name(name, registry=registry, requested_ext=requested_ext)
+        rval = {
+            "name": name,
+            "dbkey": dbkey,
+            "ext": ext,
+            "link_data_only": link_data_only,
+            "sources": sources,
+            "hashes": hashes,
+            "info": f"uploaded {ext} file",
+            "state": effective_state,
+        }
+        if path:
+            rval["filename"] = path
         if staged_extra_files:
             rval["extra_files"] = os.path.abspath(staged_extra_files)
         return _copy_and_validate_simple_attributes(item, rval)
@@ -362,14 +419,14 @@ def _bagit_to_items(directory):
     return items
 
 
-def _decompress_target(upload_config, target):
+def _decompress_target(upload_config: "UploadConfig", target):
     elements_from_name, elements_from_path = _has_src_to_path(upload_config, target, is_dataset=False)
     # by default Galaxy will check for a directory with a single file and interpret that
     # as the new root for expansion, this is a good user experience for uploading single
     # files in a archive but not great from an API perspective. Allow disabling by setting
     # fuzzy_root to False to literally interpret the target.
     fuzzy_root = target.get("fuzzy_root", True)
-    temp_directory = os.path.abspath(tempfile.mkdtemp(prefix=elements_from_name, dir="."))
+    temp_directory = os.path.abspath(tempfile.mkdtemp(prefix=elements_from_name, dir=upload_config.working_directory))
     cf = CompressedFile(elements_from_path)
     result = cf.extract(temp_directory)
     return result if fuzzy_root else temp_directory
@@ -405,6 +462,22 @@ def _directory_to_items(directory):
     return items
 
 
+def _has_src_to_name(item) -> Optional[str]:
+    # Logic should broadly match logic of _has_src_to_path but not resolve the item
+    # into a path.
+    name = item.get("name")
+    src = item.get("src")
+    if src == "url":
+        url = item.get("url")
+        if name is None:
+            name = url.split("/")[-1]
+    elif src == "path":
+        path = item["path"]
+        if name is None:
+            name = os.path.basename(path)
+    return name
+
+
 def _has_src_to_path(upload_config, item, is_dataset=False) -> Tuple[str, str]:
     assert "src" in item, item
     src = item.get("src")
@@ -412,7 +485,7 @@ def _has_src_to_path(upload_config, item, is_dataset=False) -> Tuple[str, str]:
     if src == "url":
         url = item.get("url")
         try:
-            path = sniff.stream_url_to_file(url, file_sources=get_file_sources(upload_config.working_directory))
+            path = stream_url_to_file(url, file_sources=upload_config.file_sources, dir=upload_config.working_directory)
         except Exception as e:
             raise Exception(f"Failed to fetch url {url}. {str(e)}")
 
@@ -426,7 +499,7 @@ def _has_src_to_path(upload_config, item, is_dataset=False) -> Tuple[str, str]:
         if name is None:
             name = url.split("/")[-1]
     elif src == "pasted":
-        path = sniff.stream_to_file(StringIO(item["paste_content"]))
+        path = stream_to_file(StringIO(item["paste_content"]), dir=upload_config.working_directory)
         if name is None:
             name = "Pasted Entry"
     else:
@@ -441,7 +514,9 @@ def _handle_hash_validation(upload_config, hash_function, hash_value, path):
     if upload_config.validate_hashes:
         calculated_hash_value = memory_bound_hexdigest(hash_func_name=hash_function, path=path)
         if calculated_hash_value != hash_value:
-            raise Exception(f"Failed to validate upload with [{hash_function}] - expected [{hash_value}] got [{calculated_hash_value}]")
+            raise Exception(
+                f"Failed to validate upload with [{hash_function}] - expected [{hash_value}] got [{calculated_hash_value}]"
+            )
 
 
 def _arg_parser():
@@ -454,30 +529,32 @@ def _arg_parser():
     return parser
 
 
-_file_sources = None
+def get_file_sources(working_directory, file_sources_as_dict=None):
+    from galaxy.files import ConfiguredFileSources
 
-
-def get_file_sources(working_directory):
-    global _file_sources
-    if _file_sources is None:
-        from galaxy.files import ConfiguredFileSources
-        file_sources = None
+    file_sources = None
+    if file_sources_as_dict is None:
         file_sources_path = os.path.join(working_directory, "file_sources.json")
         if os.path.exists(file_sources_path):
             file_sources_as_dict = None
             with open(file_sources_path) as f:
                 file_sources_as_dict = json.load(f)
-            if file_sources_as_dict is not None:
-                file_sources = ConfiguredFileSources.from_dict(file_sources_as_dict)
-        if file_sources is None:
-            ConfiguredFileSources.from_dict(None)
-        _file_sources = file_sources
-    return _file_sources
+    if file_sources_as_dict is not None:
+        file_sources = ConfiguredFileSources.from_dict(file_sources_as_dict)
+    if file_sources is None:
+        ConfiguredFileSources.from_dict(None)
+    return file_sources
 
 
 class UploadConfig:
-
-    def __init__(self, request, registry, working_directory, allow_failed_collections):
+    def __init__(
+        self,
+        request,
+        registry,
+        working_directory,
+        allow_failed_collections,
+        file_sources_dict=None,
+    ):
         self.registry = registry
         self.working_directory = working_directory
         self.allow_failed_collections = allow_failed_collections
@@ -486,10 +563,19 @@ class UploadConfig:
         self.space_to_tab = request.get("space_to_tab", False)
         self.auto_decompress = request.get("auto_decompress", False)
         self.validate_hashes = request.get("validate_hashes", False)
+        self.deferred = request.get("deferred", False)
         self.link_data_only = _link_data_only(request)
+        self.file_sources_dict = file_sources_dict
+        self._file_sources = None
 
-        self.__workdir = os.path.abspath(".")
+        self.__workdir = os.path.abspath(working_directory)
         self.__upload_count = 0
+
+    @property
+    def file_sources(self):
+        if self._file_sources is None:
+            self._file_sources = get_file_sources(self.working_directory, file_sources_as_dict=self.file_sources_dict)
+        return self._file_sources
 
     def get_option(self, item, key):
         """Return item[key] if specified otherwise use default from UploadConfig.
@@ -503,7 +589,7 @@ class UploadConfig:
             return getattr(self, key)
 
     def __new_dataset_path(self):
-        path = "gxupload_%d" % self.__upload_count
+        path = os.path.join(self.working_directory, f"gxupload_{self.__upload_count}")
         self.__upload_count += 1
         return path
 

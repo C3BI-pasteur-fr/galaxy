@@ -113,7 +113,7 @@
                scratch directory available on compute). -->
           <!-- Specify a complete description of the Pulsar app
                to create. If this configuration defines more than
-               one manager - you can specify the manager name 
+               one manager - you can specify the manager name
                using the "manager" destination parameter. For more
                information on configuring a Pulsar app see:
 
@@ -123,7 +123,7 @@
           <!-- <param id="pulsar_config">path/to/pulsar/app.yml</param> -->
         </plugin>
         <plugin id="k8s" type="runner" load="galaxy.jobs.runners.kubernetes:KubernetesJobRunner">
-            <!-- The Kubernetes (k8s) plugin allows to send jobs to a k8s cluster which shares filesystem with Galaxy.
+            <!-- The Kubernetes (k8s) plugin allows Galaxy to send jobs to a k8s cluster which it shares a filesystem with.
 
                  The shared file system needs to be exposed to k8s through a Persistent Volume (rw) and a Persistent
                  Volume Claim. An example of a Persistent Volume could be, in yaml (access modes, reclaim policy and
@@ -148,7 +148,7 @@
                  The path (nfs:path: in the example) set needs to be a parent directory of the directories used for
                  variables “file_path” and “new_file_path” on the galaxy.yml files. Clearly, for this particular example
                  to work, there needs to be a NFS server serving that directory on that ip. Please make sure that you
-                 use reasonable storage size for your set up (possibly larger that the 10Gi written).
+                 use a reasonable storage size for your setup (possibly larger that the 10Gi written).
                  An example of the volume claim should be (this needs to be followed more closely) (pv_claim.yaml):
 
                     kind: PersistentVolumeClaim
@@ -164,7 +164,7 @@
                           storage: 2Gi
 
                  The volume claim needs to reference the name of the volume in spec:volumeName. The name of the claim
-                 (metadat:name) is referenced in the plugin definition (see below), through param
+                 (metadata:name) is referenced in the plugin definition (see below), through param
                  "k8s_persistent_volume_claim_name". These two k8s object need to be created before galaxy can use them:
 
                  kubectl create -f <path/to/persistent_volume.yaml>
@@ -182,7 +182,7 @@
             <!-- Sets the pull policy to be used for all containers invoked for jobs by the Kubernetes cluster. Can take
                  any value among the possible Kubernetes container image pull policies: Always, IfNotPresent or Never
                  (respecting capitalization). Any other value, such as "Default", will not change the setting on k8s and
-                 leave for the containers to run with the default pull policy specified at the cluster (this is normally
+                 leave for the containers to run with the default pull policy of the cluster (this is normally
                  IfNotPresent). Container images using latest are by default always pulled, so you need to use defined
                  versions for offline cases to work (and images need to be previously pulled). -->
 
@@ -208,7 +208,7 @@
             <!-- Comma separated list of Persistent Volume Claim (PVC) to container mount point mappings, in the format
                  PVC:mount point
 
-                 Typical mount paths are extra mounts that are expected to be mounted for all jobs, such as 
+                 Typical mount paths are extra mounts that are expected to be mounted for all jobs, such as
                  tool scripts, the CVMFS, and all library paths set in galaxy.yml (or equivalent general galaxy config file). -->
 
             <!-- <param id="k8s_namespace">default</param> -->
@@ -390,13 +390,12 @@
 
                - `assign_with` - How jobs should be assigned to handlers. The value can be a single method or a
                  comma-separated list that will be tried in order. The default depends on whether any handlers and a job
-                 handler "pool" (such as uWSGI mules in a `job-handlers` farm) are configured. Valid methods are
+                 handler "pool" are configured. Valid methods are
                  explained in detail in the documentation referenced above and have the values:
 
                    - `mem-self` - In-memory Self Assignment
                    - `db-self`- Database Self Assignment
                    - `db-preassign` - Database Preassignment
-                   - `uwsgi-mule-message` - uWSGI Mule Messaging
                    - `db-transaction-isolation` - Database Transaction Isolation
                    - `db-skip-locked` - Database SKIP LOCKED
 
@@ -550,7 +549,7 @@
                command.
           -->
           <!-- <param id="docker_auto_rm">true</param> -->
-          <!-- Override which user to launch Docker container as - defaults to 
+          <!-- Override which user to launch Docker container as - defaults to
                Galaxy's user id. For remote job execution (e.g. Pulsar) set to
                remote job user. Leave empty to not use the -u argument with
                Docker. -->
@@ -607,6 +606,11 @@
           <!-- Following option can be used to tweak sudo command used by
                default. -->
           <!-- <param id="singularity_sudo_cmd">/usr/bin/sudo -extra_param</param> -->
+          <!-- Singularity by default passes most host environment variables into the container.
+               This may be a security or configuration issue, hence galaxy passes the `cleanenv`
+               argument by default. You can turn this off by setting singularity_cleanenv to `false`.
+          -->
+          <!-- <param id="singularity_cleanenv">true</param> -->
           <!-- Pass extra arguments to the singularity exec command not covered by the
                above options. -->
           <!-- <param id="singularity_run_extra_arguments"></param> -->
@@ -799,6 +803,15 @@
             <!-- Pick next available server and resubmit if an unknown error occurs -->
             <resubmit condition="unknown_error and attempt &lt;= 3" destination="galaxycloudrunner" />
         </destination>
+        <destination id="tpv_dispatcher" runner="dynamic">
+            <!-- Demonstrates how to use total-perspective-vortex, which enables dynamic destination
+            selection for entities (Tools, Users, Groups) based on a configurable yaml file.
+            See: https://total-perspective-vortex.readthedocs.io/ for documentation. -->
+            <param id="type">python</param>
+            <param id="function">map_tool_to_destination</param>
+            <param id="rules_module">tpv.rules</param>
+            <param id="tpv_config_files">https://raw.githubusercontent.com/galaxyproject/total-perspective-vortex/main/tests/fixtures/mapping-sample.yml</param>
+        </destination>
         <destination id="docker_dispatch" runner="dynamic">
             <!-- Follow dynamic destination type will send all tool's that
             support docker to static destination defined by
@@ -902,8 +915,8 @@
             <param id="job_memory">16000</param>
             <param id="job_cores">8</param>
             <param id="job_project">BigMem</param>
-            <!-- Exclude hosts in the LSF cluster from receiving the job. 
-                 Useful for avoiding nodes with temporal issues. 
+            <!-- Exclude hosts in the LSF cluster from receiving the job.
+                 Useful for avoiding nodes with temporal issues.
             -->
             <param id="job_excluded_hosts">/path/to/file/with/hosts/to/be/excluded/one_per_line.txt</param>
         </destination>
@@ -928,8 +941,8 @@
                     <container type="docker">bgruening/galaxy-stable</container>
                 </requirements>
 
-            Unless the job destination specifies an override 
-            with docker_container_id_override. If neither of 
+            Unless the job destination specifies an override
+            with docker_container_id_override. If neither of
             these is set a default container can be specified
             with docker_default_container_id. The resolved
             container ID will be passed along to condor as
@@ -960,10 +973,10 @@
                - "seconds_running" (the number of seconds the job was in a running state within Galaxy)
 
              The ``handler`` attribute is optional, if not present, the job's original
-             handler will be reused for the resubmitted job. The ``destination`` attriubte
+             handler will be reused for the resubmitted job. The ``destination`` attribute
              is optional, if not present the job's original destination will be reused for the
              re-submission. The ``delay`` attribute is optional, if present it will cause the job to
-             delay for that number of seconds before being re-submitted. 
+             delay for that number of seconds before being re-submitted.
         -->
         <destination id="short_fast" runner="slurm">
             <param id="nativeSpecification">--time=00:05:00 --nodes=1</param>
@@ -1091,12 +1104,12 @@
             <param id="docker_default_container_id">centos:latest</param>
             <!-- Specify the image on which the jobs have to be executed -->
             <param id="godocker_volumes"></param>
-            <!-- Mount the godocker volumes 
+            <!-- Mount the godocker volumes
                  volumes must be separated by commas.
                  eg: <param id="godocker_volumes">home,galaxy</param>
             -->
             <param id="virtualenv">false</param>
-            <!-- If a tool execution in container requires galaxy virtualenv, 
+            <!-- If a tool execution in container requires galaxy virtualenv,
                  then enable it by setting the value to true.
                  Disable venv by setting the value to false.
             -->

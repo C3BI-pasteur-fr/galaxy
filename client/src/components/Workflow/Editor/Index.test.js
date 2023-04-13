@@ -15,8 +15,8 @@ jest.mock("app");
 
 import { getDatatypesMapper } from "components/Datatypes/factory";
 import { testDatatypesMapper } from "components/Datatypes/test_fixtures";
-import { loadWorkflow } from "./modules/services";
-import { saveAs } from "./modules/utilities";
+import { getVersions, loadWorkflow } from "./modules/services";
+import { getStateUpgradeMessages } from "./modules/utilities";
 import { getAppRoot } from "onload/loadConfig";
 import WorkflowCanvas from "./modules/canvas";
 
@@ -27,6 +27,8 @@ describe("Index", () => {
 
     beforeEach(() => {
         getDatatypesMapper.mockResolvedValue(testDatatypesMapper);
+        getStateUpgradeMessages.mockImplementation(() => []);
+        getVersions.mockResolvedValue((id) => []);
         WorkflowCanvas.mockClear();
     });
 
@@ -112,13 +114,6 @@ describe("Index", () => {
 
         await wrapper.setData({ name: "new name" });
         expect(wrapper.vm.hasChanges).toBeTruthy();
-    });
-
-    it("delegates to a module onSaveAs", async () => {
-        mountAndWaitForCreated();
-        saveAs.mockReturnThis();
-        wrapper.vm.onSaveAs();
-        expect(saveAs).toBeCalled();
     });
 
     it("prevents navigation only if hasChanges", async () => {

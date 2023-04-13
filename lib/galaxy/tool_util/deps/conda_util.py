@@ -4,17 +4,22 @@ import json
 import logging
 import os
 import re
-import shlex
 import shutil
 import sys
 import tempfile
+from typing import (
+    List,
+    Optional,
+)
 
 import packaging.version
 
 from galaxy.util import (
     commands,
+    listify,
+    shlex_join,
     smart_str,
-    unicodify
+    which,
 )
 from . import installable
 
@@ -26,12 +31,10 @@ SHELL_UNSAFE_PATTERN = re.compile(r"[\s\"']")
 
 IS_OS_X = sys.platform == "darwin"
 
-# BSD 3-clause
-CONDA_LICENSE = "http://docs.continuum.io/anaconda/eula"
 VERSIONED_ENV_DIR_NAME = re.compile(r"__(.*)@(.*)")
 UNVERSIONED_ENV_DIR_NAME = re.compile(r"__(.*)@_uv_")
 USE_PATH_EXEC_DEFAULT = False
-CONDA_VERSION = "4.6.14"
+CONDA_PACKAGE_SPECS = ("conda=4.6.14", "'pyopenssl>=22.1.0'")
 CONDA_BUILD_VERSION = "3.17.8"
 USE_LOCAL_DEFAULT = False
 
@@ -48,7 +51,7 @@ def conda_link():
 
 
 def find_conda_prefix(conda_prefix=None):
-    """ If supplied conda_prefix is not set, default to the default location
+    """If supplied conda_prefix is not set, default to the default location
     for Miniconda installs.
     """
     if conda_prefix is None:
@@ -74,14 +77,22 @@ def find_conda_prefix(conda_prefix=None):
 class CondaContext(installable.InstallableContext):
     installable_description = "Conda"
 
-    def __init__(self, conda_prefix=None, conda_exec=None,
-                 shell_exec=None, debug=False, ensure_channels='',
-                 condarc_override=None, use_path_exec=USE_PATH_EXEC_DEFAULT,
-                 copy_dependencies=False, use_local=USE_LOCAL_DEFAULT):
+    def __init__(
+        self,
+        conda_prefix=None,
+        conda_exec=None,
+        shell_exec=None,
+        debug=False,
+        ensure_channels="",
+        condarc_override=None,
+        use_path_exec=USE_PATH_EXEC_DEFAULT,
+        copy_dependencies=False,
+        use_local=USE_LOCAL_DEFAULT,
+    ):
         self.condarc_override = condarc_override
         if not conda_exec and use_path_exec:
-            conda_exec = commands.which("conda")
-        if conda_exec:
+            conda_exec = which("conda")
+        if conda_exec and isinstance(conda_exec, str):
             conda_exec = os.path.normpath(conda_exec)
         self.conda_exec = conda_exec
         self.debug = debug
@@ -98,16 +109,13 @@ class CondaContext(installable.InstallableContext):
         self.conda_prefix = conda_prefix
         if conda_exec is None:
             self.conda_exec = self._bin("conda")
-        if ensure_channels:
-            if not isinstance(ensure_channels, list):
-                ensure_channels = [c for c in ensure_channels.split(",") if c]
-        else:
-            ensure_channels = None
-        self.ensure_channels = ensure_channels
-        self._conda_version = None
-        self._miniconda_version = None
-        self._conda_build_available = None
+        self.ensure_channels: List[str] = listify(ensure_channels)
         self.use_local = use_local
+        self._reset_conda_properties()
+
+    def _reset_conda_properties(self):
+        self._conda_version = None
+        self._conda_build_available = None
 
     @property
     def conda_version(self):
@@ -122,35 +130,16 @@ class CondaContext(installable.InstallableContext):
         return self._conda_build_available
 
     def _guess_conda_properties(self):
-        conda_meta_path = self._conda_meta_path
-        # Perhaps we should call "conda info --json" and parse it but for now we are going
-        # to assume the default.
-        conda_version = packaging.version.parse(CONDA_VERSION)
-        conda_build_available = False
-        miniconda_version = "3"
-
-        if os.path.exists(conda_meta_path):
-            for package in os.listdir(conda_meta_path):
-                package_parts = package.split("-")
-                if len(package_parts) < 3:
-                    continue
-                package = '-'.join(package_parts[:-2])
-                version = package_parts[-2]
-                # build = package_parts[-1]
-                if package == "conda":
-                    conda_version = packaging.version.parse(version)
-                if package == "python" and version.startswith("2"):
-                    miniconda_version = "2"
-                if package == "conda-build":
-                    conda_build_available = True
-
-        self._conda_version = conda_version
-        self._miniconda_version = miniconda_version
-        self._conda_build_available = conda_build_available
-
-    @property
-    def _conda_meta_path(self):
-        return os.path.join(self.conda_prefix, "conda-meta")
+        info = self.conda_info()
+        self._conda_version = packaging.version.parse(info["conda_version"])
+        self._conda_build_available = False
+        conda_build_version = info.get("conda_build_version")
+        if conda_build_version and conda_build_version != "not installed":
+            try:
+                packaging.version.parse(conda_build_version)
+                self._conda_build_available = True
+            except Exception:
+                pass
 
     @property
     def _override_channels_args(self):
@@ -171,8 +160,8 @@ class CondaContext(installable.InstallableContext):
 
     def conda_info(self):
         if self.conda_exec is not None:
-            info_out = commands.execute([self.conda_exec, "info", "--json"])
-            info_out = unicodify(info_out)
+            cmd = listify(self.conda_exec) + ["info", "--json"]
+            info_out = commands.execute(cmd)
             info = json.loads(info_out)
             return info
         else:
@@ -195,7 +184,7 @@ class CondaContext(installable.InstallableContext):
         does not exist or is empty.
         """
         conda_exec = os.path.abspath(self.conda_exec)
-        conda_prefix_plus_exec = os.path.abspath(os.path.join(self.conda_prefix, 'bin/conda'))
+        conda_prefix_plus_exec = os.path.abspath(os.path.join(self.conda_prefix, "bin/conda"))
         if conda_exec == conda_prefix_plus_exec:
             if not os.path.exists(self.conda_prefix):
                 return True
@@ -203,13 +192,17 @@ class CondaContext(installable.InstallableContext):
                 os.rmdir(self.conda_prefix)  # Conda's install script fails if path exists (even if empty).
                 return True
             else:
-                log.warning("Cannot install Conda because conda_prefix '%s' exists and is not empty.",
-                            self.conda_prefix)
+                log.warning(
+                    "Cannot install Conda because conda_prefix '%s' exists and is not empty.", self.conda_prefix
+                )
                 return False
         else:
-            log.warning("Skipping installation of Conda into conda_prefix '%s', "
-                        "since conda_exec '%s' is set to a path outside of conda_prefix.",
-                        self.conda_prefix, self.conda_exec)
+            log.warning(
+                "Skipping installation of Conda into conda_prefix '%s', "
+                "since conda_exec '%s' is set to a path outside of conda_prefix.",
+                self.conda_prefix,
+                self.conda_exec,
+            )
             return False
 
     def exec_command(self, operation, args, stdout_path=None):
@@ -218,29 +211,30 @@ class CondaContext(installable.InstallableContext):
 
         Return the process exit code (i.e. 0 in case of success).
         """
-        cmd = [self.conda_exec]
-        cmd.extend(operation.split())
+        cmd = listify(self.conda_exec) + operation.split()
         if self.debug:
             cmd.append("--debug")
         cmd.extend(args)
         env = {}
         if self.condarc_override:
             env["CONDARC"] = self.condarc_override
-        cmd_string = ' '.join(map(shlex.quote, cmd))
+        cmd_string = shlex_join(cmd)
         kwds = dict()
         try:
             if stdout_path:
-                kwds['stdout'] = open(stdout_path, 'w')
+                kwds["stdout"] = open(stdout_path, "w")
                 cmd_string += f" > '{stdout_path}'"
-            conda_exec_home = env['HOME'] = tempfile.mkdtemp(prefix='conda_exec_home_')  # We don't want to pollute ~/.conda, which may not even be writable
+            conda_exec_home = env["HOME"] = tempfile.mkdtemp(
+                prefix="conda_exec_home_"
+            )  # We don't want to pollute ~/.conda, which may not even be writable
             log.debug("Executing command: %s", cmd_string)
             return self.shell_exec(cmd, env=env, **kwds)
         except Exception:
             log.exception("Failed to execute command: %s", cmd_string)
             return 1
         finally:
-            if kwds.get('stdout'):
-                kwds['stdout'].close()
+            if kwds.get("stdout"):
+                kwds["stdout"].close()
             if conda_exec_home:
                 shutil.rmtree(conda_exec_home, ignore_errors=True)
 
@@ -248,15 +242,21 @@ class CondaContext(installable.InstallableContext):
         """
         Return the process exit code (i.e. 0 in case of success).
         """
-        create_args = [
-            "-y",
-            "--quiet"
-        ]
-        if allow_local and self.use_local:
-            create_args.extend(["--use-local"])
-        create_args.extend(self._override_channels_args)
-        create_args.extend(args)
-        return self.exec_command("create", create_args, stdout_path=stdout_path)
+        for try_strict in [True, False]:
+            create_args = ["-y", "--quiet"]
+            if try_strict:
+                if self.conda_version >= packaging.version.parse("4.7.5"):
+                    create_args.append("--strict-channel-priority")
+                else:
+                    continue
+            if allow_local and self.use_local:
+                create_args.append("--use-local")
+            create_args.extend(self._override_channels_args)
+            create_args.extend(args)
+            ret = self.exec_command("create", create_args, stdout_path=stdout_path)
+            if ret == 0:
+                break
+        return ret
 
     def exec_remove(self, args):
         """
@@ -264,10 +264,7 @@ class CondaContext(installable.InstallableContext):
 
         Return the process exit code (i.e. 0 in case of success).
         """
-        remove_args = [
-            "-y",
-            "--name"
-        ]
+        remove_args = ["-y", "--name"]
         remove_args.extend(args)
         return self.exec_command("env remove", remove_args)
 
@@ -275,14 +272,23 @@ class CondaContext(installable.InstallableContext):
         """
         Return the process exit code (i.e. 0 in case of success).
         """
-        install_args = [
-            "-y"
-        ]
-        if allow_local and self.use_local:
-            install_args.append("--use-local")
-        install_args.extend(self._override_channels_args)
-        install_args.extend(args)
-        return self.exec_command("install", install_args, stdout_path=stdout_path)
+        for try_strict in [True, False]:
+            install_args = ["-y"]
+            if try_strict:
+                if self.conda_version >= packaging.version.parse("4.7.5"):
+                    install_args.append("--strict-channel-priority")
+                else:
+                    continue
+            if allow_local and self.use_local:
+                install_args.append("--use-local")
+            install_args.extend(self._override_channels_args)
+            install_args.extend(args)
+            ret = self.exec_command("install", install_args, stdout_path=stdout_path)
+            if ret == 0:
+                break
+        if ret == 0:
+            self._reset_conda_properties()
+        return ret
 
     def exec_clean(self, args=None, quiet=False):
         """
@@ -290,10 +296,7 @@ class CondaContext(installable.InstallableContext):
 
         Return the process exit code (i.e. 0 in case of success).
         """
-        clean_args = [
-            "--tarballs",
-            "-y"
-        ]
+        clean_args = ["--tarballs", "-y"]
         if args:
             clean_args.extend(args)
         stdout_path = None
@@ -301,14 +304,29 @@ class CondaContext(installable.InstallableContext):
             stdout_path = "/dev/null"
         return self.exec_command("clean", clean_args, stdout_path=stdout_path)
 
+    def exec_search(self, args: List[str], json: bool = False, offline: bool = False, platform: Optional[str] = None):
+        """
+        Search conda channels for a package
+
+        Return the standard output of the conda process.
+        """
+        cmd = listify(self.conda_exec)[:]
+        cmd.append("search")
+        cmd.extend(self._override_channels_args)
+        if json:
+            cmd.append("--json")
+        if offline:
+            cmd.append("--offline")
+        if platform:
+            cmd.extend(["--platform", platform])
+        cmd.extend(args)
+        return commands.execute(cmd)
+
     def export_list(self, name, path):
         """
         Return the process exit code (i.e. 0 in case of success).
         """
-        return self.exec_command("list", [
-            "--name", name,
-            "--export"
-        ], stdout_path=path)
+        return self.exec_command("list", ["--name", name, "--export"], stdout_path=path)
 
     def env_path(self, env_name):
         return os.path.join(self.envs_path, env_name)
@@ -357,7 +375,6 @@ def installed_conda_targets(conda_context):
 
 
 class CondaTarget:
-
     def __init__(self, package, version=None, channel=None):
         if SHELL_UNSAFE_PATTERN.search(package) is not None:
             raise ValueError(f"Invalid package [{package}] encountered.")
@@ -385,8 +402,7 @@ class CondaTarget:
 
     @property
     def package_specifier(self):
-        """ Return a package specifier as consumed by conda install/create.
-        """
+        """Return a package specifier as consumed by conda install/create."""
         if self.version:
             return f"{self.package}={self.version}"
         else:
@@ -394,7 +410,7 @@ class CondaTarget:
 
     @property
     def install_environment(self):
-        """ The dependency resolution and installation frameworks will
+        """The dependency resolution and installation frameworks will
         expect each target to be installed it its own environment with
         a fixed and predictable name given package and version.
         """
@@ -412,14 +428,14 @@ class CondaTarget:
         return False
 
     def __ne__(self, other):
-        return not(self == other)
+        return not (self == other)
 
 
 def hash_conda_packages(conda_packages, conda_target=None):
-    """ Produce a unique hash on supplied packages.
+    """Produce a unique hash on supplied packages.
     TODO: Ideally we would do this in such a way that preserved environments.
     """
-    h = hashlib.new('sha256')
+    h = hashlib.new("sha256")
     for conda_package in conda_packages:
         h.update(smart_str(conda_package.install_environment))
     return h.hexdigest()
@@ -431,10 +447,8 @@ def install_conda(conda_context, force_conda_build=False):
     with tempfile.NamedTemporaryFile(suffix=".sh", prefix="conda_install", delete=False) as temp:
         script_path = temp.name
     download_cmd = commands.download_command(conda_link(), to=script_path)
-    install_cmd = ['bash', script_path, '-b', '-p', conda_context.conda_prefix]
-    package_targets = [
-        f"conda={CONDA_VERSION}",
-    ]
+    install_cmd = ["bash", script_path, "-b", "-p", conda_context.conda_prefix]
+    package_targets = list(CONDA_PACKAGE_SPECS)
     if force_conda_build or conda_context.use_local:
         package_targets.append(f"conda-build={CONDA_BUILD_VERSION}")
     log.info("Installing conda, this may take several minutes.")
@@ -444,7 +458,7 @@ def install_conda(conda_context, force_conda_build=False):
             return exit_code
         exit_code = conda_context.shell_exec(install_cmd)
     except Exception:
-        log.exception('Failed to install conda')
+        log.exception("Failed to install conda")
         return 1
     finally:
         if os.path.exists(script_path):
@@ -460,7 +474,8 @@ def install_conda_targets(conda_targets, conda_context, env_name=None, allow_loc
     """
     if env_name is not None:
         create_args = [
-            "--name", env_name,  # environment for package
+            "--name",
+            env_name,  # environment for package
         ]
         for conda_target in conda_targets:
             create_args.append(conda_target.package_specifier)
@@ -477,7 +492,8 @@ def install_conda_target(conda_target, conda_context, skip_environment=False):
     """
     if not skip_environment:
         create_args = [
-            "--name", conda_target.install_environment,  # environment for package
+            "--name",
+            conda_target.install_environment,  # environment for package
             conda_target.package_specifier,
         ]
         return conda_context.exec_create(create_args)
@@ -494,42 +510,25 @@ def cleanup_failed_install(conda_target, conda_context=None):
     cleanup_failed_install_of_environment(conda_target.install_environment, conda_context=conda_context)
 
 
-def best_search_result(conda_target, conda_context, channels_override=None, offline=False, platform=None):
+def best_search_result(
+    conda_target, conda_context: CondaContext, offline: bool = False, platform: Optional[str] = None
+):
     """Find best "conda search" result for specified target.
 
     Return ``None`` if no results match.
     """
-    search_cmd = []
-    conda_exec = conda_context.conda_exec
-    if isinstance(conda_exec, list):
-        # for CondaInDockerContext
-        search_cmd.extend(conda_exec)
-    else:
-        search_cmd.append(conda_exec)
-    search_cmd.extend(["search", "--full-name", "--json"])
-    if offline:
-        search_cmd.append("--offline")
-    if platform:
-        search_cmd.extend(['--platform', platform])
-    if channels_override:
-        search_cmd.append("--override-channels")
-        for channel in channels_override:
-            search_cmd.extend(["--channel", channel])
-    else:
-        search_cmd.extend(conda_context._override_channels_args)
-    search_cmd.append(conda_target.package)
+    search_args = [conda_target.package]
     try:
-        res = commands.execute(search_cmd)
-        res = unicodify(res)
+        res = conda_context.exec_search(search_args, json=True, offline=offline, platform=platform)
         # Use python's stable list sorting to sort by date,
         # then build_number, then version. The top of the list
         # then is the newest version with the newest build and
         # the latest update time.
         hits = json.loads(res).get(conda_target.package, [])[::-1]
-        hits = sorted(hits, key=lambda hit: hit['build_number'], reverse=True)
-        hits = sorted(hits, key=lambda hit: packaging.version.parse(hit['version']), reverse=True)
-    except commands.CommandLineException:
-        log.error("Could not execute: '%s'", search_cmd)
+        hits = sorted(hits, key=lambda hit: hit["build_number"], reverse=True)
+        hits = sorted(hits, key=lambda hit: packaging.version.parse(hit["version"]), reverse=True)
+    except commands.CommandLineException as e:
+        log.error(f"Could not execute: '{e.command}'\n{e}")
         hits = []
 
     if len(hits) == 0:
@@ -549,7 +548,7 @@ def is_search_hit_exact(conda_target, search_hit):
     target_version = conda_target.version
     # It'd be nice to make request verson of 1.0 match available
     # version of 1.0.3 or something like that.
-    return not target_version or search_hit['version'] == target_version
+    return not target_version or search_hit["version"] == target_version
 
 
 def is_conda_target_installed(conda_target, conda_context):
@@ -561,8 +560,7 @@ def is_conda_target_installed(conda_target, conda_context):
 
 
 def filter_installed_targets(conda_targets, conda_context):
-    installed = functools.partial(is_conda_target_installed,
-                                  conda_context=conda_context)
+    installed = functools.partial(is_conda_target_installed, conda_context=conda_context)
     return list(filter(installed, conda_targets))
 
 
@@ -573,7 +571,7 @@ def build_isolated_environment(
     copy=False,
     quiet=False,
 ):
-    """ Build a new environment (or reuse an existing one from hashes)
+    """Build a new environment (or reuse an existing one from hashes)
     for specified conda packages.
     """
     if not isinstance(conda_packages, list):
@@ -590,18 +588,16 @@ def build_isolated_environment(
         for conda_package in conda_packages:
             name = conda_package.install_environment
             export_path = os.path.join(tempdir, name)
-            conda_context.export_list(
-                name,
-                export_path
-            )
+            conda_context.export_list(name, export_path)
             export_paths.append(export_path)
         create_args = ["--unknown"]
         # Works in 3.19, 4.0 - 4.2 - not in 4.3.
         # Adjust fix if they fix Conda - xref
         # - https://github.com/galaxyproject/galaxy/issues/3635
         # - https://github.com/conda/conda/issues/2035
-        offline_works = (conda_context.conda_version < packaging.version.parse("4.3")) or \
-                        (conda_context.conda_version >= packaging.version.parse("4.4"))
+        offline_works = (conda_context.conda_version < packaging.version.parse("4.3")) or (
+            conda_context.conda_version >= packaging.version.parse("4.4")
+        )
         if offline_works:
             create_args.extend(["--offline"])
         else:
@@ -614,9 +610,7 @@ def build_isolated_environment(
         if copy:
             create_args.append("--copy")
         for export_path in export_paths:
-            create_args.extend([
-                "--file", export_path
-            ])
+            create_args.extend(["--file", export_path])
 
         stdout_path = None
         if quiet:
@@ -637,8 +631,7 @@ def build_isolated_environment(
 def requirement_to_conda_targets(requirement):
     conda_target = None
     if requirement.type == "package":
-        conda_target = CondaTarget(requirement.name,
-                                   version=requirement.version)
+        conda_target = CondaTarget(requirement.name, version=requirement.version)
     return conda_target
 
 
@@ -648,9 +641,9 @@ def requirements_to_conda_targets(requirements):
 
 
 __all__ = (
-    'CondaContext',
-    'CondaTarget',
-    'install_conda',
-    'install_conda_target',
-    'requirements_to_conda_targets',
+    "CondaContext",
+    "CondaTarget",
+    "install_conda",
+    "install_conda_target",
+    "requirements_to_conda_targets",
 )

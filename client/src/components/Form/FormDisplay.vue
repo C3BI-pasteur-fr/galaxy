@@ -10,7 +10,8 @@
         :collapsed-disable-text="collapsedDisableText"
         :collapsed-disable-icon="collapsedDisableIcon"
         :on-change="onChange"
-        :on-change-form="onChangeForm" />
+        :on-change-form="onChangeForm"
+        :workflow-building-mode="workflowBuildingMode" />
 </template>
 
 <script>
@@ -70,9 +71,10 @@ export default {
             type: Object,
             default: null,
         },
-    },
-    created() {
-        this.onCloneInputs();
+        workflowBuildingMode: {
+            type: Boolean,
+            default: false,
+        },
     },
     data() {
         return {
@@ -80,6 +82,11 @@ export default {
             formIndex: {},
             formInputs: [],
         };
+    },
+    computed: {
+        validation() {
+            return validateInputs(this.formIndex, this.formData);
+        },
     },
     watch: {
         id() {
@@ -118,10 +125,8 @@ export default {
             this.onReplaceParams();
         },
     },
-    computed: {
-        validation() {
-            return validateInputs(this.formIndex, this.formData);
-        },
+    created() {
+        this.onCloneInputs();
     },
     methods: {
         onReplaceParams() {

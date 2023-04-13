@@ -184,25 +184,13 @@ export function fetchMenu(options = {}) {
                 hidden: !options.support_url,
             },
             {
-                title: _l("Search"),
-                url: options.search_url,
-                target: "_blank",
-                hidden: !options.search_url,
-            },
-            {
-                title: _l("Mailing Lists"),
-                url: options.mailing_lists,
-                target: "_blank",
-                hidden: !options.mailing_lists,
-            },
-            {
                 title: _l("Videos"),
                 url: options.screencasts_url,
                 target: "_blank",
                 hidden: !options.screencasts_url,
             },
             {
-                title: _l("Wiki"),
+                title: _l("Community Hub"),
                 url: options.wiki_url,
                 target: "_blank",
                 hidden: !options.wiki_url,
@@ -215,6 +203,7 @@ export function fetchMenu(options = {}) {
             {
                 title: _l("Interactive Tours"),
                 url: "tours",
+                target: "__use_router__",
             },
             {
                 title: _l("Introduction to Galaxy"),
@@ -255,7 +244,6 @@ export function fetchMenu(options = {}) {
                 cls: "loggedout-only",
                 tooltip: _l("Login"),
                 url: "login",
-                noscratchbook: true,
             };
         }
     } else {

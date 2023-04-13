@@ -26,8 +26,6 @@ define({
 
     "Saved Visualizations": "Visualizaciones Guardadas",
 
-    "Interactive Environments": "Entornos Interactivos",
-
     Admin: "Administración",
 
     Help: "Ayuda",
@@ -40,7 +38,7 @@ define({
 
     Videos: "Videos",
 
-    Wiki: "Wiki",
+    "Community Hub": "Centro Comunitario",
 
     "How to Cite Galaxy": "Cómo citar Galaxy",
 
@@ -509,9 +507,9 @@ define({
     "Local data": "Datos locales",
     "Form Definitions": "Definiciones de formulario",
 
-    // ---------------------------------------------------------------------------- Scratchbook
-    "Enable/Disable Scratchbook": "Habilitar/Deshabilitar Scratchbook",
-    "Show/Hide Scratchbook": "Mostrar/Ocultar Scratchbook",
+    // ---------------------------------------------------------------------------- Window Manager
+    "Enable/Disable Window Manager": "Habilitar/Deshabilitar Window Manager",
+    "Show/Hide Window Manager": "Mostrar/Ocultar Window Manager",
 
     // ---------------------------------------------------------------------------- misc. MVC
 
@@ -795,7 +793,7 @@ define({
     "Create new Build": "Crear nueva construcción",
     "Delete custom build.": "Eliminar construcción personalizada",
     "Provide the data source.": "Proporcionar la fuente de datos",
-    // ---------------------------------------------------------------------------- scratchbook
+    // ---------------------------------------------------------------------------- Window Manager
     "Next in History": "Siguiente en historial",
     "Previous in History": "Anterior en historial",
     // ---------------------------------------------------------------------------- generic-nav-view

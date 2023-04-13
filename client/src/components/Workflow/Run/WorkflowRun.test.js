@@ -49,6 +49,7 @@ describe("WorkflowRun.vue", () => {
 
         expect(wrapper.vm.error).toBeNull();
         expect(wrapper.vm.loading).toBe(false);
+        expect(wrapper.vm.simpleForm).toBe(false);
         const model = wrapper.vm.model;
         expect(model).not.toBeNull();
         expect(model.workflowId).toBe(run1WorkflowId);
@@ -57,6 +58,11 @@ describe("WorkflowRun.vue", () => {
         expect(model.hasUpgradeMessages).toBe(false);
         expect(model.hasStepVersionChanges).toBe(false);
         expect(model.wpInputs.wf_param.label).toBe("wf_param");
+        // all steps are expanded since data and parameter steps are expanded by default,
+        // the same is true for tools with unconnected data inputs.
+        model.steps.forEach((step) => {
+            expect(step.expanded).toBe(true);
+        });
     });
 
     it("displays submission error", async () => {

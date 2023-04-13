@@ -3,29 +3,48 @@
 import collections
 import hashlib
 import logging
+import os
 import re
 import sys
-import tarfile
 import threading
-from io import BytesIO
+from typing import (
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    TYPE_CHECKING,
+    Union,
+)
 
 import packaging.version
 import requests
+from conda_package_streaming.package_streaming import stream_conda_info
+from conda_package_streaming.url import stream_conda_info as stream_conda_info_from_url
+
+if TYPE_CHECKING:
+    from galaxy.tool_util.deps.container_resolvers import ResolutionCache
 
 log = logging.getLogger(__name__)
 
-QUAY_REPOSITORY_API_ENDPOINT = 'https://quay.io/api/v1/repository'
-BUILD_NUMBER_REGEX = re.compile(r'\d+$')
-PARSED_TAG = collections.namedtuple('PARSED_TAG', 'tag version build_string build_number')
+QUAY_REPOSITORY_API_ENDPOINT = "https://quay.io/api/v1/repository"
+BUILD_NUMBER_REGEX = re.compile(r"\d+$")
+PARSED_TAG = collections.namedtuple("PARSED_TAG", "tag version build_string build_number")
 MULLED_SOCKET_TIMEOUT = 12
 QUAY_VERSIONS_CACHE_EXPIRY = 300
 NAMESPACE_HAS_REPO_NAME_KEY = "galaxy.tool_util.deps.container_resolvers.mulled.util:namespace_repo_names"
 TAG_CACHE_KEY = "galaxy.tool_util.deps.container_resolvers.mulled.util:tag_cache"
 
 
+def default_mulled_conda_channels_from_env():
+    if "DEFAULT_MULLED_CONDA_CHANNELS" in os.environ:
+        return os.environ["DEFAULT_MULLED_CONDA_CHANNELS"].split(",")
+    else:
+        return None
+
+
 def create_repository(namespace, repo_name, oauth_token):
     assert oauth_token
-    headers = {'Authorization': f'Bearer {oauth_token}'}
+    headers = {"Authorization": f"Bearer {oauth_token}"}
     data = {
         "repository": repo_name,
         "namespace": namespace,
@@ -39,19 +58,19 @@ def quay_versions(namespace, pkg_name, session=None):
     """Get all version tags for a Docker image stored on quay.io for supplied package name."""
     data = quay_repository(namespace, pkg_name, session=session)
 
-    if 'error_type' in data and data['error_type'] == "invalid_token":
+    if "error_type" in data and data["error_type"] == "invalid_token":
         return []
 
-    if 'tags' not in data:
+    if "tags" not in data:
         raise Exception(f"Unexpected response from quay.io - no tags description found [{data}]")
 
-    return [tag for tag in data['tags'].keys() if tag != 'latest']
+    return [tag for tag in data["tags"].keys() if tag != "latest"]
 
 
 def quay_repository(namespace, pkg_name, session=None):
     assert namespace is not None
     assert pkg_name is not None
-    url = f'https://quay.io/api/v1/repository/{namespace}/{pkg_name}'
+    url = f"https://quay.io/api/v1/repository/{namespace}/{pkg_name}"
     if not session:
         session = requests.session()
     response = session.get(url, timeout=MULLED_SOCKET_TIMEOUT)
@@ -59,18 +78,7 @@ def quay_repository(namespace, pkg_name, session=None):
     return data
 
 
-def _namespace_has_repo_name(namespace, repo_name, resolution_cache):
-    """
-    Get all quay containers in the biocontainers repo
-    """
-    # resolution_cache.mulled_resolution_cache is the persistent variant of the resolution cache
-    resolution_cache = resolution_cache.mulled_resolution_cache or resolution_cache
-    cache_key = NAMESPACE_HAS_REPO_NAME_KEY
-    if resolution_cache is not None:
-        try:
-            return repo_name in resolution_cache.get(cache_key)
-        except KeyError:
-            pass
+def _get_namespace(namespace: str) -> List[str]:
     next_page = None
     repo_names = []
     repos_headers = {"Accept-encoding": "gzip", "Accept": "application/json"}
@@ -85,8 +93,28 @@ def _namespace_has_repo_name(namespace, repo_name, resolution_cache):
         next_page = repos_response_json.get("next_page")
         if not next_page:
             break
-    if resolution_cache is not None:
-        resolution_cache[cache_key] = repo_names
+    return repo_names
+
+
+def _namespace_has_repo_name(namespace: str, repo_name: str, resolution_cache: "ResolutionCache") -> bool:
+    """
+    Get all quay containers in the biocontainers repo
+    """
+    # resolution_cache.mulled_resolution_cache is the persistent variant of the resolution cache
+    preferred_resolution_cache = resolution_cache.mulled_resolution_cache or resolution_cache
+    cache_key = NAMESPACE_HAS_REPO_NAME_KEY
+    if preferred_resolution_cache is not None:
+        try:
+            cached_namespace = preferred_resolution_cache.get(cache_key)
+            if cached_namespace:
+                return repo_name in cached_namespace
+        except KeyError:
+            # preferred_resolution_cache may be a beaker Cache instance, which
+            # raises KeyError if key is not present on `.get`
+            pass
+    repo_names = _get_namespace(namespace)
+    if preferred_resolution_cache is not None:
+        preferred_resolution_cache[cache_key] = repo_names
     return repo_name in repo_names
 
 
@@ -136,31 +164,33 @@ def mulled_tags_for(
 
 def split_tag(tag):
     """Split mulled image tag into conda version and conda build."""
-    return tag.rsplit('--', 1)
+    return tag.rsplit("--", 1)
 
 
 def parse_tag(tag):
     """Decompose tag of mulled images into version, build string and build number."""
-    version = tag.rsplit(':')[-1]
+    version = tag.rsplit(":")[-1]
     build_string = "-1"
     build_number = -1
     match = BUILD_NUMBER_REGEX.search(version)
     if match:
         build_number = int(match.group(0))
-    if '--' in version:
-        version, build_string = version.rsplit('--', 1)
-    elif '-' in version:
+    if "--" in version:
+        version, build_string = version.rsplit("--", 1)
+    elif "-" in version:
         # Should be mulled multi-container image tag
-        version, build_string = version.rsplit('-', 1)
+        version, build_string = version.rsplit("-", 1)
     else:
         # We don't have a build number, and the BUILD_NUMBER_REGEX above is only accurate for build strings,
         # so set build number to -1. Any matching image:version combination with a build number
         # will be considered newer.
         build_number = -1
-    return PARSED_TAG(tag=tag,
-                      version=packaging.version.parse(version),
-                      build_string=packaging.version.parse(build_string),
-                      build_number=build_number)
+    return PARSED_TAG(
+        tag=tag,
+        version=packaging.version.parse(version),
+        build_string=packaging.version.parse(build_string),
+        build_number=build_number,
+    )
 
 
 def version_sorted(elements):
@@ -234,7 +264,9 @@ def v1_image_name(targets, image_build=None, name_override=None):
     'mulled-v1-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40'
     """
     if name_override is not None:
-        print("WARNING: Overriding mulled image name, auto-detection of 'mulled' package attributes will fail to detect result.")
+        print(
+            "WARNING: Overriding mulled image name, auto-detection of 'mulled' package attributes will fail to detect result."
+        )
         return name_override
 
     targets = list(targets)
@@ -280,7 +312,9 @@ def v2_image_name(targets, image_build=None, name_override=None):
     'mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40'
     """
     if name_override is not None:
-        print("WARNING: Overriding mulled image name, auto-detection of 'mulled' package attributes will fail to detect result.")
+        print(
+            "WARNING: Overriding mulled image name, auto-detection of 'mulled' package attributes will fail to detect result."
+        )
         return name_override
 
     targets = list(targets)
@@ -316,10 +350,42 @@ def v2_image_name(targets, image_build=None, name_override=None):
         return f"mulled-v2-{package_hash.hexdigest()}{suffix}"
 
 
-def get_file_from_recipe_url(url):
-    """Downloads file at url and returns tarball"""
-    r = requests.get(url, timeout=MULLED_SOCKET_TIMEOUT)
-    return tarfile.open(mode="r:bz2", fileobj=BytesIO(r.content))
+def get_file_from_conda_package(
+    url: str, checklist: Union[str, Iterable[str]]
+) -> Tuple[Optional[str], Optional[bytes]]:
+    """
+    Get file content for an element in a conda package.
+    The url can be a path to a local file or an url.
+    The checklist can be the name of the element to etract
+    or a Iterable of potentially desired elements the content
+    of the first that is contained in the conda package
+    is returned.
+    Return the name and content (bytes) of the first found element
+    and None, None otherwise
+
+    >>> name, content = get_file_from_conda_package("https://anaconda.org/conda-forge/chopin2/1.0.6/download/noarch/chopin2-1.0.6-pyhd8ed1ab_0.tar.bz2", "info/recipe/meta.yaml")
+    >>> assert name == "info/recipe/meta.yaml"
+    >>> assert isinstance(content, bytes)
+    >>> name, content = get_file_from_conda_package("https://anaconda.org/conda-forge/chopin2/1.0.7/download/noarch/chopin2-1.0.7-pyhd8ed1ab_1.conda", ["info/about.json", "info/recipe/meta.yaml"])
+    >>> assert name == "info/recipe/meta.yaml"
+    >>> assert isinstance(content, bytes)
+    """
+
+    if isinstance(checklist, str):
+        checklist = set([checklist])
+    else:
+        checklist = set(checklist)
+    # print(checklist)
+    try:
+        stream = stream_conda_info(url)
+    except FileNotFoundError:
+        stream = stream_conda_info_from_url(url)
+    for tar, member in stream:
+        # print(member.name)
+        if member.name in checklist:
+            return member.name, tar.extractfile(member).read()
+    # print("None")
+    return None, None
 
 
 def split_container_name(name):
@@ -328,7 +394,7 @@ def split_container_name(name):
     >>> split_container_name('samtools:1.7--1')
     ['samtools', '1.7', '1']
     """
-    return name.replace('--', ':').split(':')
+    return name.replace("--", ":").split(":")
 
 
 class PrintProgress:

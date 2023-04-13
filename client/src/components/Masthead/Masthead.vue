@@ -2,16 +2,16 @@
     <b-navbar id="masthead" type="dark" role="navigation" aria-label="Main" class="justify-content-center">
         <b-navbar-brand :href="brandLink" aria-label="homepage">
             <img alt="logo" class="navbar-brand-image" :src="brandImage" />
-            <img alt="logo" class="navbar-brand-image" :src="brandImageSecondary" v-if="brandImageSecondary" />
+            <img v-if="brandImageSecondary" alt="logo" class="navbar-brand-image" :src="brandImageSecondary" />
             <span class="navbar-brand-title">{{ brandTitle }}</span>
         </b-navbar-brand>
         <b-navbar-nav>
             <masthead-item
                 v-for="(tab, idx) in tabs"
-                :tab="tab"
-                :active-tab="activeTab"
+                v-show="!(tab.hidden === undefined ? false : tab.hidden)"
                 :key="`tab-${idx}`"
-                v-show="!(tab.hidden === undefined ? false : tab.hidden)">
+                :tab="tab"
+                :active-tab="activeTab">
             </masthead-item>
         </b-navbar-nav>
         <div ref="quota-meter-container" class="quota-meter-container" />
@@ -26,6 +26,12 @@ import { loadWebhookMenuItems } from "./_webhooks";
 
 export default {
     name: "Masthead",
+    components: {
+        BNavbar,
+        BNavbarBrand,
+        BNavbarNav,
+        MastheadItem,
+    },
     props: {
         displayGalaxyBrand: {
             type: Boolean,
@@ -60,11 +66,35 @@ export default {
             default: null,
         },
     },
-    components: {
-        BNavbar,
-        BNavbarBrand,
-        BNavbarNav,
-        MastheadItem,
+    data() {
+        return {
+            activeTab: null,
+            baseTabs: [],
+            extensionTabs: [],
+        };
+    },
+    computed: {
+        brandTitle() {
+            let brandTitle = this.displayGalaxyBrand ? "Galaxy " : "";
+            if (this.brand) {
+                brandTitle += this.brand;
+            }
+            return brandTitle;
+        },
+        tabs() {
+            const windowTabs = [this.mastheadState.windowManager.buttonActive];
+            const tabs = [].concat(this.baseTabs, this.extensionTabs, windowTabs);
+            return tabs.map(this._tabToJson);
+        },
+    },
+    created() {
+        this.activeTab = this.initialActiveTab;
+        this.baseTabs = fetchMenu(this.menuOptions);
+        loadWebhookMenuItems(this.extensionTabs);
+    },
+    mounted() {
+        this.mastheadState.quotaMeter.setElement(this.$refs["quota-meter-container"]);
+        this.mastheadState.quotaMeter.render();
     },
     methods: {
         addItem(item) {
@@ -86,53 +116,6 @@ export default {
             }
             return Object.assign({}, defaults, asJson);
         },
-        _reflectScratchbookFrames() {
-            const frames = this.mastheadState.frame.getFrames();
-            const tab = this.mastheadState.frame.buttonLoad;
-            tab.toggle = frames.visible;
-            tab.icon = (frames.visible && "fa-eye") || "fa-eye-slash";
-        },
-    },
-    data() {
-        return {
-            activeTab: null,
-            baseTabs: [],
-            extensionTabs: [],
-        };
-    },
-    computed: {
-        brandTitle() {
-            let brandTitle = this.displayGalaxyBrand ? "Galaxy " : "";
-            if (this.brand) {
-                brandTitle += this.brand;
-            }
-            return brandTitle;
-        },
-        tabs() {
-            const scratchbookTabs = [this.mastheadState.frame.buttonActive, this.mastheadState.frame.buttonLoad];
-            const tabs = [].concat(this.baseTabs, this.extensionTabs, scratchbookTabs);
-            return tabs.map(this._tabToJson);
-        },
-    },
-    created() {
-        this.activeTab = this.initialActiveTab;
-        this.baseTabs = fetchMenu(this.menuOptions);
-        loadWebhookMenuItems(this.extensionTabs);
-    },
-    mounted() {
-        this.mastheadState.quotaMeter.setElement(this.$refs["quota-meter-container"]);
-        this.mastheadState.quotaMeter.render();
-        const frames = this.mastheadState.frame.getFrames();
-        frames
-            .on("add remove", () => {
-                const tab = this.mastheadState.frame.buttonLoad;
-                tab.note = String(frames.length());
-                tab.visible = frames.length() > 0;
-                tab.show_note = frames.length() > 0;
-            })
-            .on("show hide", () => {
-                this._reflectScratchbookFrames();
-            });
     },
 };
 </script>

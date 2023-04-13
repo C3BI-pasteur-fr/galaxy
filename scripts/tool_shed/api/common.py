@@ -8,13 +8,13 @@ def delete(api_key, url, data, return_formatted=True):
     """
     headers = {}
     if api_key:
-        headers['x-api-key'] = api_key
+        headers["x-api-key"] = api_key
     response = requests.delete(url, headers=headers)
     response.raise_for_status()
     response = response.json()
     if return_formatted:
-        print('Response')
-        print('--------')
+        print("Response")
+        print("--------")
         print(response)
     else:
         return response
@@ -27,34 +27,34 @@ def display(url, api_key=None, return_formatted=True):
         return r
     elif isinstance(r, list):
         # Response is a collection as defined in the REST style.
-        print('Collection Members')
-        print('------------------')
+        print("Collection Members")
+        print("------------------")
         for n, i in enumerate(r):
             # All collection members should have a name in the response.
             # url is optional
-            if 'url' in i:
-                print('#%d: %s' % (n + 1, i.pop('url')))
-            if 'name' in i:
-                print('  name: %s' % i.pop('name'))
+            if "url" in i:
+                print("#%d: %s" % (n + 1, i.pop("url")))
+            if "name" in i:
+                print("  name: %s" % i.pop("name"))
             for k, v in i.items():
-                print(f'  {k}: {v}')
+                print(f"  {k}: {v}")
         print()
-        print('%d element(s) in collection' % len(r))
+        print("%d element(s) in collection" % len(r))
     elif isinstance(r, dict):
         # Response is an element as defined in the REST style.
-        print('Member Information')
-        print('------------------')
+        print("Member Information")
+        print("------------------")
         for k, v in r.items():
-            print(f'{k}: {v}')
+            print(f"{k}: {v}")
     else:
-        print('response is unknown type: %s' % type(r))
+        print("response is unknown type: %s" % type(r))
 
 
 def get(url, api_key=None):
     """Do the GET."""
     headers = {}
     if api_key:
-        headers['x-api-key'] = api_key
+        headers["x-api-key"] = api_key
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     return response.json()
@@ -64,7 +64,7 @@ def post(url, data, api_key=None):
     """Do the POST."""
     headers = {}
     if api_key:
-        headers['x-api-key'] = api_key
+        headers["x-api-key"] = api_key
     response = requests.post(url, data, headers=headers)
     response.raise_for_status()
     return response.json()
@@ -74,7 +74,7 @@ def put(url, data, api_key=None):
     """Do the PUT."""
     headers = {}
     if api_key:
-        headers['x-api-key'] = api_key
+        headers["x-api-key"] = api_key
     response = requests.put(url, data, headers=headers)
     response.raise_for_status()
     return response.json()
@@ -88,21 +88,21 @@ def submit(url, data, api_key=None, return_formatted=True):
     response = post(url, data, api_key)
     if not return_formatted:
         return response
-    print('Response')
-    print('--------')
+    print("Response")
+    print("--------")
     if isinstance(response, list):
         # Currently the only implemented responses are lists of dicts, because submission creates
         # some number of collection elements.
         for i in response:
             if isinstance(i, dict):
-                if 'url' in i:
-                    print(i.pop('url'))
+                if "url" in i:
+                    print(i.pop("url"))
                 else:
-                    print('----')
-                if 'name' in i:
-                    print('  name: %s' % i.pop('name'))
+                    print("----")
+                if "name" in i:
+                    print("  name: %s" % i.pop("name"))
                 for k, v in i.items():
-                    print(f'  {k}: {v}')
+                    print(f"  {k}: {v}")
             else:
                 print(i)
     else:
@@ -116,8 +116,8 @@ def update(api_key, url, data, return_formatted=True):
     """
     response = put(url, data, api_key=api_key)
     if return_formatted:
-        print('Response')
-        print('--------')
+        print("Response")
+        print("--------")
         print(response)
     else:
         return response

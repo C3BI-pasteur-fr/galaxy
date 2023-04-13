@@ -1,12 +1,10 @@
-.. :changelog:
-
 History
 -------
 
 .. to_doc
 
 ---------------------
-20.9.1.dev0
+22.5.0.dev0
 ---------------------
 
 
@@ -16,4 +14,3 @@ History
 ---------------------
 
 * Initial import from dev branch of Galaxy during 20.09 branch of Galaxy.
-
