@@ -44,7 +44,7 @@ def module_dependency( job_tool_id, job_tool_version, module_sample_path ):
         return
     root = doc.getroot()
     tooldict = {}
-    for rootchild in root.getchildren():
+    for rootchild in list(root):
         if ( rootchild.tag == "tool" ):
             tool_id = rootchild.attrib["id"]
             tool_version = rootchild.attrib["version"]
