@@ -7,9 +7,13 @@
     "preview": "nuxt preview"
   },
   "devDependencies": {
+    "@nuxt/content": "^2.0.1",
     "nuxt": "3.0.0-rc.3"
   },
   "dependencies": {
-    "@observablehq/plot": "^0.4.3"
+    "@observablehq/plot": "^0.4.3",
+    "bootstrap": "^4.6.1",
+    "jquery": "^3.5.1",
+    "popper.js": "^1.16.1"
   }
 }
