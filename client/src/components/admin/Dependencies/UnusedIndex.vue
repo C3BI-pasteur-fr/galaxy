@@ -1,5 +1,5 @@
 <template>
-    <dependency-index-wrapper
+    <DependencyIndexWrapper
         :loading="loading"
         :error="error"
         loading-message="Loading tool dependency resolver information">
@@ -12,17 +12,19 @@
         </template>
         <template v-slot:actions>
             <div>
-                <b-button @click="deleteSelected"> Delete Selected Environments </b-button>
+                <GButton @click="deleteSelected"> Delete Selected Environments </GButton>
             </div>
         </template>
-    </dependency-index-wrapper>
+    </DependencyIndexWrapper>
 </template>
 <script>
+import { deletedUnusedPaths, getDependencyUnusedPaths } from "../AdminServices";
 import DependencyIndexWrapper from "./DependencyIndexWrapper";
-import { getDependencyUnusedPaths, deletedUnusedPaths } from "../AdminServices";
+
+import GButton from "@/components/BaseComponents/GButton.vue";
 
 export default {
-    components: { DependencyIndexWrapper },
+    components: { DependencyIndexWrapper, GButton },
     data() {
         return {
             error: null,

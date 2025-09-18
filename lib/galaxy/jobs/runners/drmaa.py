@@ -51,7 +51,7 @@ class DRMAAJobRunner(AsynchronousJobRunner):
             runner_param_specs[f"{retry_exception}_retries"] = dict(map=int, valid=lambda x: int(x) >= 0, default=0)
 
         if "runner_param_specs" not in kwargs:
-            kwargs["runner_param_specs"] = dict()
+            kwargs["runner_param_specs"] = {}
         kwargs["runner_param_specs"].update(runner_param_specs)
 
         super().__init__(app, nworkers, **kwargs)
@@ -70,9 +70,7 @@ class DRMAAJobRunner(AsynchronousJobRunner):
             drmaa = __import__("drmaa")
         except (ImportError, RuntimeError) as exc:
             raise exc.__class__(
-                "The Python drmaa package is required to use this "
-                "feature, please install it or correct the "
-                "following error:\n%s: %s" % (exc.__class__.__name__, str(exc))
+                f"The Python drmaa package is required to use this feature, please install it or correct the following error:\n{exc.__class__.__name__}: {str(exc)}"
             )
         from pulsar.managers.util.drmaa import DrmaaSessionFactory
 
@@ -107,8 +105,7 @@ class DRMAAJobRunner(AsynchronousJobRunner):
         """Convert a legacy URL to a job destination"""
         if not url:
             return
-        native_spec = url.split("/")[2]
-        if native_spec:
+        if native_spec := url.split("/")[2]:
             params = dict(nativeSpecification=native_spec)
             log.debug(f"Converted URL '{url}' to destination runner=drmaa, params={params}")
             return JobDestination(runner="drmaa", params=params)
@@ -205,6 +202,7 @@ class DRMAAJobRunner(AsynchronousJobRunner):
                 job_wrapper.fail(fail_msg)
                 return
         else:
+            filename = self.store_jobtemplate(job_wrapper, jt)
             job_wrapper.change_ownership_for_run()
             # if user credentials are not available, use galaxy credentials (if permitted)
             allow_guests = asbool(job_wrapper.job_destination.params.get("allow_guests", False))
@@ -218,7 +216,6 @@ class DRMAAJobRunner(AsynchronousJobRunner):
                     return
                 pwent = job_wrapper.galaxy_system_pwent
             log.debug(f"({galaxy_id_tag}) submitting with credentials: {pwent[0]} [uid: {pwent[2]}]")
-            filename = self.store_jobtemplate(job_wrapper, jt)
             self.userid = pwent[2]
             external_job_id = self.external_runjob(external_runjob_script, filename, pwent[2])
             if external_job_id is None:
@@ -385,7 +382,14 @@ class DRMAAJobRunner(AsynchronousJobRunner):
                 commands.execute(cmd)
             log.info(f"({job.id}/{ext_id}) Removed from DRM queue at user's request")
         except drmaa.InvalidJobException:
-            log.exception(f"({job.id}/{ext_id}) User killed running job, but it was already dead")
+            log.warning(f"({job.id}/{ext_id}) User killed running job, but it was already dead")
+        except drmaa.InternalException as e:
+            if "already completing or completed" in str(e):
+                log.warning(f"({job.id}/{ext_id}) User killed running job, but job already terminal in DRM queue")
+            else:
+                log.exception(
+                    f"({job.id}/{ext_id}) User killed running job, but error encountered removing from DRM queue"
+                )
         except commands.CommandLineException as e:
             log.error(f"({job.id}/{ext_id}) User killed running job, but command execution failed: {unicodify(e)}")
         except Exception:
@@ -420,11 +424,9 @@ class DRMAAJobRunner(AsynchronousJobRunner):
             self.monitor_queue.put(ajs)
 
     def store_jobtemplate(self, job_wrapper, jt):
-        """Stores the content of a DRMAA JobTemplate object in a file as a JSON string.
-        Path is hard-coded, but it's no worse than other path in this module.
-        Uses Galaxy's JobID, so file is expected to be unique."""
-        filename = f"{self.app.config.cluster_files_directory}/{job_wrapper.get_id_tag()}.jt_json"
-        with open(filename, "w+") as fp:
+        """Stores the content of a DRMAA JobTemplate object in a file as a JSON string."""
+        filename = os.path.join(job_wrapper.working_directory, f"{job_wrapper.get_id_tag()}.jt_json")
+        with open(filename, "w") as fp:
             json.dump(jt, fp)
         log.debug(f"({job_wrapper.job_id}) Job script for external submission is: {filename}")
         return filename

@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from galaxy_test.base.workflow_fixtures import WORKFLOW_SIMPLE_CAT_TWICE
 from galaxy_test.selenium.framework import (
     managed_history,
@@ -9,12 +11,16 @@ from .framework import (
     SeleniumIntegrationTestCase,
 )
 
+if TYPE_CHECKING:
+    from galaxy_test.selenium.framework import SeleniumSessionDatasetPopulator
 
-class WorkflowRunTargetNewSeleniumIntegrationTestCase(
-    SeleniumIntegrationTestCase, RunsWorkflows, UsesHistoryItemAssertions
-):
+
+class BaseWorkflowRunTargetTestCase(SeleniumIntegrationTestCase, RunsWorkflows, UsesHistoryItemAssertions):
+    dataset_populator: "SeleniumSessionDatasetPopulator"
     ensure_registered = True
 
+
+class TestWorkflowRunTargetNewSeleniumIntegration(BaseWorkflowRunTargetTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
@@ -32,18 +38,15 @@ class WorkflowRunTargetNewSeleniumIntegrationTestCase(
         workflow_run.expanded_form.wait_for_absent_or_hidden()
         self.workflow_run_submit()
         self.sleep_for(self.wait_types.UX_TRANSITION)
-        workflow_run.new_history_target_link.wait_for_and_click()
+        workflow_run.new_history_badge.wait_for_visible()
+        workflow_run.history_target_link.wait_for_and_click()
         self.sleep_for(self.wait_types.UX_TRANSITION)
-        workflow_run.new_history_target_link.wait_for_absent_or_hidden()
+        workflow_run.new_history_badge.wait_for_absent_or_hidden()
         self.workflow_run_wait_for_ok(hid=2, expand=True)
         self.assert_item_summary_includes(2, "2 sequences")
 
 
-class WorkflowRunTargetCurrentSeleniumIntegrationTestCase(
-    SeleniumIntegrationTestCase, RunsWorkflows, UsesHistoryItemAssertions
-):
-    ensure_registered = True
-
+class TestWorkflowRunTargetCurrentSeleniumIntegration(BaseWorkflowRunTargetTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
@@ -61,17 +64,13 @@ class WorkflowRunTargetCurrentSeleniumIntegrationTestCase(
         workflow_run.expanded_form.wait_for_absent_or_hidden()
         self.workflow_run_submit()
         self.sleep_for(self.wait_types.UX_TRANSITION)
-        workflow_run.new_history_target_link.wait_for_absent_or_hidden()
+        workflow_run.new_history_badge.wait_for_absent_or_hidden()
         self.sleep_for(self.wait_types.UX_TRANSITION)
         self.workflow_run_wait_for_ok(hid=2, expand=True)
         self.assert_item_summary_includes(2, "2 sequences")
 
 
-class WorkflowRunTargetSelectNewSeleniumIntegrationTestCase(
-    SeleniumIntegrationTestCase, RunsWorkflows, UsesHistoryItemAssertions
-):
-    ensure_registered = True
-
+class TestWorkflowRunTargetSelectNewSeleniumIntegration(BaseWorkflowRunTargetTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
@@ -94,8 +93,9 @@ class WorkflowRunTargetSelectNewSeleniumIntegrationTestCase(
         workflow_run.runtime_setting_target.wait_for_absent_or_hidden()
         self.workflow_run_submit()
         self.sleep_for(self.wait_types.UX_TRANSITION)
-        workflow_run.new_history_target_link.wait_for_and_click()
+        workflow_run.new_history_badge.wait_for_visible()
+        workflow_run.history_target_link.wait_for_and_click()
         self.sleep_for(self.wait_types.UX_TRANSITION)
-        workflow_run.new_history_target_link.wait_for_absent_or_hidden()
+        workflow_run.new_history_badge.wait_for_absent_or_hidden()
         self.workflow_run_wait_for_ok(hid=2, expand=True)
         self.assert_item_summary_includes(2, "2 sequences")

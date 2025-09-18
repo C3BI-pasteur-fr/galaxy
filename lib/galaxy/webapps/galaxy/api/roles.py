@@ -1,24 +1,24 @@
 """
 API operations on Role objects.
 """
+
 import logging
 
 from fastapi import Body
 
 from galaxy.managers.context import ProvidesUserContext
-from galaxy.managers.roles import RoleManager
-from galaxy.schema.fields import EncodedDatabaseIdField
 from galaxy.schema.schema import (
     RoleDefinitionModel,
-    RoleListModel,
-    RoleModel,
+    RoleListResponse,
+    RoleModelResponse,
 )
-from galaxy.webapps.base.controller import url_for
-from . import (
+from galaxy.webapps.galaxy.api import (
     depends,
     DependsOnTrans,
     Router,
 )
+from galaxy.webapps.galaxy.api.common import RoleIDPathParam
+from galaxy.webapps.galaxy.services.roles import RolesService
 
 log = logging.getLogger(__name__)
 
@@ -28,31 +28,32 @@ log = logging.getLogger(__name__)
 router = Router(tags=["roles"])
 
 
-def role_to_model(trans, role):
-    item = role.to_dict(view="element", value_mapper={"id": trans.security.encode_id})
-    role_id = trans.security.encode_id(role.id)
-    item["url"] = url_for("role", id=role_id)
-    return RoleModel(**item)
-
-
 @router.cbv
 class FastAPIRoles:
-    role_manager: RoleManager = depends(RoleManager)
+    service: RolesService = depends(RolesService)
 
     @router.get("/api/roles")
-    def index(self, trans: ProvidesUserContext = DependsOnTrans) -> RoleListModel:
-        roles = self.role_manager.list_displayable_roles(trans)
-        return RoleListModel(__root__=[role_to_model(trans, r) for r in roles])
+    def index(self, trans: ProvidesUserContext = DependsOnTrans) -> RoleListResponse:
+        return self.service.get_index(trans=trans)
 
     @router.get("/api/roles/{id}")
-    def show(self, id: EncodedDatabaseIdField, trans: ProvidesUserContext = DependsOnTrans) -> RoleModel:
-        role_id = trans.app.security.decode_id(id)
-        role = self.role_manager.get(trans, role_id)
-        return role_to_model(trans, role)
+    def show(self, id: RoleIDPathParam, trans: ProvidesUserContext = DependsOnTrans) -> RoleModelResponse:
+        return self.service.show(trans, id)
 
     @router.post("/api/roles", require_admin=True)
     def create(
         self, trans: ProvidesUserContext = DependsOnTrans, role_definition_model: RoleDefinitionModel = Body(...)
-    ) -> RoleModel:
-        role = self.role_manager.create_role(trans, role_definition_model)
-        return role_to_model(trans, role)
+    ) -> RoleModelResponse:
+        return self.service.create(trans, role_definition_model)
+
+    @router.delete("/api/roles/{id}", require_admin=True)
+    def delete(self, id: RoleIDPathParam, trans: ProvidesUserContext = DependsOnTrans) -> RoleModelResponse:
+        return self.service.delete(trans, id)
+
+    @router.post("/api/roles/{id}/purge", require_admin=True)
+    def purge(self, id: RoleIDPathParam, trans: ProvidesUserContext = DependsOnTrans) -> RoleModelResponse:
+        return self.service.purge(trans, id)
+
+    @router.post("/api/roles/{id}/undelete", require_admin=True)
+    def undelete(self, id: RoleIDPathParam, trans: ProvidesUserContext = DependsOnTrans) -> RoleModelResponse:
+        return self.service.undelete(trans, id)

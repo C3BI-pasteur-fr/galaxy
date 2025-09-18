@@ -2,7 +2,9 @@
 
 from .base import (
     AbstractToolBox,
-    BaseGalaxyToolBox,
+    AbstractToolTagManager,
+    ToolLoadConfigurationConflict,
+    ToolLoadError,
 )
 from .panel import (
     panel_item_types,
@@ -12,8 +14,10 @@ from .panel import (
 
 __all__ = (
     "AbstractToolBox",
-    "BaseGalaxyToolBox",
+    "AbstractToolTagManager",
     "panel_item_types",
+    "ToolLoadConfigurationConflict",
+    "ToolLoadError",
     "ToolSection",
     "ToolSectionLabel",
 )

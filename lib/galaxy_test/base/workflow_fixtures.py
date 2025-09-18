@@ -368,6 +368,102 @@ steps:
       queries_0|input2: nested_workflow/workflow_output
 """
 
+# WORKFLOW_NESTED_SIMPLE with a nested workflow output marked as an
+# output on the outer workflow.
+WORKFLOW_NESTED_OUTPUT = """
+class: GalaxyWorkflow
+inputs:
+  outer_input: data
+outputs:
+  outer_output:
+    outputSource: second_cat/out_file1
+  nested_output:
+    outputSource: nested_workflow/workflow_output
+steps:
+  first_cat:
+    tool_id: cat1
+    in:
+      input1: outer_input
+  nested_workflow:
+    run:
+      class: GalaxyWorkflow
+      inputs:
+        inner_input: data
+      outputs:
+        workflow_output:
+          outputSource: random_lines/out_file1
+      steps:
+        random_lines:
+          tool_id: random_lines1
+          state:
+            num_lines: 1
+            input:
+              $link: inner_input
+            seed_source:
+              seed_source_selector: set_seed
+              seed: asdf
+    in:
+      inner_input: first_cat/out_file1
+  second_cat:
+    tool_id: cat1
+    in:
+      input1: nested_workflow/workflow_output
+      queries_0|input2: nested_workflow/workflow_output
+"""
+
+# WORKFLOW_NESTED_OUTPUT with two levels of nesting for the workflow
+# output
+WORKFLOW_NESTED_TWICE_OUTPUT = """
+class: GalaxyWorkflow
+inputs:
+  outer_input: data
+outputs:
+  outer_output:
+    outputSource: second_cat/out_file1
+  nested_output:
+    outputSource: nested_workflow/workflow_output
+steps:
+  first_cat:
+    tool_id: cat1
+    in:
+      input1: outer_input
+  nested_workflow:
+    run:
+      class: GalaxyWorkflow
+      inputs:
+        inner_input: data
+      outputs:
+        workflow_output:
+          outputSource: inner_nested_workflow/inner_workflow_output
+      steps:
+        inner_nested_workflow:
+          run:
+            class: GalaxyWorkflow
+            inputs:
+              really_inner_input: data
+            outputs:
+              inner_workflow_output:
+                outputSource: random_lines/out_file1
+            steps:
+              random_lines:
+                tool_id: random_lines1
+                state:
+                  num_lines: 1
+                  input:
+                    $link: really_inner_input
+                  seed_source:
+                    seed_source_selector: set_seed
+                    seed: asdf
+          in:
+            really_inner_input: inner_input
+    in:
+      inner_input: first_cat/out_file1
+  second_cat:
+    tool_id: cat1
+    in:
+      input1: nested_workflow/workflow_output
+      queries_0|input2: nested_workflow/workflow_output
+"""
 
 WORKFLOW_NESTED_RUNTIME_PARAMETER = """
 class: GalaxyWorkflow
@@ -521,6 +617,7 @@ inputs:
   int_input:
     type: integer
     default: 3
+    optional: true
 steps:
   random:
     tool_id: random_lines1
@@ -766,6 +863,48 @@ steps:
         default: 6
 """
 
+WORKFLOW_LIST_PAIRED_INPUT_TO_TYPE_SOURCE = """
+class: GalaxyWorkflow
+inputs:
+  - id: input_header
+    type: data
+  - id: input_list
+    type: collection
+    collection_type: "list:paired"
+steps:
+  - tool_id: collection_type_source
+    in:
+      header: input_header
+      input_collect: input_list
+"""
+
+
+WORKFLOW_LIST_PAIRED_MAPPED_OVER_PAIRED = """
+class: GalaxyWorkflow
+inputs:
+  - id: input_list
+    type: collection
+    collection_type: "list:paired"
+steps:
+  - tool_id: collection_paired_test
+    in:
+      f1: input_list
+"""
+
+
+WORKFLOW_LIST_PAIRED_OR_UNPAIRED_INPUT = """
+class: GalaxyWorkflow
+inputs:
+  - id: input_list
+    type: collection
+    collection_type: "list:paired_or_unpaired"
+steps:
+  - tool_id: collection_list_paired_or_unpaired
+    in:
+      f1: input_list
+"""
+
+
 WORKFLOW_WITH_OUTPUTS = """
 class: GalaxyWorkflow
 inputs:
@@ -994,3 +1133,150 @@ bed_input:
   file_type: bed
   type: File
 """
+
+
+NESTED_WORKFLOW_WITH_CONDITIONAL_SUBWORKFLOW_AND_DISCONNECTED_MAP_OVER_SOURCE = """
+class: GalaxyWorkflow
+inputs:
+  boolean_input_files: collection
+steps:
+  create_list_of_boolean:
+    tool_id: param_value_from_file
+    in:
+       input1: boolean_input_files
+    state:
+      param_type: boolean
+  subworkflow:
+    run:
+      class: GalaxyWorkflow
+      inputs:
+        boolean_input_file: data
+        should_run: boolean
+      steps:
+        create_more_inputs:
+          tool_id: collection_creates_dynamic_nested
+        consume_expression_parameter:
+          tool_id: cat1
+          state:
+            input1:
+              $link: create_more_inputs/list_output
+            queries:
+              - input2:
+                $link: boolean_input_file
+          out:
+            out_file1:
+              change_datatype: txt
+        consume_expression_parameter_2:
+          tool_id: cat1
+          state:
+            input1:
+              $link: consume_expression_parameter/out_file1
+      outputs:
+        inner_create_nested:
+          outputSource: create_more_inputs/list_output
+        inner_output_1:
+          outputSource: consume_expression_parameter/out_file1
+        inner_output_2:
+          outputSource: consume_expression_parameter_2/out_file1
+    in:
+      boolean_input_file: boolean_input_files
+      should_run: create_list_of_boolean/boolean_param
+    when: $(inputs.should_run)
+outputs:
+  outer_create_nested:
+    outputSource: subworkflow/inner_create_nested
+  outer_output_1:
+    outputSource: subworkflow/inner_output_1
+  outer_output_2:
+    outputSource: subworkflow/inner_output_2
+"""
+
+WORKFLOW_WITH_DEFAULT_FILE_DATASET_INPUT = """
+class: GalaxyWorkflow
+inputs:
+  default_file_input:
+    default:
+      class: File
+      basename: a file
+      format: txt
+      location: https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bed
+steps:
+  cat1:
+    tool_id: cat1
+    in:
+      input1: default_file_input
+"""
+
+WORKFLOW_WITH_STEP_DEFAULT_FILE_DATASET_INPUT = """
+class: GalaxyWorkflow
+steps:
+  cat1:
+    tool_id: cat1
+    in:
+      input1:
+        default:
+          class: File
+          basename: a file
+          format: txt
+          location: https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bed
+"""
+
+WORKFLOW_FLAT_CROSS_PRODUCT = """
+class: GalaxyWorkflow
+inputs:
+  collection_a: collection
+  collection_b: collection
+steps:
+  cross_product:
+    tool_id: __CROSS_PRODUCT_FLAT__
+    in:
+      input_a:
+        collection_a
+      input_b:
+        collection_b
+outputs:
+  output_a:
+    outputSource: cross_product/output_a
+  output_b:
+    outputSource: cross_product/output_b
+"""
+
+WORKFLOW_WITH_DATA_TAG_FILTER = r"""{
+    "a_galaxy_workflow": "true",
+    "annotation": null,
+    "comments": [],
+    "format-version": "0.1",
+    "name": "Export WF4 Assembly HiC (imported from URL) (imported from uploaded file)",
+    "steps": {
+        "0": {
+            "annotation": "With dataset tag : genomescope_model ",
+            "content_id": null,
+            "errors": null,
+            "id": 0,
+            "input_connections": {},
+            "inputs": [
+                {
+                    "description": "With dataset tag : genomescope_model ",
+                    "name": "Genomescope Model"
+                }
+            ],
+            "label": "Genomescope Model",
+            "name": "Input dataset",
+            "outputs": [],
+            "position": {
+                "left": 0,
+                "top": 0
+            },
+            "tool_id": null,
+            "tool_state": "{\"optional\": false, \"format\": [\"txt\"], \"tag\": \"genomescope_model\"}",
+            "tool_version": null,
+            "type": "data_input",
+            "uuid": "a165c531-371f-4073-9cdd-85ce3506586f",
+            "when": null,
+            "workflow_outputs": []
+        }
+    },
+    "tags": [],
+    "uuid": "03a95ebe-af1e-4628-ac2f-e7553babfb2f",
+    "version": 3
+}"""

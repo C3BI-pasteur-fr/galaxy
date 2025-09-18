@@ -4,17 +4,22 @@ Lower level of visualization framework which does three main things:
     - create urls to visualizations based on some target object(s)
     - unpack a query string into the desired objects needed for rendering
 """
+
 import logging
 import os
 import weakref
 
+import galaxy.model
 from galaxy.exceptions import ObjectNotFound
 from galaxy.util import (
     config_directories_from_setting,
     parse_xml,
 )
-from galaxy.visualization.plugins import config_parser
-from galaxy.visualization.plugins import plugin as vis_plugins
+from galaxy.visualization.plugins import (
+    config_parser,
+    plugin as vis_plugins,
+)
+from galaxy.visualization.plugins.datasource_testing import is_object_applicable
 
 log = logging.getLogger(__name__)
 
@@ -218,26 +223,22 @@ class VisualizationsRegistry:
             raise ObjectNotFound(f"Unknown or invalid visualization: {key}")
         return self.plugins[key]
 
-    def get_plugins(self, embeddable=None):
-        result = []
-        for plugin in self.plugins.values():
-            if embeddable and not plugin.config.get("embeddable"):
-                continue
-            result.append(plugin.to_dict())
-        return sorted(result, key=lambda k: k.get("html"))
-
     # -- building links to visualizations from objects --
-    def get_visualizations(self, trans, target_object):
+    def get_visualizations(self, trans, target_object=None, embeddable=None):
         """
         Get the names of visualizations usable on the `target_object` and
         the urls to call in order to render the visualizations.
         """
-        applicable_visualizations = []
-        for vis_name in self.plugins:
-            url_data = self.get_visualization(trans, vis_name, target_object)
-            if url_data:
-                applicable_visualizations.append(url_data)
-        return sorted(applicable_visualizations, key=lambda k: k.get("html"))
+        result = []
+        for vis_name, vis_plugin in self.plugins.items():
+            if vis_plugin.config.get("hidden"):
+                continue
+            if embeddable and not vis_plugin.config.get("embeddable"):
+                continue
+            if target_object is not None and self.get_visualization(trans, vis_name, target_object) is None:
+                continue
+            result.append(vis_plugin.to_dict())
+        return sorted(result, key=lambda k: k.get("html"))
 
     def get_visualization(self, trans, visualization_name, target_object):
         """
@@ -245,47 +246,12 @@ class VisualizationsRegistry:
         `visualization_name` if it's applicable to `target_object` or
         `None` if it's not.
         """
-        visualization = self.plugins.get(visualization_name, None)
-        if visualization is not None:
+        if (visualization := self.plugins.get(visualization_name, None)) is not None:
             data_sources = visualization.config["data_sources"]
             for data_source in data_sources:
                 model_class = data_source["model_class"]
+                model_class = getattr(galaxy.model, model_class, None)
                 if isinstance(target_object, model_class):
                     tests = data_source["tests"]
-                    if tests is None or self.is_object_applicable(trans, target_object, tests):
+                    if tests is None or is_object_applicable(trans, target_object, tests):
                         return visualization.to_dict()
-
-    def is_object_applicable(self, trans, target_object, data_source_tests):
-        """
-        Run a visualization's data_source tests to find out if
-        it can be applied to the target_object.
-        """
-        # log.debug( 'is_object_applicable( self, trans, %s, %s )', target_object, data_source_tests )
-        for test in data_source_tests:
-            test_type = test["type"]
-            result_type = test["result_type"]
-            test_result = test["result"]
-            test_fn = test["fn"]
-            # log.debug( '%s %s: %s, %s, %s, %s', str( target_object ), 'is_object_applicable',
-            #           test_type, result_type, test_result, test_fn )
-
-            if test_type == "isinstance":
-                # parse test_result based on result_type (curr: only datatype has to do this)
-                if result_type == "datatype":
-                    # convert datatypes to their actual classes (for use with isinstance)
-                    datatype_class_name = test_result
-                    test_result = trans.app.datatypes_registry.get_datatype_class_by_name(datatype_class_name)
-                    if not test_result:
-                        # but continue (with other tests) if can't find class by that name
-                        # if self.debug:
-                        #    log.warning( 'visualizations_registry cannot find class (%s)' +
-                        #              ' for applicability test on: %s, id: %s', datatype_class_name,
-                        #              target_object, getattr( target_object, 'id', '' ) )
-                        continue
-
-            # NOTE: tests are OR'd, if any test passes - the visualization can be applied
-            if test_fn(target_object, test_result):
-                # log.debug( '\t test passed' )
-                return True
-
-        return False

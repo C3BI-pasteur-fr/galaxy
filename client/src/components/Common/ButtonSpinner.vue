@@ -1,36 +1,47 @@
-<template>
-    <b-button v-if="wait" variant="info" disabled>
-        <font-awesome-icon icon="spinner" class="mr-2" spin />Please wait...
-    </b-button>
-    <b-button v-else v-b-tooltip.hover.bottom variant="primary" :title="tooltip" @click="$emit('onClick')">
-        <font-awesome-icon icon="check" class="mr-2" />{{ title }}
-    </b-button>
-</template>
-<script>
+<script setup lang="ts">
+import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
+import { faPlay, faSpinner } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { library } from "@fortawesome/fontawesome-svg-core";
-import { faCheck, faSpinner } from "@fortawesome/free-solid-svg-icons";
+import { computed } from "vue";
 
-library.add(faCheck);
-library.add(faSpinner);
+import type { ComponentColor, ComponentSize } from "@/components/BaseComponents/componentVariants";
 
-export default {
-    components: {
-        FontAwesomeIcon,
-    },
-    props: {
-        title: {
-            type: String,
-            required: true,
-        },
-        wait: {
-            type: Boolean,
-            default: false,
-        },
-        tooltip: {
-            type: String,
-            default: null,
-        },
-    },
-};
+import GButton from "@/components/BaseComponents/GButton.vue";
+
+interface Props {
+    title?: string;
+    wait?: boolean;
+    tooltip?: string;
+    disabled?: boolean;
+    size?: ComponentSize;
+    color?: ComponentColor;
+    icon?: IconDefinition;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+    title: "",
+    wait: false,
+    tooltip: "",
+    disabled: false,
+    size: "medium",
+    color: "blue",
+    icon: undefined,
+});
+
+const currentTitle = computed(() => (props.wait ? "Please wait..." : props.tooltip));
 </script>
+
+<template>
+    <GButton
+        tooltip
+        tooltip-placement="bottom"
+        :color="props.color"
+        :title="currentTitle"
+        :disabled="props.wait || props.disabled"
+        :size="props.size"
+        @click="$emit('onClick')">
+        <FontAwesomeIcon v-if="wait" :icon="faSpinner" fixed-width spin />
+        <FontAwesomeIcon v-else :icon="!props.icon ? faPlay : props.icon" fixed-width />
+        <span v-if="title">{{ title }}</span>
+    </GButton>
+</template>

@@ -4,17 +4,19 @@ from galaxy import model
 from .test_galaxy_mapping import BaseModelTestCase
 
 
-class MutableColumnTest(BaseModelTestCase):
+class TestMutableColumn(BaseModelTestCase):
     def persist_and_reload(self, item):
         item_id = item.id
-        self.model.session.flush()
-        self.model.session.expunge_all()
-        return self.model.session.query(model.DynamicTool).get(item_id)
+        session = self.model.session
+        session.commit()
+        session.expunge_all()
+        return session.get(model.DynamicTool, item_id)
 
     def test_metadata_mutable_column(self):
         w = model.DynamicTool()
-        self.model.session.add(w)
-        self.model.session.flush()
+        session = self.model.session
+        session.add(w)
+        session.commit()
         w.value = {"x": "z"}
         persisted = self.persist_and_reload(w)
         assert persisted.value == {"x": "z"}

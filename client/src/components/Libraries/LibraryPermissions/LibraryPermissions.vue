@@ -2,7 +2,7 @@
     <div>
         <b-button variant="link" @click="onGoBack">Go back to Libraries</b-button>
         <PermissionsHeader v-if="library" :name="library.name" />
-        <h2 class="text-center">Library permissions</h2>
+        <h1 class="text-center h-lg">Library permissions</h1>
         <PermissionsInputField
             v-if="access_library_role_list"
             :id="library_id"
@@ -31,24 +31,33 @@
             alert="User with  <strong>any</strong> of these roles can modify this library (name, synopsis, etc.)."
             title="Roles that can modify this library"
             @input="setUserPermissionsPreferences" />
+        <PermissionsInputField
+            v-if="manage_library_role_list"
+            :id="library_id"
+            :permission_type="manage_type"
+            :initial_value="manage_library_role_list"
+            :api-root-url="apiRootUrl"
+            alert="User with <strong>any</strong> of these roles can manage this library."
+            title="Roles that can manage this library"
+            @input="setUserPermissionsPreferences" />
         <button title="Save modifications" class="toolbtn_save_permissions" @click="postPermissions">
-            <font-awesome-icon :icon="['far', 'save']" />
+            <FontAwesomeIcon :icon="['far', 'save']" />
             Save
         </button>
     </div>
 </template>
 
 <script>
-import Vue from "vue";
-import { getAppRoot } from "onload/loadConfig";
-import BootstrapVue from "bootstrap-vue";
-import { Services } from "components/Libraries/LibraryPermissions/services";
-import { Toast } from "ui/toast";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import PermissionsHeader from "components/Libraries/LibraryPermissions/PermissionsHeader";
-import { extractRoles } from "components/Libraries/library-utils";
+import BootstrapVue from "bootstrap-vue";
 import { initPermissionsIcons } from "components/Libraries/icons";
+import { extractRoles } from "components/Libraries/library-utils";
+import PermissionsHeader from "components/Libraries/LibraryPermissions/PermissionsHeader";
 import PermissionsInputField from "components/Libraries/LibraryPermissions/PermissionsInputField";
+import { Services } from "components/Libraries/LibraryPermissions/services";
+import { Toast } from "composables/toast";
+import { getAppRoot } from "onload/loadConfig";
+import Vue from "vue";
 
 Vue.use(BootstrapVue);
 initPermissionsIcons();
@@ -71,10 +80,12 @@ export default {
             library: undefined,
             add_library_item_role_list: undefined,
             modify_library_role_list: undefined,
+            manage_library_role_list: undefined,
             access_library_role_list: undefined,
             apiRootUrl: `${getAppRoot()}api/libraries`,
             add_type: "add_library_item_role_list",
             modify_type: "modify_library_role_list",
+            manage_type: "manage_library_role_list",
             access_type: "access_library_role_list",
         };
     },
@@ -85,6 +96,7 @@ export default {
             console.log("fetched_permissions", fetched_permissions);
             this.add_library_item_role_list = extractRoles(fetched_permissions.add_library_item_role_list);
             this.modify_library_role_list = extractRoles(fetched_permissions.modify_library_role_list);
+            this.manage_library_role_list = extractRoles(fetched_permissions.manage_library_role_list);
             this.access_library_role_list = extractRoles(fetched_permissions.access_library_role_list);
         });
         this.services.getLibrary(this.library_id).then((library) => {
@@ -103,6 +115,7 @@ export default {
                 [
                     { "add_ids[]": this.add_library_item_role_list },
                     { "modify_ids[]": this.modify_library_role_list },
+                    { "manage_ids[]": this.manage_library_role_list },
                     { "access_ids[]": this.access_library_role_list },
                 ],
                 (fetched_permissions) => {

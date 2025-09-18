@@ -14,6 +14,8 @@ import pytest
 
 from galaxy import model
 from galaxy.managers.workflows import WorkflowContentsManager
+from galaxy.tool_util.parser.output_objects import ToolOutput
+from galaxy.tools.parameters.workflow_utils import NO_REPLACEMENT
 from galaxy.util import bunch
 from galaxy.workflow import modules
 from .workflow_support import (
@@ -57,7 +59,7 @@ def test_data_input_compute_runtime_state_default():
     state, errors = module.compute_runtime_state(module.trans, module.test_step)
     assert not errors
     assert "input" in state.inputs
-    assert state.inputs["input"] is None
+    assert state.inputs["input"] is NO_REPLACEMENT
 
 
 def test_data_input_compute_runtime_state_args():
@@ -123,17 +125,6 @@ def test_data_collection_input_connections():
     assert output["name"] == "output"
     assert output["extensions"] == ["input"]
     assert output["collection_type"] == "list:paired"
-
-
-def test_data_collection_input_config_form():
-    module = __from_step(
-        type="data_collection_input",
-        tool_inputs={
-            "collection_type": "list:paired",
-        },
-    )
-    result = module.get_config_form()
-    assert result["inputs"][0]["value"], "list:paired"
 
 
 def test_cannot_create_tool_modules_for_missing_tools():
@@ -207,7 +198,7 @@ steps:
     -   output_name: "out_file1"
 """
 
-COLLECTION_TYPE_WORKLFOW_YAML = """
+COLLECTION_TYPE_WORKFLOW_YAML = """
 steps:
   - type: "data_collection_input"
     label: "input1"
@@ -234,7 +225,7 @@ def test_subworkflow_new_inputs():
 
 
 def test_subworkflow_new_inputs_collection_type():
-    subworkflow_module = __new_subworkflow_module(COLLECTION_TYPE_WORKLFOW_YAML)
+    subworkflow_module = __new_subworkflow_module(COLLECTION_TYPE_WORKFLOW_YAML)
     inputs = subworkflow_module.get_data_inputs()
     assert inputs[0]["collection_type"] == "list:list"
 
@@ -249,6 +240,43 @@ def test_subworkflow_new_outputs():
     assert output2["name"] == "4:out_file1", output2["name"]
 
 
+def test_to_cwl():
+    hda = model.HistoryDatasetAssociation(create_dataset=True, flush=False)
+    hda.dataset.state = model.Dataset.states.OK
+    hdas = [hda]
+    hda_references = []
+    result = modules.to_cwl(hdas, hda_references, model.WorkflowStep())
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["class"] == "File"
+    assert hda_references == hdas
+
+
+def test_to_cwl_nested_collection():
+    hda = model.HistoryDatasetAssociation(create_dataset=True, flush=False)
+    hda.dataset.state = model.Dataset.states.OK
+    dc_inner = model.DatasetCollection(collection_type="list")
+    model.DatasetCollectionElement(collection=dc_inner, element_identifier="inner", element=hda)
+    dc_outer = model.DatasetCollection(collection_type="list:list")
+    model.DatasetCollectionElement(collection=dc_outer, element_identifier="outer", element=dc_inner)
+    hdca = model.HistoryDatasetCollectionAssociation(name="the collection", collection=dc_outer)
+    result = modules.to_cwl(hdca, [], model.WorkflowStep())
+    assert result["outer"][0]["class"] == "File"
+    assert result["outer"][0]["basename"] == "inner"
+
+
+def test_to_cwl_dataset_collection_element():
+    hda = model.HistoryDatasetAssociation(create_dataset=True, flush=False)
+    hda.dataset.state = model.Dataset.states.OK
+    dc_inner = model.DatasetCollection(collection_type="list")
+    model.DatasetCollectionElement(collection=dc_inner, element_identifier="inner", element=hda)
+    dc_outer = model.DatasetCollection(collection_type="list:list")
+    dce_outer = model.DatasetCollectionElement(collection=dc_outer, element_identifier="outer", element=dc_inner)
+    result = modules.to_cwl(dce_outer, [], model.WorkflowStep())
+    assert result[0]["class"] == "File"
+    assert result[0]["basename"] == "inner"
+
+
 class MapOverTestCase(NamedTuple):
     data_input: str
     step_input_def: Union[str, List[str]]
@@ -257,7 +285,7 @@ class MapOverTestCase(NamedTuple):
     steps: Dict[int, Any]
 
 
-def _construct_steps_for_map_over():
+def _construct_steps_for_map_over() -> List[MapOverTestCase]:
     test_case = MapOverTestCase
     # these are the cartesian product of
     # data_input = ['dataset', 'list', 'list:pair', 'list:list']
@@ -319,7 +347,7 @@ def _construct_steps_for_map_over():
         ("list:list", ["list", "pair"], "list:list", "list:list:list"),
     ]
     test_cases = []
-    for (data_input, step_input_def, step_output_def, expected_collection_type) in test_case_args:
+    for data_input, step_input_def, step_output_def, expected_collection_type in test_case_args:
         steps: Dict[int, Dict[str, Any]] = {
             0: _input_step(collection_type=data_input),
             1: _output_step(step_input_def=step_input_def, step_output_def=step_output_def),
@@ -391,7 +419,9 @@ def _output_step(step_input_def, step_output_def) -> Dict[str, Any]:
 @pytest.mark.parametrize("test_case", _construct_steps_for_map_over())
 def test_subworkflow_map_over_type(test_case):
     trans = MockTrans()
-    new_steps = WorkflowContentsManager(app=trans.app)._resolve_collection_type(test_case.steps)
+    new_steps = WorkflowContentsManager(app=trans.app, trs_proxy=trans.app.trs_proxy)._resolve_collection_type(
+        test_case.steps
+    )
     assert (
         new_steps[1]["outputs"][0].get("collection_type") == test_case.expected_collection_type
     ), "Expected collection_type '{}' for a '{}' input module, a '{}' input and a '{}' output, got collection_type '{}' instead".format(
@@ -415,7 +445,10 @@ def __new_subworkflow_module(workflow=TEST_WORKFLOW_YAML):
 
 
 def __assert_has_runtime_input(module, label=None, collection_type=None):
-    inputs = module.get_runtime_inputs()
+    test_step = getattr(module, "test_step", None)
+    if test_step is None:
+        test_step = mock.MagicMock()
+    inputs = module.get_runtime_inputs(test_step)
     assert len(inputs) == 1
     assert "input" in inputs
     input_param = inputs["input"]
@@ -441,6 +474,7 @@ def __from_step(**kwds):
     step = __step(**kwds)
     injector = modules.WorkflowModuleInjector(trans)
     injector.inject(step, exact_tools=False)
+    injector.compute_runtime_state(step)
     module = step.module
     module.test_step = step
     return module
@@ -466,7 +500,7 @@ def __mock_tool(
         name=id,
         inputs={},
         outputs={
-            "out_file1": bunch.Bunch(
+            "out_file1": mock.Mock(
                 collection=None,
                 format="input",
                 format_source=None,
@@ -474,12 +508,12 @@ def __mock_tool(
                 filters=[],
                 label=None,
                 output_type="data",
+                spec=ToolOutput,
             )
         },
         params_from_strings=mock.Mock(),
         check_and_update_param_values=mock.Mock(),
         to_json=_to_json,
-        assert_finalized=lambda: None,
     )
 
     return tool

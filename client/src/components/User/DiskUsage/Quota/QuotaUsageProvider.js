@@ -1,24 +1,14 @@
-import axios from "axios";
 import { SingleQueryProvider } from "components/providers/SingleQueryProvider";
-import { getAppRoot } from "onload/loadConfig";
-import { rethrowSimple } from "utils/simple-error";
-import { QuotaUsage } from "./model";
 
-// TODO: replace this with the proper provider and API call after
-// https://github.com/galaxyproject/galaxy/pull/10977 is available
+import { fetchCurrentUserQuotaSourceUsage } from "@/api/users";
 
 /**
- * Fetches the disk usage by the user across all ObjectStores.
- * @returns {Array<QuotaUsage>}
+ * Fetches the disk usage corresponding to one quota source label -
+ * or the default quota sources if the supplied label is null.
  */
-async function fetchQuotaUsage() {
-    const url = `${getAppRoot()}api/users/current`;
-    try {
-        const { data } = await axios.get(url);
-        return [new QuotaUsage(data)];
-    } catch (e) {
-        rethrowSimple(e);
-    }
+async function fetchQuotaSourceUsage({ quotaSourceLabel = null }) {
+    return fetchCurrentUserQuotaSourceUsage(quotaSourceLabel);
 }
 
-export const QuotaUsageProvider = SingleQueryProvider(fetchQuotaUsage);
+// TODO: replace provider pattern with composable
+export const QuotaSourceUsageProvider = SingleQueryProvider(fetchQuotaSourceUsage);

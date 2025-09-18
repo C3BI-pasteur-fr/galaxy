@@ -6,26 +6,25 @@ from typing import (
     List,
     Tuple,
 )
-from unittest import TestCase
 
 from galaxy.jobs.command_factory import (
     build_command,
-    PREPARE_DIRS,
     SETUP_GALAXY_FOR_METADATA,
 )
+from galaxy.model import Dataset
 from galaxy.tool_util.deps.container_classes import TRAP_KILL_CONTAINER
 from galaxy.util.bunch import Bunch
+from galaxy.util.unittest import TestCase
 
 MOCK_COMMAND_LINE = "/opt/galaxy/tools/bowtie /mnt/galaxyData/files/000/input000.dat"
 TEST_METADATA_LINE = "set_metadata_and_stuff.sh"
-TEST_FILES_PATH = "file_path"
 TEE_REDIRECT = '> "$__out" 2> "$__err"'
 RETURN_CODE_CAPTURE = "; return_code=$?; echo $return_code > galaxy_1.ec"
-CP_WORK_DIR_OUTPUTS = '; \nif [ -f "foo" ] ; then cp "foo" "bar" ; fi'
+CP_WORK_DIR_OUTPUTS = '; \nif [ -f "foo" -a -f "bar" ] ; then cp "foo" "bar" ; fi'
 
 
 class TestCommandFactory(TestCase):
-
+    maxDiff = None
     stream_stdout_stderr = False
     TEE_LOG = " "
     CAPTURE_AND_REDIRECT = f"> '../outputs/tool_stdout' 2> '../outputs/tool_stderr'{RETURN_CODE_CAPTURE}"
@@ -39,9 +38,7 @@ class TestCommandFactory(TestCase):
             assert job_wrapper == self.job_wrapper
             return self.workdir_outputs
 
-        self.runner = Bunch(
-            app=Bunch(model=Bunch(Dataset=Bunch(file_path=TEST_FILES_PATH))), get_work_dir_outputs=workdir_outputs
-        )
+        self.runner = Bunch(get_work_dir_outputs=workdir_outputs)
         self.include_metadata = False
         self.include_work_dir_outputs = True
 
@@ -64,12 +61,7 @@ class TestCommandFactory(TestCase):
         dep_commands = [". /opt/galaxy/tools/bowtie/default/env.sh"]
         self.job_wrapper.dependency_shell_commands = dep_commands
         self._assert_command_is(
-            self._surround_command(
-                "{} {}/tool_script.sh".format(
-                    self.job_wrapper.shell,
-                    self.job_wrapper.working_directory,
-                )
-            )
+            self._surround_command(f"{self.job_wrapper.shell} {self.job_wrapper.working_directory}/tool_script.sh")
         )
         self.__assert_tool_script_is(f"#!/bin/sh\n{dep_commands[0]}; {MOCK_COMMAND_LINE}")
 
@@ -105,7 +97,7 @@ class TestCommandFactory(TestCase):
         self.workdir_outputs = [("foo*bar", "foo_x_bar")]
         self._assert_command_is(
             self._surround_command(
-                MOCK_COMMAND_LINE, '; \nif [ -f "foo"*"bar" ] ; then cp "foo"*"bar" "foo_x_bar" ; fi'
+                MOCK_COMMAND_LINE, '; \nif [ -f "foo"*"bar" -a -f "foo_x_bar" ] ; then cp "foo"*"bar" "foo_x_bar" ; fi'
             )
         )
 
@@ -118,7 +110,7 @@ class TestCommandFactory(TestCase):
         self._test_set_metadata()
 
     def test_strips_trailing_semicolons(self):
-        self.job_wrapper.command_line = "%s;" % MOCK_COMMAND_LINE
+        self.job_wrapper.command_line = f"{MOCK_COMMAND_LINE};"
         self._test_set_metadata()
 
     def _test_set_metadata(self):
@@ -126,7 +118,7 @@ class TestCommandFactory(TestCase):
         self.include_work_dir_outputs = False
         self.job_wrapper.metadata_line = TEST_METADATA_LINE
         expected_command = self._surround_command(
-            MOCK_COMMAND_LINE, f"; cd '{self.job_dir}'; {SETUP_GALAXY_FOR_METADATA}{TEST_METADATA_LINE}"
+            MOCK_COMMAND_LINE, f"; cd '{self.job_dir}'; {SETUP_GALAXY_FOR_METADATA}; {TEST_METADATA_LINE}"
         )
         self._assert_command_is(expected_command)
 
@@ -145,7 +137,7 @@ class TestCommandFactory(TestCase):
         configured_kwds = self.__set_metadata_with_kwds()
         assert configured_kwds["exec_dir"] == getcwd()
         assert configured_kwds["tmp_dir"] == self.job_wrapper.working_directory
-        assert configured_kwds["dataset_files_path"] == TEST_FILES_PATH
+        assert configured_kwds["dataset_files_path"] == Dataset.file_path
         assert configured_kwds["output_fnames"] == ["output1"]
 
     def test_metadata_kwds_overrride(self):
@@ -172,10 +164,10 @@ class TestCommandFactory(TestCase):
 
     def _assert_command_is(self, expected_command, **command_kwds):
         command = self.__command(**command_kwds)
-        self.assertEqual(command, expected_command)
+        assert command == expected_command
 
     def __assert_tool_script_is(self, expected_command):
-        self.assertEqual(open(self.__tool_script).read(), expected_command)
+        assert open(self.__tool_script).read() == expected_command
 
     @property
     def __tool_script(self):
@@ -193,12 +185,11 @@ class TestCommandFactory(TestCase):
         return build_command(**kwds)
 
     def _surround_command(self, command, post_command=""):
-        command = f'''{PREPARE_DIRS};{self.TEE_LOG}{command} {self.CAPTURE_AND_REDIRECT}{post_command}; sh -c "exit $return_code"'''
+        command = f'''cd working;{self.TEE_LOG}{command} {self.CAPTURE_AND_REDIRECT}{post_command}; sh -c "exit $return_code"'''
         return command.replace("galaxy_1.ec", os.path.join(self.job_wrapper.working_directory, "galaxy_1.ec"), 1)
 
 
 class TestCommandFactoryStreamStdoutStderr(TestCommandFactory):
-
     stream_stdout_stderr = True
     TEE_LOG = """ __out="${TMPDIR:-.}/out.$$" __err="${TMPDIR:-.}/err.$$"
 mkfifo "$__out" "$__err"
@@ -234,6 +225,7 @@ class MockJobWrapper:
         self.shell = "/bin/sh"
         self.use_metadata_binary = False
         self.job_id = 1
+        self.remote_command_line = False
 
     def get_command_line(self):
         return self.command_line
@@ -251,4 +243,12 @@ class MockJobWrapper:
 
     @property
     def job_io(self):
-        return Bunch(get_output_fnames=lambda: ["output1"], check_job_script_integrity=False)
+        return Bunch(
+            get_output_fnames=lambda: ["output1"],
+            check_job_script_integrity=False,
+            version_path=None,
+        )
+
+    @property
+    def is_cwl_job(self):
+        return False

@@ -1,46 +1,48 @@
 #!/bin/sh
 
-# This script installs poetry if it's not already installed in the user account.
-# It then runs poetry inside Galaxy's root directory, potentially updating 
-# pyproject.toml and poetry.lock, and the pinned and dev requirements files.
+# This script installs uv if it's not already installed in the user account.
+# It then runs uv inside Galaxy's root directory, potentially updating
+# pyproject.toml and uv.lock, and the pinned requirements files.
 
 set -e
 
 this_directory="$(cd "$(dirname "$0")" > /dev/null && pwd)"
 
 usage() {
-    printf "Usage: %s: [-a] [pkg_spec...]\n" ${0##*/} >&2
+    printf "Usage: %s: [-p pkg]\n" "${0##*/}" >&2
 }
 
-add=
-while getopts 'a' OPTION
+pkg=
+while getopts 'p:h' OPTION
 do
     case $OPTION in
-        a) add=1
+        p) pkg="$OPTARG"
+           ;;
+        h) usage
+           exit 0
            ;;
         ?) usage
            exit 2
            ;;
     esac
 done
-shift $(($OPTIND - 1))
+shift $((OPTIND - 1))
 
-if [ -n "$add" ] && [ $# -eq 0 ]; then
-    printf "When adding (-a), you must provide at least one package specification.\n" >&2
-    usage
-    exit 2
-fi
+# Create a virtual environment in a tmp directory and install uv into it
+uv_venv=$(mktemp -d "${TMPDIR:-/tmp}/uv_venv.XXXXXXXXXX")
+python3 -m venv "${uv_venv}"
+"${uv_venv}/bin/python" -m pip install uv
+uv="${uv_venv}/bin/uv"
 
-# Install the latest version of poetry into the user account
-curl -sSL https://install.python-poetry.org | python3 -
-
-# Run poetry (this may update pyproject.toml and poetry.lock).
-if [ -z "$add" ]; then
-    poetry update -vv --lock "$@"
+# Run uv (this may update pyproject.toml and uv.lock).
+if [ -n "$pkg" ]; then
+    ${uv} lock --upgrade-package "$pkg"
 else
-    poetry add -vv --lock "$@"
+    ${uv} lock --upgrade
 fi
 
-# Update pinned requirements.
-poetry export -f requirements.txt --without-hashes --output "$this_directory/pinned-requirements.txt"
-poetry export --dev -f requirements.txt --without-hashes --output "$this_directory/dev-requirements.txt"
+# Update pinned requirements files.
+UV_EXPORT_OPTIONS='--frozen --no-annotate --no-hashes'
+${uv} export ${UV_EXPORT_OPTIONS} --no-dev > "$this_directory/pinned-requirements.txt"
+${uv} export ${UV_EXPORT_OPTIONS} --only-group=dev > "$this_directory/dev-requirements.txt"
+${uv} export ${UV_EXPORT_OPTIONS} --only-group=typecheck > "$this_directory/pinned-typecheck-requirements.txt"

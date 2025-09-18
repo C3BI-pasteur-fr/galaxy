@@ -1,11 +1,22 @@
 """Constructors for concrete tool and input source objects."""
 
 import logging
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+)
 
 from yaml import safe_load
 
 from galaxy.tool_util.loader import load_tool_with_refereces
-from galaxy.util import parse_xml_string_to_etree
+from galaxy.util import (
+    ElementTree,
+    parse_xml_string_to_etree,
+)
+from galaxy.util.path import StrPath
 from galaxy.util.yaml_util import ordered_load
 from .cwl import (
     CwlToolSource,
@@ -28,21 +39,21 @@ from ..fetcher import ToolLocationFetcher
 log = logging.getLogger(__name__)
 
 
-def build_xml_tool_source(xml_string):
+def build_xml_tool_source(xml_string: str) -> XmlToolSource:
     return XmlToolSource(parse_xml_string_to_etree(xml_string))
 
 
-def build_cwl_tool_source(yaml_string):
-    tool_proxy(tool_object=safe_load(yaml_string))
+def build_cwl_tool_source(yaml_string: str) -> CwlToolSource:
+    proxy = tool_proxy(tool_object=safe_load(yaml_string))
     # regular CwlToolSource sets basename as tool id, but that's not going to cut it in production
-    return CwlToolSource(tool_file=None, tool_id="serialized_cwl_tool", tool_proxy=tool_proxy)
+    return CwlToolSource(tool_proxy=proxy)
 
 
-def build_yaml_tool_source(yaml_string):
+def build_yaml_tool_source(yaml_string: str) -> YamlToolSource:
     return YamlToolSource(safe_load(yaml_string))
 
 
-TOOL_SOURCE_FACTORIES = {
+TOOL_SOURCE_FACTORIES: Dict[str, Callable[[str], ToolSource]] = {
     "XmlToolSource": build_xml_tool_source,
     "YamlToolSource": build_yaml_tool_source,
     "CwlToolSource": build_cwl_tool_source,
@@ -50,13 +61,13 @@ TOOL_SOURCE_FACTORIES = {
 
 
 def get_tool_source(
-    config_file=None,
-    xml_tree=None,
-    enable_beta_formats=True,
-    tool_location_fetcher=None,
-    macro_paths=None,
-    tool_source_class=None,
-    raw_tool_source=None,
+    config_file: Optional[StrPath] = None,
+    xml_tree: Optional[ElementTree] = None,
+    enable_beta_formats: bool = True,
+    tool_location_fetcher: Optional[ToolLocationFetcher] = None,
+    macro_paths: Optional[List[str]] = None,
+    tool_source_class: Optional[str] = None,
+    raw_tool_source: Optional[str] = None,
 ) -> ToolSource:
     """Return a ToolSource object corresponding to supplied source.
 
@@ -75,7 +86,9 @@ def get_tool_source(
     if tool_location_fetcher is None:
         tool_location_fetcher = ToolLocationFetcher()
 
-    config_file = tool_location_fetcher.to_tool_path(config_file)
+    assert config_file
+
+    config_file = str(tool_location_fetcher.to_tool_path(config_file))
     if not enable_beta_formats:
         tree, macro_paths = load_tool_with_refereces(config_file)
         return XmlToolSource(tree, source_path=config_file, macro_paths=macro_paths)
@@ -95,10 +108,10 @@ def get_tool_source(
         return XmlToolSource(tree, source_path=config_file, macro_paths=macro_paths)
 
 
-def get_tool_source_from_representation(tool_format, tool_representation):
+def get_tool_source_from_representation(tool_format: Optional[str], tool_representation: Dict[str, Any]):
     # TODO: make sure whatever is consuming this method uses ordered load.
     log.info("Loading dynamic tool - this is experimental - tool may not function in future.")
-    if tool_format == "GalaxyTool":
+    if tool_format in ("GalaxyTool", "GalaxyUserTool"):
         if "version" not in tool_representation:
             tool_representation["version"] = "1.0.0"  # Don't require version for embedded tools.
         return YamlToolSource(tool_representation)
@@ -106,17 +119,22 @@ def get_tool_source_from_representation(tool_format, tool_representation):
         raise Exception(f"Unknown tool representation format [{tool_format}].")
 
 
-def get_input_source(content):
+def get_input_source(content, trusted: bool = True):
     """Wrap dicts or XML elements as InputSource if needed.
 
     If the supplied content is already an InputSource object,
     it is simply returned. This allow Galaxy to uniformly
     consume using the tool input source interface.
+
+    Setting trusted to false indicates that no dynamic code should be
+    executed - no eval. This should be used for user-defined tools (in
+    the future) and for workflow inputs.
     """
     if not isinstance(content, InputSource):
         if isinstance(content, dict):
-            content = YamlInputSource(content)
+            content = YamlInputSource(content, trusted=trusted)
         else:
+            assert trusted  # trust is not implemented for XML inputs
             content = XmlInputSource(content)
     return content
 

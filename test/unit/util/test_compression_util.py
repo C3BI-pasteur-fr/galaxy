@@ -1,20 +1,21 @@
 import shutil
 import tempfile
-import unittest
 
 from galaxy.util.compression_utils import (
     CompressedFile,
     get_fileobj_raw,
 )
+from galaxy.util.unittest import TestCase
 
 
-class CompressionUtilTestCase(unittest.TestCase):
+class TestCompressionUtil(TestCase):
     def test_compression_safety(self):
         self.assert_safety("test-data/unsafe.tar", False)
         self.assert_safety("test-data/unsafe_relative_symlink.tar", False)
         self.assert_safety("test-data/unsafe.zip", False)
         self.assert_safety("test-data/4.bed.zip", True)
         self.assert_safety("test-data/testdir.tar", True)
+        self.assert_safety("test-data/testdir1.tar.gz", True)
         self.assert_safety("test-data/safetar_with_symlink.tar", True)
         self.assert_safety("test-data/safe_relative_symlink.tar", True)
 
@@ -30,10 +31,12 @@ class CompressionUtilTestCase(unittest.TestCase):
         temp_dir = tempfile.mkdtemp()
         try:
             if expected_to_be_safe:
-                CompressedFile(path).extract(temp_dir)
+                with CompressedFile(path) as cf:
+                    cf.extract(temp_dir)
             else:
                 with self.assertRaisesRegex(Exception, "is blocked"):
-                    CompressedFile(path).extract(temp_dir)
+                    with CompressedFile(path) as cf:
+                        cf.extract(temp_dir)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 

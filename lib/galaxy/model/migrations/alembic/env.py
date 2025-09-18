@@ -10,14 +10,17 @@ from alembic import context
 from alembic.script import ScriptDirectory
 from alembic.script.base import Script
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 
+from galaxy.model import Base
 from galaxy.model.migrations import (
     GXY,
+    ModelId,
     TSI,
 )
 
 config = context.config
-target_metadata = None  # Not implemented: used for autogenerate, which we don't use here.
+target_metadata = Base.metadata
 log = logging.getLogger(__name__)
 
 
@@ -56,7 +59,7 @@ def _run_migrations_invoked_via_script(run_migrations: Callable[[str], None]) ->
         if revision_str:
             if len(revision_str) > 1:
                 log.error("Please run the commmand for one revision at a time")
-            revision_str = revision_str[0]  # type: ignore[union-attr]
+            revision_str = revision_str[0]
 
     if revision_str.startswith(f"{GXY}@"):
         url = urls[GXY]
@@ -72,7 +75,7 @@ def _run_migrations_invoked_via_script(run_migrations: Callable[[str], None]) ->
     run_migrations(url)
 
 
-def _process_cmd_current(urls: Dict[str, str]) -> bool:
+def _process_cmd_current(urls: Dict[ModelId, str]) -> bool:
     if config.cmd_opts.cmd[0].__name__ == "current":  # type: ignore[union-attr]
         # Run command for each url only if urls are different; otherwise run once.
         are_urls_equal = len(set(urls.values())) == 1
@@ -109,17 +112,28 @@ def _configure_and_run_migrations_offline(url: str) -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
-    with context.begin_transaction():
-        context.run_migrations()
+    _run_migrations()
 
 
 def _configure_and_run_migrations_online(url) -> None:
     engine = create_engine(url)
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+        _run_migrations()
     engine.dispose()
+
+
+def _run_migrations():
+    with context.begin_transaction():
+        try:
+            context.run_migrations()
+        except OperationalError as error:
+            if getattr(error.orig, "pgcode", None) == "40P01":  # PostgreSQL DeadlockDetected error detected
+                msg = """A deadlock has been detected. This may be due to a database
+revision requiring exclusive access to a database object. To avoid this error, it is recommended to
+shut down all Galaxy procesess during database migration."""
+                log.error(msg)
+                raise
 
 
 def _get_url_from_config() -> str:
@@ -127,9 +141,11 @@ def _get_url_from_config() -> str:
     return cast(str, url)
 
 
-def _load_urls() -> Dict[str, str]:
-    gxy_url = context.get_x_argument(as_dictionary=True).get(f"{GXY}_url")
-    tsi_url = context.get_x_argument(as_dictionary=True).get(f"{TSI}_url")
+def _load_urls() -> Dict[ModelId, str]:
+    context_dict = cast(Dict, context.get_x_argument(as_dictionary=True))
+    gxy_url = context_dict.get(f"{GXY}_url")
+    tsi_url = context_dict.get(f"{TSI}_url")
+    assert gxy_url and tsi_url
     return {
         GXY: gxy_url,
         TSI: tsi_url,

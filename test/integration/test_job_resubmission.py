@@ -2,6 +2,7 @@
 
 import os
 
+from galaxy_test.base.populators import DatasetPopulator
 from galaxy_test.driver import integration_util
 
 SCRIPT_DIRECTORY = os.path.abspath(os.path.dirname(__file__))
@@ -24,27 +25,31 @@ JOB_RESUBMISSION_JOB_RESOURCES_CONFIG_FILE = os.path.join(
 JOB_RESUBMISSION_PULSAR_JOB_CONFIG_FILE = os.path.join(SCRIPT_DIRECTORY, "resubmission_pulsar_job_conf.xml")
 
 
-class _BaseResubmissionIntegerationTestCase(integration_util.IntegrationTestCase):
+class _BaseResubmissionIntegrationTestCase(integration_util.IntegrationTestCase):
     framework_tool_and_types = True
 
-    def _assert_job_passes(self, tool_id="exit_code_oom", resource_parameters=None):
+    def _assert_job_passes(self, tool_id="exit_code_oom", resource_parameters=None, history_id=None):
         resource_parameters = resource_parameters or {}
-        self._run_tool_test(tool_id, resource_parameters=resource_parameters)
+        self._run_tool_test(tool_id, resource_parameters=resource_parameters, test_history=history_id)
 
-    def _assert_job_fails(self, tool_id="exit_code_oom", resource_parameters=None):
+    def _assert_job_fails(self, tool_id="exit_code_oom", resource_parameters=None, history_id=None):
         resource_parameters = resource_parameters or {}
         exception_thrown = False
         try:
-            self._run_tool_test(tool_id, resource_parameters=resource_parameters)
+            self._run_tool_test(tool_id, resource_parameters=resource_parameters, test_history=history_id)
         except Exception:
             exception_thrown = True
 
         assert exception_thrown
 
 
-class JobResubmissionIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
-
+class TestJobResubmissionIntegration(_BaseResubmissionIntegrationTestCase):
     framework_tool_and_types = True
+    dataset_populator: DatasetPopulator
+
+    def setUp(self):
+        super().setUp()
+        self.dataset_populator = DatasetPopulator(self.galaxy_interactor)
 
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
@@ -53,11 +58,14 @@ class JobResubmissionIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
         config["job_resource_params_file"] = JOB_RESUBMISSION_JOB_RESOURCES_CONFIG_FILE
         config["job_runner_monitor_sleep"] = 1
         config["job_handler_monitor_sleep"] = 1
+        config["job_metrics"] = [{"type": "core"}]
+        # Can't set job_metrics_config_file to None as default location will be used otherwise
+        config["job_metrics_config_file"] = "xxx.xml"
 
     def test_retry_tools_have_resource_params(self):
         tool_show = self._get("tools/simple_constructs", data=dict(io_details=True)).json()
         tool_inputs = tool_show["inputs"]
-        input_names = map(lambda x: x["name"], tool_inputs)
+        input_names = (x["name"] for x in tool_inputs)
         assert "__job_resource" in input_names
 
     def test_job_resources(self):
@@ -74,6 +82,20 @@ class JobResubmissionIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
                 "initial_target_environment": "fails_without_resubmission",
             }
         )
+
+    def test_failure_runner_job_metrics_collected(self):
+        with self.dataset_populator.test_history() as history_id:
+            self._assert_job_fails(
+                resource_parameters={
+                    "test_name": "test_failure_runner",
+                    "initial_target_environment": "fails_without_resubmission",
+                },
+                history_id=history_id,
+            )
+            jobs = self.dataset_populator.history_jobs(history_id=history_id)
+            assert len(jobs) == 1
+            job_metrics = self.dataset_populator._get(f"/api/jobs/{jobs[0]['id']}/metrics").json()
+            assert job_metrics
 
     def test_walltime_resubmission(self):
         self._assert_job_passes(
@@ -175,8 +197,7 @@ class JobResubmissionIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
         )
 
 
-class JobResubmissionDefaultIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
-
+class TestJobResubmissionDefaultIntegration(_BaseResubmissionIntegrationTestCase):
     framework_tool_and_types = True
 
     @classmethod
@@ -190,8 +211,7 @@ class JobResubmissionDefaultIntegrationTestCase(_BaseResubmissionIntegerationTes
         self._assert_job_passes(resource_parameters={"test_name": "test_default_resubmission"})
 
 
-class JobResubmissionDynamicIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
-
+class TestJobResubmissionDynamicIntegration(_BaseResubmissionIntegrationTestCase):
     framework_tool_and_types = True
 
     @classmethod
@@ -204,7 +224,7 @@ class JobResubmissionDynamicIntegrationTestCase(_BaseResubmissionIntegerationTes
 
 
 # Verify the test tool fails if only a small amount of memory is allocated.
-class JobResubmissionSmallMemoryIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
+class TestJobResubmissionSmallMemoryIntegration(_BaseResubmissionIntegrationTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
@@ -216,7 +236,7 @@ class JobResubmissionSmallMemoryIntegrationTestCase(_BaseResubmissionIntegeratio
 
 # Verify the test tool will resubmit on failure tested above and will then pass with
 # proper resubmission condition.
-class JobResubmissionSmallMemoryResubmitsToLargeIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
+class TestJobResubmissionSmallMemoryResubmitsToLargeIntegration(_BaseResubmissionIntegrationTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
@@ -227,30 +247,36 @@ class JobResubmissionSmallMemoryResubmitsToLargeIntegrationTestCase(_BaseResubmi
 
 
 # Verify the test tool fails with an exit code issue.
-class JobResubmissionToolDetectedErrorIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
+class TestJobResubmissionToolDetectedErrorIntegration(_BaseResubmissionIntegrationTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
         config["job_config_file"] = JOB_RESUBMISSION_TOOL_DETECTED_ALWAYS_ERROR_JOB_CONFIG_FILE
 
     def test_dynamic_resubmission(self):
-        self._assert_job_fails(tool_id="exit_code_from_env")
+        # the tool test assumes that the test fails (expect_failure="true")
+        # _assert_job_passes checks if this test is successful, i.e. the tool is failing
+        # which it should if it is not resubmitted
+        self._assert_job_passes(tool_id="exit_code_from_env")
 
 
 # Verify the test tool will resubmit on failure tested above and will then pass in
 # an environment without a tool indicated error.
-class JobResubmissionToolDetectedErrorResubmitsIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
+class TestJobResubmissionToolDetectedErrorResubmitsIntegration(_BaseResubmissionIntegrationTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
         config["job_config_file"] = JOB_RESUBMISSION_TOOL_DETECTED_RESUBMIT_JOB_CONFIG_FILE
 
     def test_dynamic_resubmission(self):
-        self._assert_job_passes(tool_id="exit_code_from_env")
+        # the tool test assumes that the test fails (expect_failure="true")
+        # _assert_job_fails checks if this test fails, i.e. the tool is running
+        # successfully after the resubmit
+        self._assert_job_fails("exit_code_from_env")
 
 
 # Verify that a failure to connect to pulsar can trigger a resubmit
-class JobResubmissionPulsarIntegrationTestCase(_BaseResubmissionIntegerationTestCase):
+class TestJobResubmissionPulsarIntegration(_BaseResubmissionIntegrationTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)

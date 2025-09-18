@@ -1,30 +1,18 @@
-<template>
-    <div class="form-help form-text mt-4" v-html="formattedContent" />
-</template>
+<script setup lang="ts">
+import ToolHelpMarkdown from "./ToolHelpMarkdown.vue";
+import ToolHelpRst from "./ToolHelpRst.vue";
 
-<script>
-import $ from "jquery";
-import { getAppRoot } from "onload/loadConfig";
-
-export default {
-    props: {
-        content: {
-            type: String,
-            required: true,
-        },
-    },
-    computed: {
-        formattedContent() {
-            const $tmpl = $("<div/>").append(this.content);
-            $tmpl.find("a").attr("target", "_blank");
-            $tmpl.find("img").each(function () {
-                const img_src = $(this).attr("src");
-                if (img_src.indexOf("admin_toolshed") !== -1) {
-                    $(this).attr("src", getAppRoot() + img_src);
-                }
-            });
-            return $tmpl.html();
-        },
-    },
-};
+defineProps<{
+    format: string;
+    content: string;
+}>();
 </script>
+<template>
+    <span>
+        <ToolHelpMarkdown v-if="format == 'markdown'" :content="content" />
+        <ToolHelpRst v-else-if="format == 'restructuredtext'" :content="content" />
+        <div v-else class="form-help form-text">
+            {{ content }}
+        </div>
+    </span>
+</template>

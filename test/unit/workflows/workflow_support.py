@@ -5,12 +5,14 @@ import yaml
 from galaxy import model
 from galaxy.app_unittest_utils import galaxy_mock
 from galaxy.managers.workflows import WorkflowsManager
+from galaxy.util.bunch import Bunch
 from galaxy.workflow.modules import module_factory
 
 
 class MockTrans:
     def __init__(self):
         self.app = MockApp()
+        self.app.trs_proxy = Bunch()
         self.sa_session = self.app.model.context
         self._user = None
 
@@ -20,7 +22,7 @@ class MockTrans:
         workflow.stored_workflow = stored_workflow
         stored_workflow.user = self.user
         self.sa_session.add(stored_workflow)
-        self.sa_session.flush()
+        self.sa_session.commit()
         return stored_workflow
 
     @property
@@ -33,7 +35,7 @@ class MockTrans:
 class MockApp(galaxy_mock.MockApp):
     def __init__(self):
         super().__init__()
-        self.toolbox = MockToolbox()
+        self._toolbox = MockToolbox()
         self.workflow_manager = WorkflowsManager(self)
 
 

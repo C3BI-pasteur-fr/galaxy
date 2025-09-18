@@ -5,9 +5,9 @@ This file is meant to be relatively self contained and just used to "parse" and 
 Galaxy Markdown. Keeping things isolated to allow re-use of these utilities in other
 projects (e.g. gxformat2).
 """
+
 import re
 from typing import (
-    cast,
     Dict,
     List,
     Union,
@@ -24,36 +24,56 @@ class DynamicArguments:
 
 
 DYNAMIC_ARGUMENTS = DynamicArguments()
+SHARED_ARGUMENTS: List[str] = ["collapse"]
 VALID_ARGUMENTS: Dict[str, Union[List[str], DynamicArguments]] = {
-    "history_link": ["history_id"],
-    "history_dataset_display": ["input", "output", "history_dataset_id"],
-    "history_dataset_embedded": ["input", "output", "history_dataset_id"],
-    "history_dataset_as_image": ["input", "output", "history_dataset_id", "path"],
-    "history_dataset_peek": ["input", "output", "history_dataset_id"],
-    "history_dataset_info": ["input", "output", "history_dataset_id"],
-    "history_dataset_link": ["input", "output", "history_dataset_id", "path", "label"],
-    "history_dataset_index": ["input", "output", "history_dataset_id", "path"],
-    "history_dataset_name": ["input", "output", "history_dataset_id"],
-    "history_dataset_type": ["input", "output", "history_dataset_id"],
-    "history_dataset_collection_display": ["input", "output", "history_dataset_collection_id"],
-    "workflow_display": ["workflow_id"],
-    "job_metrics": ["step", "job_id"],
-    "job_parameters": ["step", "job_id"],
-    "tool_stderr": ["step", "job_id"],
-    "tool_stdout": ["step", "job_id"],
     "generate_galaxy_version": [],
     "generate_time": [],
-    "visualization": DYNAMIC_ARGUMENTS,
-    # Invocation Flavored Markdown
+    "history_dataset_as_image": ["history_dataset_id", "input", "invocation_id", "output", "path"],
+    "history_dataset_as_table": [
+        "compact",
+        "footer",
+        "history_dataset_id",
+        "input",
+        "invocation_id",
+        "output",
+        "path",
+        "show_column_headers",
+        "title",
+    ],
+    "history_dataset_collection_display": ["history_dataset_collection_id", "input", "invocation_id", "output"],
+    "history_dataset_display": ["history_dataset_id", "input", "invocation_id", "output"],
+    "history_dataset_embedded": ["history_dataset_id", "input", "invocation_id", "output"],
+    "history_dataset_index": ["history_dataset_id", "input", "invocation_id", "output", "path"],
+    "history_dataset_info": ["history_dataset_id", "input", "invocation_id", "output"],
+    "history_dataset_link": ["history_dataset_id", "input", "invocation_id", "output", "path", "label"],
+    "history_dataset_name": ["history_dataset_id", "input", "invocation_id", "output"],
+    "history_dataset_peek": ["history_dataset_id", "input", "invocation_id", "output"],
+    "history_dataset_type": ["history_dataset_id", "input", "invocation_id", "output"],
+    "history_link": ["history_id", "invocation_id"],
+    "instance_access_link": [],
+    "instance_citation_link": [],
+    "instance_help_link": [],
+    "instance_organization_link": [],
+    "instance_resources_link": [],
+    "instance_support_link": [],
+    "instance_terms_link": [],
+    "invocation_inputs": ["invocation_id"],
+    "invocation_outputs": ["invocation_id"],
     "invocation_time": ["invocation_id"],
-    "invocation_outputs": [],
-    "invocation_inputs": [],
+    "job_metrics": ["implicit_collection_jobs_id", "invocation_id", "job_id", "step"],
+    "job_parameters": ["footer", "implicit_collection_jobs_id", "invocation_id", "job_id", "step"],
+    "tool_stderr": ["implicit_collection_jobs_id", "invocation_id", "job_id", "step"],
+    "tool_stdout": ["implicit_collection_jobs_id", "invocation_id", "job_id", "step"],
+    "visualization": DYNAMIC_ARGUMENTS,
+    "workflow_display": ["invocation_id", "workflow_checkpoint", "workflow_id"],
+    "workflow_image": ["invocation_id", "workflow_checkpoint", "workflow_id", "size"],
+    "workflow_license": ["invocation_id", "workflow_id"],
 }
 GALAXY_FLAVORED_MARKDOWN_CONTAINERS = list(VALID_ARGUMENTS.keys())
-GALAXY_FLAVORED_MARKDOWN_CONTAINER_REGEX = r"(?P<container>%s)" % "|".join(GALAXY_FLAVORED_MARKDOWN_CONTAINERS)
+GALAXY_FLAVORED_MARKDOWN_CONTAINER_REGEX = r"(?P<container>{})".format("|".join(GALAXY_FLAVORED_MARKDOWN_CONTAINERS))
 
 ARG_VAL_REGEX = r"""[\w_\-]+|\"[^\"]+\"|\'[^\']+\'"""
-FUNCTION_ARG = r"\s*[\w\|]+\s*=\s*(?:%s)\s*" % ARG_VAL_REGEX
+FUNCTION_ARG = rf"\s*[\w\|]+\s*=\s*(?:{ARG_VAL_REGEX})\s*"
 # embed commas between arguments
 FUNCTION_MULTIPLE_ARGS = rf"(?P<firstargcall>{FUNCTION_ARG})(?P<restargcalls>(?:,{FUNCTION_ARG})*)"
 FUNCTION_MULTIPLE_ARGS_PATTERN = re.compile(FUNCTION_MULTIPLE_ARGS)
@@ -64,21 +84,29 @@ WHITE_SPACE_ONLY_PATTERN = re.compile(r"^[\s]+$")
 
 def validate_galaxy_markdown(galaxy_markdown, internal=True):
     """Validate the supplied markdown and throw an ValueError with reason if invalid."""
+
+    def invalid_line(template, line_no: int, **kwd):
+        if "line" in kwd:
+            kwd["line"] = kwd["line"].rstrip("\r\n")
+        raise ValueError(f"Invalid line {line_no + 1}: {template.format(**kwd)}")
+
+    def _validate_arg(arg_str, valid_args, line_no: int):
+        if arg_str is not None:
+            arg_name = arg_str.split("=", 1)[0].strip()
+            if arg_name not in valid_args and arg_name not in SHARED_ARGUMENTS:
+                invalid_line("Invalid argument to Galaxy directive [{argument}]", line_no, argument=arg_name)
+
     expecting_container_close_for = None
     last_line_no = 0
     function_calls = 0
-    for (line, fenced, open_fence, line_no) in _split_markdown_lines(galaxy_markdown):
+    for line, fenced, open_fence, line_no in _split_markdown_lines(galaxy_markdown):
         last_line_no = line_no
-
-        def invalid_line(template, **kwd):
-            if "line" in kwd:
-                kwd["line"] = line.rstrip("\r\n")
-            raise ValueError("Invalid line %d: %s" % (line_no + 1, template.format(**kwd)))
 
         expecting_container_close = expecting_container_close_for is not None
         if not fenced and expecting_container_close:
             invalid_line(
                 "[{line}] is not expected close line for [{expected_for}]",
+                line_no,
                 line=line,
                 expected_for=expecting_container_close_for,
             )
@@ -94,6 +122,7 @@ def validate_galaxy_markdown(galaxy_markdown, internal=True):
                 if not VALID_CONTAINER_END_PATTERN.match(line):
                     invalid_line(
                         "Invalid command close line [{line}] for [{expected_for}]",
+                        line_no,
                         line=line,
                         expected_for=expecting_container_close_for,
                     )
@@ -109,22 +138,15 @@ def validate_galaxy_markdown(galaxy_markdown, internal=True):
             if func_call_match:
                 function_calls += 1
                 if function_calls > 1:
-                    invalid_line("Only one Galaxy directive is allowed per fenced Galaxy block (```galaxy)")
+                    invalid_line("Only one Galaxy directive is allowed per fenced Galaxy block (```galaxy)", line_no)
                 container = func_call_match.group("container")
-                valid_args_raw = VALID_ARGUMENTS[container]
-                if isinstance(valid_args_raw, DynamicArguments):
+                valid_args = VALID_ARGUMENTS[container]
+                if isinstance(valid_args, DynamicArguments):
                     continue
-                valid_args = cast(List[str], valid_args_raw)
 
                 first_arg_call = func_call_match.group("firstargcall")
 
-                def _validate_arg(arg_str):
-                    if arg_str is not None:
-                        arg_name = arg_str.split("=", 1)[0].strip()
-                        if arg_name not in valid_args:
-                            invalid_line("Invalid argument to Galaxy directive [{argument}]", argument=arg_name)
-
-                _validate_arg(first_arg_call)
+                _validate_arg(first_arg_call, valid_args, line_no)
                 rest = func_call_match.group("restargcalls")
                 while rest:
                     rest = rest.strip().split(",", 1)[1]
@@ -132,12 +154,12 @@ def validate_galaxy_markdown(galaxy_markdown, internal=True):
                     if not arg_match:
                         break
                     first_arg_call = arg_match.group("firstargcall")
-                    _validate_arg(first_arg_call)
+                    _validate_arg(first_arg_call, valid_args, line_no)
                     rest = arg_match.group("restargcalls")
 
                 continue
             else:
-                invalid_line("Invalid embedded Galaxy markup line [{line}]", line=line)
+                invalid_line("Invalid embedded Galaxy markup line [{line}]", line_no, line=line)
 
         # Markdown unrelated to Galaxy object containers.
         continue

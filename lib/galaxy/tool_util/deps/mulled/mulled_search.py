@@ -3,17 +3,21 @@
 import argparse
 import json
 import logging
+import os
 import sys
 import tempfile
-from datetime import (
-    datetime,
-    timezone,
+import time
+from typing import (
+    Dict,
+    List,
 )
 
-import requests
-
 from galaxy.tool_util.deps.conda_util import CondaContext
-from galaxy.util import which
+from galaxy.util import (
+    check_github_api_response_rate_limit,
+    requests,
+    which,
+)
 from .mulled_list import get_singularity_containers
 from .util import (
     build_target,
@@ -27,7 +31,10 @@ try:
         STORED,
         TEXT,
     )
-    from whoosh.index import create_in
+    from whoosh.index import (
+        create_in,
+        open_dir,
+    )
     from whoosh.qparser import QueryParser
 except ImportError:
     Schema = TEXT = STORED = create_in = QueryParser = None
@@ -41,31 +48,63 @@ class QuaySearch:
     Tool to search within a quay organization for a given software name.
     """
 
-    def __init__(self, organization):
+    tmp_dir_prefix = "mulled_search.quay."
+
+    def __init__(self, organization, cache_time=900):
         self.index = None
         self.organization = organization
+        self.cache_time = cache_time
+
+    def paginator(self):
+        # download all information about the repositories from the
+        # given organization in self.organization
+        json_decoder = json.JSONDecoder()
+        parameters = {"public": "true", "namespace": self.organization}
+        next_page = ""
+        while next_page is not None:
+            if next_page:
+                parameters["next_page"] = next_page
+            r = requests.get(
+                QUAY_API_URL, headers={"Accept-encoding": "gzip"}, params=parameters, timeout=MULLED_SOCKET_TIMEOUT
+            )
+            r.raise_for_status()
+            decoded_request = json_decoder.decode(r.text)
+            next_page = decoded_request.get("next_page")
+            yield decoded_request
 
     def build_index(self):
         """
         Create an index to quickly examine the repositories of a given quay.io organization.
         """
-        # download all information about the repositories from the
-        # given organization in self.organization
-
-        parameters = {"public": "true", "namespace": self.organization}
-        r = requests.get(
-            QUAY_API_URL, headers={"Accept-encoding": "gzip"}, params=parameters, timeout=MULLED_SOCKET_TIMEOUT
-        )
-        tmp_dir = tempfile.mkdtemp()
-        schema = Schema(title=TEXT(stored=True), content=STORED)
-        self.index = create_in(tmp_dir, schema)
-
-        json_decoder = json.JSONDecoder()
-        decoded_request = json_decoder.decode(r.text)
-        writer = self.index.writer()
-        for repository in decoded_request["repositories"]:
-            writer.add_document(title=repository["name"], content=repository["description"])
-        writer.commit()
+        entries = []
+        uid = os.getuid()
+        now = time.time()
+        for entry in os.scandir(tempfile.gettempdir()):
+            if not entry.name.startswith(QuaySearch.tmp_dir_prefix):
+                continue
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            entry_st = entry.stat()
+            if entry_st.st_uid != uid:
+                continue
+            if entry_st.st_mtime < (now - self.cache_time):
+                continue
+            entries.append((entry_st.st_mtime, entry.path))
+        if entries:
+            tmp_dir = sorted(entries)[-1][1]
+            print(
+                f"Using existing quay.io index, remove or decrease --cache-time to rebuild: {tmp_dir}", file=sys.stderr
+            )
+            self.index = open_dir(tmp_dir)
+        else:
+            tmp_dir = tempfile.mkdtemp(prefix=QuaySearch.tmp_dir_prefix)
+            schema = Schema(title=TEXT(stored=True), content=STORED)
+            self.index = create_in(tmp_dir, schema)
+            writer = self.index.writer()
+            for decoded_request in self.paginator():
+                for repository in decoded_request["repositories"]:
+                    writer.add_document(title=repository["name"], content=repository["description"])
+            writer.commit()
 
     def search_repository(self, search_string, non_strict):
         """
@@ -89,7 +128,7 @@ class QuaySearch:
                     results_tmp = searcher.search(query)
                     results.extend(results_tmp)
 
-            out = list()
+            out = []
 
             for result in results:
                 title = result["title"]
@@ -124,7 +163,7 @@ class CondaSearch:
     def __init__(self, channel):
         self.channel = channel
 
-    def get_json(self, search_string):
+    def get_json(self, search_string) -> List[Dict[str, str]]:
         """
         Function takes search_string variable and returns results from the bioconda channel in JSON format
 
@@ -137,8 +176,16 @@ class CondaSearch:
         except Exception as e:
             logging.info(f"Search failed with: {e}")
             return []
+        header_found = False
+        lines_fields: List[List[str]] = []
+        for line in raw_out.splitlines():
+            if line.startswith("#"):
+                header_found = True
+            elif header_found:
+                lines_fields.append(line.split())
         return [
-            {"package": n.split()[0], "version": n.split()[1], "build": n.split()[2]} for n in raw_out.split("\n")[2:-1]
+            {"package": line_fields[0], "version": line_fields[1], "build": line_fields[2]}
+            for line_fields in lines_fields
         ]
 
 
@@ -146,17 +193,6 @@ class GitHubSearch:
     """
     Tool to search the GitHub bioconda-recipes repo
     """
-
-    @staticmethod
-    def _check_response_rate_limit(response):
-        if response.status_code == 403 and "API rate limit exceeded" in response.json()["message"]:
-            # It can take tens of minutes before the rate limit window resets
-            message = "GitHub API rate limit exceeded."
-            rate_limit_reset_UTC_timestamp = response.headers.get("X-RateLimit-Reset")
-            if rate_limit_reset_UTC_timestamp:
-                rate_limit_reset_datetime = datetime.fromtimestamp(int(rate_limit_reset_UTC_timestamp), tz=timezone.utc)
-                message += f" The rate limit window will reset at {rate_limit_reset_datetime.isoformat()}."
-            raise Exception(message)
 
     def get_json(self, search_string):
         """
@@ -169,7 +205,7 @@ class GitHubSearch:
             f"https://api.github.com/search/code?q={search_string}+in:path+repo:bioconda/bioconda-recipes+path:recipes",
             timeout=MULLED_SOCKET_TIMEOUT,
         )
-        self._check_response_rate_limit(response)
+        check_github_api_response_rate_limit(response)
         response.raise_for_status()
         return response.json()
 
@@ -188,7 +224,7 @@ class GitHubSearch:
             f"https://api.github.com/repos/bioconda/bioconda-recipes/contents/recipes/{search_string}",
             timeout=MULLED_SOCKET_TIMEOUT,
         )
-        self._check_response_rate_limit(response)
+        check_github_api_response_rate_limit(response)
         return response.status_code == 200
 
 
@@ -245,7 +281,6 @@ def singularity_search(search_string):
 
 
 def readable_output(json, organization="biocontainers", channel="bioconda"):
-
     # if json is empty:
     if sum(len(json[destination][results]) for destination in json for results in json[destination]) == 0:
         sys.stdout.write("No results found for that query.\n")
@@ -388,6 +423,7 @@ def main(argv=None):
         help="Autocorrection of typos activated. Lists more results but can be confusing.\
                         For too many queries quay.io blocks the request and the results can be incomplete.",
     )
+    parser.add_argument("--cache-time", type=int, default=900, help="Number of seconds to reuse cached results for")
     parser.add_argument("-j", "--json", dest="json", action="store_true", help="Returns results as JSON.")
     parser.add_argument("-s", "--search", required=True, nargs="+", help="The name of the tool(s) to search for.")
 
@@ -423,7 +459,7 @@ def main(argv=None):
 
     if "quay" in args.search_dest:
         quay_results = {}
-        quay = QuaySearch(args.organization_string)
+        quay = QuaySearch(args.organization_string, cache_time=args.cache_time)
         quay.build_index()
 
         for item in args.search:

@@ -18,6 +18,7 @@ sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), os.pa
 import galaxy
 import galaxy.app
 import galaxy.config
+from galaxy import model
 from galaxy.model.mapping import init_models_from_config
 from galaxy.objectstore import build_object_store_from_config
 from galaxy.util import (
@@ -42,9 +43,9 @@ def _init(args):
             "The database connection is empty. If you are using the default value, please uncomment that in your galaxy.yml"
         )
 
-    model = init_models_from_config(config, object_store=object_store)
+    sa_session = init_models_from_config(config, object_store=object_store).context
     return (
-        model,
+        sa_session,
         object_store,
         config,
     )
@@ -56,7 +57,7 @@ def kw_metrics(job):
 
 def round_to_2sd(number):
     if number:
-        return str(int(float("%.2g" % number)))
+        return str(int(float(f"{number:.2g}")))
     else:
         return "-1"
 
@@ -120,11 +121,10 @@ def main(argv):
         last_job_sent = -1
 
     annotate("galaxy_init", "Loading Galaxy...")
-    model, object_store, gxconfig = _init(args)
+    sa_session, object_store, gxconfig = _init(args)
 
     # Galaxy overrides our logging level.
     logging.getLogger().setLevel(getattr(logging, args.loglevel.upper()))
-    sa_session = model.context.current
     annotate("galaxy_end")
 
     # Fetch jobs COMPLETED with status OK that have not yet been sent.
@@ -263,7 +263,6 @@ def main(argv):
             datasets = {i[0]: i[1:] for i in datasets}
 
             for job_to_hda in job_to_hda_ids:
-
                 job = job_to_hda[0]  # job_id, hda_id, name
                 filetype = job_to_hda[1]  # input|output
 

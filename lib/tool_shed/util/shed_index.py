@@ -5,6 +5,10 @@ from mercurial import (
     hg,
     ui,
 )
+from sqlalchemy import (
+    false,
+    select,
+)
 from whoosh.writing import AsyncWriter
 
 import tool_shed.webapp.model.mapping as ts_mapping
@@ -33,14 +37,14 @@ def _get_or_create_index(whoosh_index_dir):
     return get_or_create_index(whoosh_index_dir, repo_schema), get_or_create_index(tool_index_dir, tool_schema)
 
 
-def build_index(whoosh_index_dir, file_path, hgweb_config_dir, dburi, **kwargs):
+def build_index(whoosh_index_dir, file_path, hgweb_config_dir, hgweb_repo_prefix, dburi, **kwargs):
     """
     Build two search indexes simultaneously
     One is for repositories and the other for tools.
 
     Returns a tuple with number of repos and tools that were indexed.
     """
-    model = ts_mapping.init(file_path, dburi, engine_options={}, create_tables=False)
+    model = ts_mapping.init(dburi, engine_options={}, create_tables=False)
     sa_session = model.session
     repo_index, tool_index = _get_or_create_index(whoosh_index_dir)
 
@@ -51,7 +55,9 @@ def build_index(whoosh_index_dir, file_path, hgweb_config_dir, dburi, **kwargs):
 
     execution_timer = ExecutionTimer()
     with repo_index.searcher() as searcher:
-        for repo in get_repos(sa_session, file_path, hgweb_config_dir, **kwargs):
+        for repo in get_repos(sa_session, file_path, hgweb_config_dir, hgweb_repo_prefix, **kwargs):
+            if repo is None:
+                continue
             tools_list = repo.pop("tools_list")
             repo_id = repo["id"]
             indexed_document = searcher.document(id=repo_id)
@@ -66,8 +72,13 @@ def build_index(whoosh_index_dir, file_path, hgweb_config_dir, dburi, **kwargs):
             repo_index_writer.add_document(**repo)
 
             #  Tools get their own index
+            tool_index_writer.delete_by_term("repo_id", repo_id)
             for tool in tools_list:
-                tool_index_writer.add_document(**tool)
+                tool_contents = tool.copy()
+                tool_contents["repo_owner_username"] = repo.get("repo_owner_username")
+                tool_contents["repo_name"] = repo.get("name")
+                tool_contents["repo_id"] = repo_id
+                tool_index_writer.add_document(**tool_contents)
                 tools_indexed += 1
 
             repos_indexed += 1
@@ -80,27 +91,17 @@ def build_index(whoosh_index_dir, file_path, hgweb_config_dir, dburi, **kwargs):
     return repos_indexed, tools_indexed
 
 
-def get_repos(sa_session, file_path, hgweb_config_dir, **kwargs):
+def get_repos(sa_session, file_path, hgweb_config_dir, hgweb_repo_prefix, **kwargs):
     """
     Load repos from DB and included tools from .xml configs.
     """
     hgwcm = hgweb_config_manager
     hgwcm.hgweb_config_dir = hgweb_config_dir
-    # Do not index deleted, deprecated, or "tool_dependency_definition" type repositories.
-    q = (
-        sa_session.query(model.Repository)
-        .filter_by(deleted=False)
-        .filter_by(deprecated=False)
-        .order_by(model.Repository.update_time.desc())
-    )
-    q = q.filter(model.Repository.type != "tool_dependency_definition")
-    for repo in q:
+    for repo in get_repositories_for_indexing(sa_session):
         category_names = []
-        for rca in sa_session.query(model.RepositoryCategoryAssociation).filter(
-            model.RepositoryCategoryAssociation.repository_id == repo.id
-        ):
-            for category in sa_session.query(model.Category).filter(model.Category.id == rca.category.id):
-                category_names.append(category.name.lower())
+        for rca in get_repo_cat_associations(sa_session, repo.id):
+            category = sa_session.get(model.Category, rca.category.id)
+            category_names.append(category.name.lower())
         categories = (",").join(category_names)
         repo_id = repo.id
         name = repo.name
@@ -113,22 +114,18 @@ def get_repos(sa_session, file_path, hgweb_config_dir, **kwargs):
 
         repo_owner_username = ""
         if repo.user_id is not None:
-            user = sa_session.query(model.User).filter(model.User.id == repo.user_id).one()
+            user = sa_session.get(model.User, repo.user_id)
             repo_owner_username = user.username.lower()
-
-        approved = "no"
-        for review in repo.reviews:
-            if review.approved == "yes":
-                approved = "yes"
-                break
 
         last_updated = pretty_print_time_interval(repo.update_time)
         full_last_updated = repo.update_time.strftime("%Y-%m-%d %I:%M %p")
 
         # Load all changesets of the repo for lineage.
-        repo_path = os.path.join(
-            hgweb_config_dir, hgwcm.get_entry(os.path.join("repos", repo.user.username, repo.name))
-        )
+        try:
+            entry = hgwcm.get_entry(os.path.join(hgweb_repo_prefix, repo.user.username, repo.name))
+        except Exception:
+            return None
+        repo_path = os.path.join(hgweb_config_dir, entry)
         hg_repo = hg.repository(ui.ui(), repo_path.encode("utf-8"))
         lineage = []
         for changeset in hg_repo.changelog:
@@ -138,7 +135,7 @@ def get_repos(sa_session, file_path, hgweb_config_dir, **kwargs):
         #  Parse all the tools within repo for a separate index.
         tools_list = []
         path = os.path.join(file_path, *directory_hash_id(repo.id))
-        path = os.path.join(path, "repo_%d" % repo.id)
+        path = os.path.join(path, f"repo_{repo.id}")
         if os.path.exists(path):
             tools_list.extend(load_one_dir(path))
             for root, dirs, _files in os.walk(path):
@@ -158,7 +155,7 @@ def get_repos(sa_session, file_path, hgweb_config_dir, **kwargs):
                 remote_repository_url=unicodify(remote_repository_url),
                 repo_owner_username=unicodify(repo_owner_username),
                 times_downloaded=unicodify(times_downloaded),
-                approved=unicodify(approved),
+                approved=unicodify("no"),
                 last_updated=unicodify(last_updated),
                 full_last_updated=unicodify(full_last_updated),
                 tools_list=tools_list,
@@ -197,3 +194,23 @@ def load_one_dir(path):
                 )
                 tools_in_dir.append(tool)
     return tools_in_dir
+
+
+def get_repositories_for_indexing(session):
+    # Do not index deleted, deprecated, or "tool_dependency_definition" type repositories.
+    Repository = model.Repository
+    stmt = (
+        select(Repository)
+        .where(Repository.deleted == false())
+        .where(Repository.deprecated == false())
+        .where(Repository.type != "tool_dependency_definition")
+        .order_by(Repository.update_time.desc())
+    )
+    return session.scalars(stmt)
+
+
+def get_repo_cat_associations(session, repository_id):
+    stmt = select(model.RepositoryCategoryAssociation).where(
+        model.RepositoryCategoryAssociation.repository_id == repository_id
+    )
+    return session.scalars(stmt)

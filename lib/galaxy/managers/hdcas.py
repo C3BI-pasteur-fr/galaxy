@@ -4,10 +4,15 @@ Manager and Serializer for HDCAs.
 HistoryDatasetCollectionAssociations (HDCAs) are datasets contained or created in a
 history.
 """
+
 import logging
-from typing import Dict
+from typing import (
+    Dict,
+    Optional,
+)
 
 from galaxy import model
+from galaxy.exceptions import RequestParameterInvalidException
 from galaxy.managers import (
     annotatable,
     base,
@@ -39,9 +44,11 @@ def stream_dataset_collection(dataset_collection_instance, upstream_mod_zip=Fals
 
 
 def write_dataset_collection(dataset_collection_instance, archive):
+    if not dataset_collection_instance.collection.populated_optimized:
+        raise RequestParameterInvalidException("Attempt to write dataset collection that has not been populated yet")
     names, hdas = get_hda_and_element_identifiers(dataset_collection_instance)
     for name, hda in zip(names, hdas):
-        if hda.state != hda.states.OK:
+        if hda.state != hda.states.OK or hda.purged or hda.dataset.purged:
             continue
         for file_path, relpath in hda.datatype.to_archive(dataset=hda, name=name):
             archive.write(file_path, relpath)
@@ -55,11 +62,10 @@ def set_collection_attributes(dataset_element, *payload):
 
 # TODO: to DatasetCollectionInstanceManager
 class HDCAManager(
-    base.ModelManager,
-    secured.AccessibleManagerMixin,
-    secured.OwnableManagerMixin,
+    base.ModelManager[model.HistoryDatasetCollectionAssociation],
+    secured.AccessibleManagerMixin[model.HistoryDatasetCollectionAssociation],
+    secured.OwnableManagerMixin[model.HistoryDatasetCollectionAssociation],
     deletable.PurgableManagerMixin,
-    taggable.TaggableManagerMixin,
     annotatable.AnnotatableManagerMixin,
 ):
     """
@@ -103,6 +109,19 @@ class HDCAManager(
     def update_attributes(self, content, payload: Dict):
         # pre-requisite checked that attributes are valid
         self.map_datasets(content, fn=lambda item, *args: set_collection_attributes(item, payload.items()))
+
+    # .... security and permissions
+    def is_owner(self, item: model.HistoryDatasetCollectionAssociation, user: Optional[model.User], **kwargs) -> bool:
+        """
+        Use history to see if current user owns HDCA.
+        """
+        history = item.history
+        assert history
+        # allow anonymous user to access current history
+        if history.user is None:
+            current_history = kwargs.get("history")
+            return current_history is not None and history == current_history
+        return history.user == user
 
 
 # serializers
@@ -272,7 +291,6 @@ class HDCASerializer(DCASerializer, taggable.TaggableSerializerMixin, annotatabl
                 "job_source_type",
                 "job_state_summary",
                 "name",
-                "type_id",
                 "deleted",
                 "visible",
                 "type",
@@ -311,10 +329,12 @@ class HDCASerializer(DCASerializer, taggable.TaggableSerializerMixin, annotatabl
                 history_id=self.app.security.encode_id(item.history_id),
                 id=self.app.security.encode_id(item.id),
                 type=self.hdca_manager.model_class.content_type,
+                context=context,
             ),
             "contents_url": self.generate_contents_url,
             "job_state_summary": self.serialize_job_state_summary,
             "elements_datatypes": self.serialize_elements_datatypes,
+            "collection_id": self.serialize_id,
         }
         self.serializers.update(serializers)
 

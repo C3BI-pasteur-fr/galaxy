@@ -1,79 +1,60 @@
-<template>
-    <b-card v-if="jobs">
-        <b-table small caption-top :items="jobsProvider" :fields="fields" primary-key="id" @row-clicked="toggleDetails">
-            <template v-slot:row-details="row">
-                <job-provider :id="row.item.id" v-slot="{ item, loading }">
-                    <div v-if="loading"><b-spinner label="Loading Job..."></b-spinner></div>
-                    <div v-else>
-                        <job-information v-if="item" :job_id="item.id" />
-                        <p></p>
-                        <job-parameters v-if="item" :job-id="item.id" :include-title="false" />
-                    </div>
-                </job-provider>
-            </template>
-            <template v-slot:cell(create_time)="data">
-                <UtcDate :date="data.value" mode="elapsed" />
-            </template>
-            <template v-slot:cell(update_time)="data">
-                <UtcDate :date="data.value" mode="elapsed" />
-            </template>
-        </b-table>
-    </b-card>
-</template>
-<script>
-import Vue from "vue";
-import BootstrapVue from "bootstrap-vue";
-import { JobProvider } from "components/providers";
-import JobInformation from "components/JobInformation/JobInformation";
-import JobParameters from "components/JobParameters/JobParameters";
-import UtcDate from "components/UtcDate";
+<script setup lang="ts">
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { BAlert, BTab, BTabs } from "bootstrap-vue";
+import { computed } from "vue";
 
-Vue.use(BootstrapVue);
+import type { JobBaseModel } from "@/api/jobs";
+import { getHeaderClass, iconClasses } from "@/composables/useInvocationGraph";
 
-export default {
-    components: {
-        UtcDate,
-        JobProvider,
-        JobParameters,
-        JobInformation,
-    },
-    props: {
-        jobs: { type: Array, required: true },
-    },
-    data() {
-        return {
-            fields: [
-                { key: "state", sortable: true },
-                { key: "update_time", label: "Updated", sortable: true },
-                { key: "create_time", label: "Created", sortable: true },
-            ],
-            toggledItems: {},
-        };
-    },
-    methods: {
-        jobsProvider(ctx, callback) {
-            // It may seem unnecessary to use a provider here, since the jobs prop
-            // is being updated externally. However we need to keep track of the
-            // _showDetails attribute which determines whether the row is shown as expanded
-            this.$watch(
-                "jobs",
-                function () {
-                    // update new jobs array with current state
-                    const toggledJobs = this.jobs.map((e) => {
-                        return { ...e, _showDetails: !!this.toggledItems[e.id] };
-                    });
-                    callback(toggledJobs);
-                },
-                { immediate: true }
-            );
-            return null;
-        },
-        toggleDetails(item) {
-            // toggle item
-            item._showDetails = !item._showDetails;
-            // update state
-            this.toggledItems[item.id] = item._showDetails;
-        },
-    },
-};
+import JobDetailsDisplayed from "../JobInformation/JobDetails.vue";
+
+interface Props {
+    jobs: JobBaseModel[];
+}
+
+const props = withDefaults(defineProps<Props>(), {
+    jobs: () => [],
+});
+
+const firstJob = computed(() => props.jobs[0]);
+const jobCount = computed(() => props.jobs.length);
+
+function getIcon(job: JobBaseModel) {
+    return iconClasses[job.state];
+}
+
+function getTabClass(job: JobBaseModel) {
+    return {
+        ...getHeaderClass(job.state),
+        "d-flex": true,
+        "text-center": true,
+    };
+}
 </script>
+
+<template>
+    <BAlert v-if="!jobCount" variant="info" show> No jobs found for this step. </BAlert>
+    <div v-else-if="jobCount === 1 && firstJob">
+        <JobDetailsDisplayed :job-id="firstJob.id" />
+    </div>
+    <BTabs v-else lazy vertical pills card nav-class="p-0" active-tab-class="p-0">
+        <BTab
+            v-for="job in jobs"
+            :key="job.id"
+            data-description="workflow invocation job"
+            :title-item-class="getTabClass(job)"
+            title-link-class="w-100">
+            <template v-slot:title>
+                {{ job.state }}
+                <FontAwesomeIcon
+                    v-if="getIcon(job)"
+                    :class="getIcon(job)?.class"
+                    :icon="getIcon(job)?.icon"
+                    :spin="getIcon(job)?.spin" />
+            </template>
+            <div>
+                <JobDetailsDisplayed :job-id="job.id" />
+            </div>
+        </BTab>
+    </BTabs>
+</template>

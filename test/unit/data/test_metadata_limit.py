@@ -30,7 +30,7 @@ def create_bed_data(sa_session, string_size):
     sa_session.add(hda)
     hda.metadata.column_names = [big_string]
     assert hda.metadata.column_names
-    sa_session.flush()
+    sa_session.commit()
     return hda
 
 

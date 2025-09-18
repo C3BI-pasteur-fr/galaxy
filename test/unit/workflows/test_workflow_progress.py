@@ -1,9 +1,14 @@
-import unittest
+from typing import cast
 
 from galaxy import model
-from galaxy.workflow.run import WorkflowProgress
+from galaxy.util.unittest import TestCase
+from galaxy.workflow.run import (
+    ModuleInjector,
+    WorkflowProgress,
+)
 from .workflow_support import (
     MockApp,
+    MockTrans,
     yaml_to_model,
 )
 
@@ -64,7 +69,7 @@ steps:
 UNSCHEDULED_STEP = object()
 
 
-class WorkflowProgressTestCase(unittest.TestCase):
+class TestWorkflowProgress(TestCase):
     def setUp(self):
         self.app = MockApp()
         self.inputs_by_step_id = {}
@@ -76,7 +81,8 @@ class WorkflowProgressTestCase(unittest.TestCase):
         self.invocation.workflow = workflow
 
     def _new_workflow_progress(self):
-        return WorkflowProgress(self.invocation, self.inputs_by_step_id, MockModuleInjector(self.progress), {})
+        mock_injector: ModuleInjector = cast(ModuleInjector, MockModuleInjector(self.progress))
+        return WorkflowProgress(self.invocation, self.inputs_by_step_id, mock_injector, {})
 
     def _set_previous_progress(self, outputs):
         for i, (step_id, step_value) in enumerate(outputs):
@@ -87,13 +93,13 @@ class WorkflowProgressTestCase(unittest.TestCase):
                 workflow_invocation_step.workflow_step_id = step_id
                 workflow_invocation_step.state = "scheduled"
                 workflow_invocation_step.workflow_step = self._step(i)
-                self.assertEqual(step_id, self._step(i).id)
+                assert step_id == self._step(i).id
                 # workflow_invocation_step.workflow_invocation = self.invocation
                 self.invocation.steps.append(workflow_invocation_step)
 
             workflow_invocation_step_state = model.WorkflowRequestStepState()
             workflow_invocation_step_state.workflow_step_id = step_id
-            workflow_invocation_step_state.value = True
+            workflow_invocation_step_state.value = {"my_param": True}
             self.invocation.step_states.append(workflow_invocation_step_state)
 
     def _step(self, index):
@@ -132,7 +138,7 @@ class WorkflowProgressTestCase(unittest.TestCase):
             "input_type": "dataset",
             "multiple": False,
         }
-        replacement = progress.replacement_for_input(self._step(2), step_dict)
+        replacement = progress.replacement_for_input(None, self._step(2), step_dict)
         assert replacement is hda
 
     def test_connect_tool_output(self):
@@ -169,7 +175,7 @@ class WorkflowProgressTestCase(unittest.TestCase):
             "input_type": "dataset",
             "multiple": False,
         }
-        replacement = progress.replacement_for_input(self._step(4), step_dict)
+        replacement = progress.replacement_for_input(None, self._step(4), step_dict)
         assert replacement is hda3
 
     # TODO: Replace multiple true HDA with HDCA
@@ -189,8 +195,9 @@ class WorkflowProgressTestCase(unittest.TestCase):
         subworkflow_invocation = self.invocation.create_subworkflow_invocation_for_step(
             self.invocation.workflow.step_by_index(1)
         )
-        self.app.model.session.add(subworkflow_invocation)
-        self.app.model.session.flush()
+        session = self.app.model.session
+        session.add(subworkflow_invocation)
+        session.commit()
         progress = self._new_workflow_progress()
         remaining_steps = progress.remaining_steps()
         (subworkflow_step, subworkflow_invocation_step) = remaining_steps[0]
@@ -214,6 +221,7 @@ class WorkflowProgressTestCase(unittest.TestCase):
             "multiple": False,
         }
         assert hda is subworkflow_progress.replacement_for_input(
+            None,
             subworkflow_cat_step,
             step_dict,
         )
@@ -223,15 +231,25 @@ class MockModuleInjector:
     def __init__(self, progress):
         self.progress = progress
 
-    def inject(self, step, step_args=None):
+    def inject(self, step, step_args=None, steps=None, **kwargs):
         step.module = MockModule(self.progress)
+
+    def inject_all(self, workflow, param_map=None, ignore_tool_missing_exception=True, **kwargs):
+        param_map = param_map or {}
+        for step in workflow.steps:
+            step_args = param_map.get(step.id, {})
+            self.inject(step, step_args=step_args)
+
+    def compute_runtime_state(self, step, step_args=None):
+        pass
 
 
 class MockModule:
     def __init__(self, progress):
         self.progress = progress
+        self.trans = MockTrans()
 
-    def decode_runtime_state(self, runtime_state):
+    def decode_runtime_state(self, step, runtime_state):
         return True
 
     def recover_mapping(self, invocation_step, progress):

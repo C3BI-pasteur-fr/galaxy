@@ -1,5 +1,13 @@
+from typing import (
+    Iterable,
+    TYPE_CHECKING,
+)
+
 from galaxy.model import DatasetCollectionElement
-from ..types import BaseDatasetCollectionType
+from . import BaseDatasetCollectionType
+
+if TYPE_CHECKING:
+    from . import DatasetInstanceMapping
 
 
 class ListDatasetCollectionType(BaseDatasetCollectionType):
@@ -7,11 +15,10 @@ class ListDatasetCollectionType(BaseDatasetCollectionType):
 
     collection_type = "list"
 
-    def __init__(self):
-        pass
-
-    def generate_elements(self, elements):
-        for identifier, element in elements.items():
+    def generate_elements(
+        self, dataset_instances: "DatasetInstanceMapping", **kwds
+    ) -> Iterable[DatasetCollectionElement]:
+        for identifier, element in dataset_instances.items():
             association = DatasetCollectionElement(
                 element=element,
                 element_identifier=identifier,

@@ -1,12 +1,12 @@
 <template>
     <div>
         <LoadingSpan v-if="loading" :message="loadingMessage" />
-        <multiselect
+        <Multiselect
             v-if="items"
             v-model="selectedItem"
-            deselect-label="Can't remove this value"
-            track-by="id"
-            label="text"
+            :deselect-label="null"
+            :track-by="trackBy"
+            :label="label"
             :options="items"
             :searchable="true"
             :allow-empty="false"
@@ -15,8 +15,8 @@
 </template>
 
 <script>
-import Multiselect from "vue-multiselect";
 import LoadingSpan from "components/LoadingSpan";
+import Multiselect from "vue-multiselect";
 
 /** A simple item selector that allows searching/filtering of the available items.
  * The items must have {id, text} properties. The `id` will be used for selection
@@ -54,9 +54,17 @@ export default {
             default: null,
         },
         /** The initially selected item. */
-        currentItemId: {
+        currentItem: {
+            type: Object,
+            default: null,
+        },
+        label: {
             type: String,
-            required: true,
+            default: "text",
+        },
+        trackBy: {
+            type: String,
+            default: "id",
         },
     },
     data() {
@@ -72,7 +80,7 @@ export default {
     },
     watch: {
         items: function () {
-            this.selectedItem = this.items.find((item) => item.id == this.currentItemId);
+            this.selectedItem = this.currentItem;
         },
     },
     methods: {

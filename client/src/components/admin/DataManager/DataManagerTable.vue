@@ -16,9 +16,9 @@
                             <b-container>
                                 <b-row align-v="center">
                                     <b-col cols="auto">
-                                        <b-button v-b-tooltip.hover :title="buttonLabel" @click="reload()">
+                                        <GButton tooltip :title="buttonLabel" @click="reload()">
                                             <span class="fa fa-sync" />
-                                        </b-button>
+                                        </GButton>
                                     </b-col>
                                     <b-col>
                                         <b>{{ dataTableName }}</b>
@@ -40,13 +40,16 @@
 </template>
 
 <script>
-import { getAppRoot } from "onload/loadConfig";
 import axios from "axios";
+import { getAppRoot } from "onload/loadConfig";
+
+import GButton from "@/components/BaseComponents/GButton.vue";
 import Alert from "components/Alert.vue";
 
 export default {
     components: {
         Alert,
+        GButton,
     },
     props: {
         name: {
@@ -74,7 +77,7 @@ export default {
             return [
                 {
                     text: "Tool Data Tables",
-                    to: "/",
+                    to: "/admin/data_manager",
                 },
                 {
                     text: this.dataTableName,
@@ -98,9 +101,7 @@ export default {
     },
     methods: {
         fields(columns) {
-            // Columns and data are given as arrays. Use each column index as field
-            // key for the table and the column values as labels
-            return columns.reduce((acc, c, i) => Object.assign(acc, { [i]: { label: c } }), {});
+            return columns.map((elem, index) => ({ key: index.toString(), label: elem }));
         },
         reload() {
             axios

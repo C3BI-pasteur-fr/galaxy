@@ -1,17 +1,70 @@
-from typing import List
+import abc
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Type,
+    TYPE_CHECKING,
+    Union,
+)
 
+from typing_extensions import TypedDict
+
+from galaxy.tool_util_models.tool_outputs import (
+    ToolOutputBoolean as ToolOutputBooleanModel,
+    ToolOutputCollection as ToolOutputCollectionModel,
+    ToolOutputCollectionStructure as ToolOutputCollectionStructureModel,
+    ToolOutputDataset as ToolOutputDataModel,
+    ToolOutputFloat as ToolOutputFloatModel,
+    ToolOutputInteger as ToolOutputIntegerModel,
+    ToolOutputT as ToolOutputModel,
+    ToolOutputText as ToolOutputTextModel,
+)
+from galaxy.util import Element
 from galaxy.util.dictifiable import Dictifiable
-from .output_actions import ToolOutputActionGroup
+from .output_actions import (
+    ToolOutputActionApp,
+    ToolOutputActionGroup,
+)
 from .output_collection_def import (
     dataset_collector_descriptions_from_output_dict,
     DatasetCollectionDescription,
 )
 
+if TYPE_CHECKING:
+    from galaxy.tool_util.parser import ToolSource
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeIs  # Supported only under Python >=3.8
+
+
+class ChangeFormatModel(TypedDict):
+    value: Optional[str]
+    format: Optional[str]
+    input: Optional[str]
+    input_dataset: Optional[str]
+    check_attribute: Optional[str]
+
 
 class ToolOutputBase(Dictifiable):
-    def __init__(self, name, label=None, filters=None, hidden=False, from_expression=None):
+    name: str
+    label: Optional[str]
+    hidden: bool
+
+    def __init__(
+        self,
+        name: str,
+        output_type: str,
+        label: Optional[str] = None,
+        filters: Optional[List[Element]] = None,
+        hidden: bool = False,
+        from_expression: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self.name = name
+        self.output_type = output_type
         self.label = label
         self.filters = filters or []
         self.hidden = hidden
@@ -24,6 +77,9 @@ class ToolOutputBase(Dictifiable):
     @property
     def output_discover_patterns(self) -> List[str]:
         return []
+
+    @abc.abstractmethod
+    def to_model(self) -> ToolOutputModel: ...
 
 
 class ToolOutput(ToolOutputBase):
@@ -50,20 +106,21 @@ class ToolOutput(ToolOutputBase):
 
     def __init__(
         self,
-        name,
-        format=None,
-        format_source=None,
-        metadata_source=None,
-        parent=None,
-        label=None,
-        filters=None,
-        actions=None,
-        hidden=False,
-        implicit=False,
-        from_expression=None,
-    ):
-        super().__init__(name, label=label, filters=filters, hidden=hidden, from_expression=from_expression)
-        self.output_type = "data"
+        name: str,
+        format: Optional[str] = None,
+        format_source: Optional[str] = None,
+        metadata_source: Optional[str] = None,
+        parent: Optional[str] = None,
+        label: Optional[str] = None,
+        filters: Optional[List[Element]] = None,
+        actions: Optional[ToolOutputActionGroup] = None,
+        hidden: bool = False,
+        implicit: bool = False,
+        from_expression: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            name, output_type="data", label=label, filters=filters, hidden=hidden, from_expression=from_expression
+        )
         self.format = format
         self.format_source = format_source
         self.metadata_source = metadata_source
@@ -71,14 +128,16 @@ class ToolOutput(ToolOutputBase):
         self.actions = actions
 
         # Initialize default values
-        self.change_format = []
+        self.change_format: List[ChangeFormatModel] = []
         self.implicit = implicit
-        self.from_work_dir = None
+        self.from_work_dir: Optional[str] = None
         self.dataset_collector_descriptions: List[DatasetCollectionDescription] = []
+        self.default_identifier_source: Optional[str] = None
+        self.count: Optional[int] = None
 
     # Tuple emulation
 
-    def __len__(self):
+    def __len__(self) -> int:
         return 3
 
     def __getitem__(self, index):
@@ -102,26 +161,42 @@ class ToolOutput(ToolOutputBase):
             as_dict["edam_format"] = edam_format
             edam_data = app.datatypes_registry.edam_data.get(self.format)
             as_dict["edam_data"] = edam_data
-        as_dict["discover_datasets"] = list(map(lambda d: d.to_dict(), self.dataset_collector_descriptions))
+        if self.dataset_collector_descriptions:
+            as_dict["discover_datasets"] = [d.to_dict() for d in self.dataset_collector_descriptions]
+        else:
+            as_dict["discover_datasets"] = []
         return as_dict
 
+    def to_model(self) -> ToolOutputDataModel:
+        return ToolOutputDataModel(
+            type="data",
+            name=self.name,
+            label=self.label,
+            hidden=self.hidden,
+            format=self.format,
+            format_source=self.format_source,
+            metadata_source=self.metadata_source,
+            discover_datasets=[d.to_model() for d in self.dataset_collector_descriptions],
+            from_work_dir=self.from_work_dir,
+        )
+
     @staticmethod
-    def from_dict(name, output_dict, tool=None):
+    def from_dict(name: str, output_dict: Dict[str, Any], app: Optional[ToolOutputActionApp] = None) -> "ToolOutput":
         output = ToolOutput(name)
-        output.format = output_dict.get("format", "data")
+        output.format = output_dict.get("format") or "data"
         output.change_format = []
-        output.format_source = output_dict.get("format_source", None)
-        output.default_identifier_source = output_dict.get("default_identifier_source", None)
-        output.metadata_source = output_dict.get("metadata_source", "")
-        output.parent = output_dict.get("parent", None)
-        output.label = output_dict.get("label", None)
+        output.format_source = output_dict.get("format_source")
+        output.default_identifier_source = output_dict.get("default_identifier_source")
+        output.metadata_source = output_dict.get("metadata_source")
+        output.parent = output_dict.get("parent")
+        output.label = output_dict.get("label")
         output.count = output_dict.get("count", 1)
         output.filters = []
-        output.tool = tool
-        output.from_work_dir = output_dict.get("from_work_dir", None)
-        output.hidden = output_dict.get("hidden", "")
+        output.from_work_dir = output_dict.get("from_work_dir")
+        output.hidden = output_dict.get("hidden") or False
         # TODO: implement tool output action group fixes
-        output.actions = ToolOutputActionGroup(output, None)
+        if app is not None:
+            output.actions = ToolOutputActionGroup(app, None)
         output.dataset_collector_descriptions = dataset_collector_descriptions_from_output_dict(output_dict)
         return output
 
@@ -132,10 +207,10 @@ class ToolOutput(ToolOutputBase):
 
 class ToolExpressionOutput(ToolOutputBase):
     dict_collection_visible_keys = ("name", "format", "label", "hidden", "output_type")
+    path: Optional[str]
 
     def __init__(self, name, output_type, from_expression, label=None, filters=None, actions=None, hidden=False):
-        super().__init__(name, label=label, filters=filters, hidden=hidden)
-        self.output_type = output_type  # JSON type...
+        super().__init__(name, output_type=output_type, label=label, filters=filters, hidden=hidden)
         self.from_expression = from_expression
         self.format = "expression.json"  # galaxy.datatypes.text.ExpressionJson.file_ext
 
@@ -148,6 +223,33 @@ class ToolExpressionOutput(ToolOutputBase):
         self.change_format = []
         self.implicit = False
         self.from_work_dir = None
+
+        self.dataset_collector_descriptions = []
+
+    def to_model(self) -> ToolOutputModel:
+        model_class: Union[
+            Type[ToolOutputIntegerModel],
+            Type[ToolOutputFloatModel],
+            Type[ToolOutputBooleanModel],
+            Type[ToolOutputTextModel],
+        ]
+        model_type = self.output_type
+        if self.output_type == "integer":
+            model_class = ToolOutputIntegerModel
+        elif self.output_type == "float":
+            model_class = ToolOutputFloatModel
+        elif self.output_type == "bool":
+            model_class = ToolOutputBooleanModel
+            model_type = "boolean"
+        elif self.output_type == "text":
+            model_class = ToolOutputTextModel
+        assert model_class
+        return model_class(
+            type=model_type,
+            name=self.name,
+            label=self.label,
+            hidden=self.hidden,
+        )
 
 
 class ToolOutputCollection(ToolOutputBase):
@@ -183,30 +285,29 @@ class ToolOutputCollection(ToolOutputBase):
 
     def __init__(
         self,
-        name,
-        structure,
-        label=None,
-        filters=None,
-        hidden=False,
-        default_format="data",
-        default_format_source=None,
-        default_metadata_source=None,
-        inherit_format=False,
-        inherit_metadata=False,
-    ):
-        super().__init__(name, label=label, filters=filters, hidden=hidden)
-        self.output_type = "collection"
+        name: str,
+        structure: "ToolOutputCollectionStructure",
+        label: Optional[str] = None,
+        filters: Optional[List[Element]] = None,
+        hidden: bool = False,
+        default_format: str = "data",
+        default_format_source: Optional[str] = None,
+        default_metadata_source: Optional[str] = None,
+        inherit_format: bool = False,
+        inherit_metadata: bool = False,
+    ) -> None:
+        super().__init__(name, output_type="collection", label=label, filters=filters, hidden=hidden)
         self.collection = True
         self.default_format = default_format
         self.structure = structure
-        self.outputs = {}
+        self.outputs: Dict[str, ToolOutput] = {}
 
         self.inherit_format = inherit_format
         self.inherit_metadata = inherit_metadata
 
         self.metadata_source = default_metadata_source
         self.format_source = default_format_source
-        self.change_format = []  # TODO
+        self.change_format: List = []  # TODO: not implemented
 
     def known_outputs(self, inputs, type_registry):
         if self.dynamic_structure:
@@ -274,14 +375,23 @@ class ToolOutputCollection(ToolOutputBase):
         as_dict["structure"] = self.structure.to_dict()
         return as_dict
 
+    def to_model(self) -> ToolOutputCollectionModel:
+        return ToolOutputCollectionModel(
+            type="collection",
+            name=self.name,
+            label=self.label,
+            hidden=self.hidden,
+            structure=self.structure.to_model(),
+        )
+
     @staticmethod
-    def from_dict(name, output_dict, tool=None):
+    def from_dict(name: str, output_dict, app: Optional[ToolOutputActionApp] = None) -> "ToolOutputCollection":
         structure = ToolOutputCollectionStructure.from_dict(output_dict["structure"])
         rval = ToolOutputCollection(
             name,
             structure=structure,
             label=output_dict.get("label", None),
-            filters=None,
+            filters=[],
             hidden=output_dict.get("hidden", False),
             default_format=output_dict.get("default_format", "data"),
             default_format_source=output_dict.get("default_format_source", None),
@@ -296,20 +406,33 @@ class ToolOutputCollection(ToolOutputBase):
         return self.structure.output_discover_patterns
 
 
+def tool_output_is_collection(tool_output: ToolOutputBase) -> "TypeIs[ToolOutputCollection]":
+    return tool_output.collection
+
+
 class ToolOutputCollectionStructure:
+    collection_type: Optional[str]
+    collection_type_source: Optional[str]
+    collection_type_from_rules: Optional[str]
+    structured_like: Optional[str]
+    dataset_collector_descriptions: Optional[List[DatasetCollectionDescription]]
+    dynamic: bool
+
     def __init__(
         self,
-        collection_type,
-        collection_type_source=None,
-        collection_type_from_rules=None,
-        structured_like=None,
-        dataset_collector_descriptions=None,
-    ):
+        collection_type: Optional[str],
+        collection_type_source: Optional[str] = None,
+        collection_type_from_rules: Optional[str] = None,
+        structured_like: Optional[str] = None,
+        dataset_collector_descriptions: Optional[List[DatasetCollectionDescription]] = None,
+        fields=None,
+    ) -> None:
         self.collection_type = collection_type
         self.collection_type_source = collection_type_source
         self.collection_type_from_rules = collection_type_from_rules
         self.structured_like = structured_like
         self.dataset_collector_descriptions = dataset_collector_descriptions or []
+        self.fields = fields
         if collection_type and collection_type_source:
             raise ValueError("Cannot set both type and type_source on collection output.")
         if (
@@ -326,6 +449,10 @@ class ToolOutputCollectionStructure:
             raise ValueError(
                 "Cannot specify dynamic structure (discover_datasets) and collection type attributes structured_like or collection_type_from_rules."
             )
+        if collection_type == "record" and fields is None:
+            raise ValueError("If record outputs are defined, fields must be defined as well.")
+        if fields is not None and collection_type != "record":
+            raise ValueError("If fields are specified for outputs, the collection type must be record.")
         self.dynamic = bool(dataset_collector_descriptions)
 
     def collection_prototype(self, inputs, type_registry):
@@ -335,21 +462,27 @@ class ToolOutputCollectionStructure:
         else:
             collection_type = self.collection_type
             assert collection_type
-            collection_prototype = type_registry.prototype(collection_type)
+            collection_prototype = type_registry.prototype(collection_type, fields=self.fields)
             collection_prototype.collection_type = collection_type
         return collection_prototype
 
     def to_dict(self):
-        return {
-            "collection_type": self.collection_type,
-            "collection_type_source": self.collection_type_source,
-            "collection_type_from_rules": self.collection_type_from_rules,
-            "structured_like": self.structured_like,
-            "discover_datasets": [d.to_dict() for d in self.dataset_collector_descriptions],
-        }
+        return self.to_model().dict()
+
+    def to_model(self) -> ToolOutputCollectionStructureModel:
+        discover_datasets = []
+        if self.dataset_collector_descriptions:
+            discover_datasets = [d.to_model() for d in self.dataset_collector_descriptions]
+        return ToolOutputCollectionStructureModel(
+            collection_type=self.collection_type,
+            collection_type_source=self.collection_type_source,
+            collection_type_from_rules=self.collection_type_from_rules,
+            structured_like=self.structured_like,
+            discover_datasets=discover_datasets,
+        )
 
     @staticmethod
-    def from_dict(as_dict):
+    def from_dict(as_dict) -> "ToolOutputCollectionStructure":
         structure = ToolOutputCollectionStructure(
             collection_type=as_dict["collection_type"],
             collection_type_source=as_dict["collection_type_source"],
@@ -399,3 +532,13 @@ class ToolOutputCollectionPart:
     def split_output_name(name):
         assert ToolOutputCollectionPart.is_named_collection_part_name(name)
         return name.split("|__part__|")
+
+
+def from_tool_source(tool_source: "ToolSource") -> Sequence[ToolOutputModel]:
+    tool_outputs, tool_output_collections = tool_source.parse_outputs(None)
+    outputs = []
+    for tool_output in tool_outputs.values():
+        outputs.append(tool_output.to_model())
+    # for tool_output_collection in tool_output_collections.values():
+    #    outputs.append(tool_output_collection.to_model())
+    return outputs

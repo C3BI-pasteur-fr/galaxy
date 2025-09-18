@@ -32,6 +32,11 @@ inputs:
   truevalue: booltrue
   falsevalue: boolfalse
   checked: false
+- name: data_input
+  type: data
+  extensions:
+    - tabular
+    - csv
 outputs:
   out_file1:
     format: txt
@@ -42,6 +47,7 @@ class ToolApp(GalaxyDataTestApp):
     name = "galaxy"
     biotools_metadata_source = None
     job_search = None
+    is_webapp = True
 
 
 @pytest.fixture
@@ -56,7 +62,6 @@ def _deserialize(app, tool_source_class, raw_tool_source):
 
 
 def test_deserialize_xml_tool(tool_app):
-
     tool = _deserialize(tool_app, tool_source_class="XmlToolSource", raw_tool_source=XML_TOOL)
     assert tool.id == "tool_id"
     assert tool.name == "xml tool"
@@ -66,6 +71,7 @@ def test_deserialize_yaml_tool(tool_app):
     tool = _deserialize(tool_app, tool_source_class="YamlToolSource", raw_tool_source=YAML_TOOL)
     assert tool.id == "simple_constructs_y"
     assert tool.name == "simple_constructs_y"
+    assert tool.inputs["data_input"].extensions == ["tabular", "csv"]
 
 
 def test_deserialize_cwl_tool(tool_app):

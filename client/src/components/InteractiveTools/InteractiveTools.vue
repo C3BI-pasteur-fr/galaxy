@@ -1,7 +1,90 @@
+<script setup lang="ts">
+import { faExternalLinkAlt, faStop } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { storeToRefs } from "pinia";
+import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router/composables";
+
+import { useInteractiveToolsStore } from "@/stores/interactiveToolsStore";
+
+import Heading from "@/components/Common/Heading.vue";
+import UtcDate from "@/components/UtcDate.vue";
+
+const filter = ref("");
+const nInteractiveTools = ref(0);
+const router = useRouter();
+
+// Use the stores
+const interactiveToolsStore = useInteractiveToolsStore();
+
+// Get reactive refs from stores
+const { messages, activeTools } = storeToRefs(interactiveToolsStore);
+
+const fields = [
+    {
+        label: "",
+        key: "actions",
+        class: "text-center",
+    },
+    {
+        label: "Name",
+        key: "name",
+        sortable: true,
+    },
+    {
+        label: "Job Info",
+        key: "job_info",
+        sortable: true,
+    },
+    {
+        label: "Created",
+        key: "created_time",
+        sortable: true,
+    },
+    {
+        label: "Last Updated",
+        key: "last_updated",
+        sortable: true,
+    },
+];
+
+const showNotFound = computed(() => {
+    return nInteractiveTools.value === 0 && filter.value !== "" && !isActiveToolsListEmpty.value;
+});
+
+const isActiveToolsListEmpty = computed(() => {
+    return activeTools.value.length === 0;
+});
+
+const load = () => {
+    filter.value = "";
+};
+
+const filtered = (items: any[]) => {
+    nInteractiveTools.value = items.length;
+};
+
+const stopInteractiveTool = (toolId: string, toolName: string) => {
+    interactiveToolsStore.stopInteractiveTool(toolId, toolName);
+};
+
+const createId = (tagLabel: string, id: string): string => {
+    return tagLabel + "-" + id;
+};
+
+const openInteractiveTool = (toolId: string) => {
+    router.push(`/interactivetool_entry_points/${toolId}/display`);
+};
+
+onMounted(() => {
+    interactiveToolsStore.getActiveTools();
+    load();
+});
+</script>
 <template>
-    <div>
+    <div aria-labelledby="interactive-tools-heading">
         <b-alert v-for="(message, index) in messages" :key="index" :show="3" variant="danger">{{ message }}</b-alert>
-        <h2>Active Interactive Tools</h2>
+        <Heading id="interactive-tools-heading" h1 separator inline size="lg">Active Interactive Tools</Heading>
         <b-row class="mb-3">
             <b-col cols="6">
                 <b-input
@@ -18,25 +101,45 @@
             id="interactive-tool-table"
             striped
             :fields="fields"
-            :items="activeInteractiveTools"
+            :items="activeTools"
             :filter="filter"
             @filtered="filtered">
-            <template v-slot:cell(checkbox)="row">
-                <b-form-checkbox :id="createId('checkbox', row.item.id)" v-model="row.item.marked" />
+            <template v-slot:cell(actions)="row">
+                <b-button
+                    :id="createId('stop', row.item.id)"
+                    v-b-tooltip.hover
+                    variant="link"
+                    class="p-0"
+                    title="Stop this interactive tool"
+                    @click.stop="stopInteractiveTool(row.item.id, row.item.name)">
+                    <FontAwesomeIcon :icon="faStop" />
+                </b-button>
             </template>
             <template v-slot:cell(name)="row">
                 <a
                     :id="createId('link', row.item.id)"
+                    v-b-tooltip
+                    title="Open Interactive Tool"
                     :index="row.index"
-                    :href="row.item.target"
-                    target="_blank"
+                    href="#"
                     :name="row.item.name"
-                    >{{ row.item.name }}</a
-                >
+                    @click.prevent="openInteractiveTool(row.item.id)"
+                    >{{ row.item.name }}
+                </a>
+                <a
+                    v-if="row.item.target"
+                    :id="createId('external-link', row.item.id)"
+                    v-b-tooltip
+                    class="ml-2"
+                    title="Open in new tab"
+                    :href="row.item.target"
+                    target="_blank">
+                    <FontAwesomeIcon :icon="faExternalLinkAlt" />
+                </a>
             </template>
             <template v-slot:cell(job_info)="row">
-                <label v-if="row.item.active"> running </label>
-                <label v-else> stopped </label>
+                <label v-if="row.item.active"> Running </label>
+                <label v-else> Starting </label>
             </template>
             <template v-slot:cell(created_time)="row">
                 <UtcDate :date="row.item.created_time" mode="elapsed" />
@@ -50,109 +153,5 @@
             No matching entries found for: <span class="font-weight-bold">{{ filter }}</span
             >.
         </div>
-        <b-button
-            v-if="isCheckboxMarked"
-            id="stopInteractiveTool"
-            v-b-tooltip.hover.bottom
-            title="Terminate selected tools"
-            @click.stop="stopInteractiveToolSession()"
-            >Stop
-        </b-button>
     </div>
 </template>
-
-<script>
-import { getAppRoot } from "onload/loadConfig";
-import { Services } from "./services";
-import UtcDate from "components/UtcDate";
-
-export default {
-    components: {
-        UtcDate,
-    },
-    data() {
-        return {
-            error: null,
-            fields: [
-                {
-                    label: "",
-                    key: "checkbox",
-                },
-                {
-                    label: "Name",
-                    key: "name",
-                    sortable: true,
-                },
-                {
-                    label: "Job Info",
-                    key: "job_info",
-                    sortable: true,
-                },
-                {
-                    label: "Created",
-                    key: "created_time",
-                    sortable: true,
-                },
-                {
-                    label: "Last Updated",
-                    key: "last_updated",
-                    sortable: true,
-                },
-            ],
-            filter: "",
-            messages: [],
-            nInteractiveTools: 0,
-            activeInteractiveTools: [],
-        };
-    },
-    computed: {
-        showNotFound() {
-            return this.nInteractiveTools === 0 && this.filter && !this.isActiveToolsListEmpty;
-        },
-        isCheckboxMarked() {
-            return this.activeInteractiveTools.some((tool) => tool.marked);
-        },
-        isActiveToolsListEmpty() {
-            return this.activeInteractiveTools.length === 0;
-        },
-    },
-    created() {
-        this.root = getAppRoot();
-        this.services = new Services({ root: this.root });
-        this.load();
-    },
-    methods: {
-        load() {
-            this.filter = "";
-            this.services
-                .getActiveInteractiveTools()
-                .then((activeInteractiveTools) => {
-                    this.activeInteractiveTools = activeInteractiveTools;
-                })
-                .catch((error) => {
-                    this.error = error;
-                });
-        },
-        filtered: function (items) {
-            this.nInteractiveTools = items.length;
-        },
-        stopInteractiveToolSession() {
-            this.activeInteractiveTools
-                .filter((tool) => tool.marked)
-                .map((tool) =>
-                    this.services
-                        .stopInteractiveTool(tool.id)
-                        .then((response) => {
-                            this.activeInteractiveTools = this.activeInteractiveTools.filter((tool) => !tool.marked);
-                        })
-                        .catch((error) => {
-                            this.messages.push(`Failed to stop interactive tool ${tool.name}: ${error.message}`);
-                        })
-                );
-        },
-        createId(tagLabel, id) {
-            return tagLabel + "-" + id;
-        },
-    },
-};
-</script>

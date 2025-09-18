@@ -2,10 +2,11 @@
 // pass through the singleton accessors. All future code should access galaxy
 // through getGalaxyInstance, and rarely with setGalaxyInstance
 
-import { getGalaxyInstance, setGalaxyInstance } from "app";
+import config from "config";
 import { getAppRoot } from "onload/loadConfig";
 import { serverPath } from "utils/serverPath";
-import config from "config";
+
+import { getGalaxyInstance, setGalaxyInstance } from "./singleton";
 
 const galaxyStub = {
     root: getAppRoot(),
@@ -19,7 +20,7 @@ if (!window.Galaxy) {
             if (!config.testBuild === true) {
                 console.warn("accessing (get) window.Galaxy", serverPath());
             }
-            return getGalaxyInstance() || galaxyStub;
+            return (getGalaxyInstance && getGalaxyInstance()) || galaxyStub;
         },
         set: function (newValue) {
             console.warn("accessing (set) window.Galaxy", serverPath());
@@ -27,7 +28,9 @@ if (!window.Galaxy) {
         },
     });
 } else {
-    console.error("Detected redefinition of window.Galaxy -- skipping, but this should be investigated.", serverPath());
+    if (process.env.NODE_ENV != "test") {
+        console.debug("Skipping, window.Galaxy already exists.", serverPath());
+    }
 }
 
 export default window.Galaxy;

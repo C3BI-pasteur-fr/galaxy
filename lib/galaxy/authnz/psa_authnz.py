@@ -1,6 +1,9 @@
 import json
+import logging
+import time
 
-import requests
+import jwt
+from msal import ConfidentialClientApplication
 from social_core.actions import (
     do_auth,
     do_complete,
@@ -15,15 +18,20 @@ from social_core.utils import (
 from sqlalchemy.exc import IntegrityError
 
 from galaxy.exceptions import MalformedContents
-from galaxy.util import DEFAULT_SOCKET_TIMEOUT
-from ..authnz import IdentityProvider
-from ..model import (
+from galaxy.model import (
     PSAAssociation,
     PSACode,
     PSANonce,
     PSAPartial,
     UserAuthnzToken,
 )
+from galaxy.util import (
+    DEFAULT_SOCKET_TIMEOUT,
+    requests,
+)
+from . import IdentityProvider
+
+log = logging.getLogger(__name__)
 
 # key: a component name which PSA requests.
 # value: is the name of a class associated with that key.
@@ -33,16 +41,28 @@ BACKENDS = {
     "google": "social_core.backends.google_openidconnect.GoogleOpenIdConnect",
     "globus": "social_core.backends.globus.GlobusOpenIdConnect",
     "elixir": "social_core.backends.elixir.ElixirOpenIdConnect",
+    "lifescience": "social_core.backends.lifescience.LifeScienceOpenIdConnect",
+    "einfracz": "social_core.backends.einfracz.EInfraCZOpenIdConnect",
+    "nfdi": "social_core.backends.nfdi.InfraproxyOpenIdConnect",
     "okta": "social_core.backends.okta_openidconnect.OktaOpenIdConnect",
-    "azure": "social_core.backends.azuread_tenant.AzureADTenantOAuth2",
+    "azure": "social_core.backends.azuread_tenant.AzureADV2TenantOAuth2",
+    "egi_checkin": "social_core.backends.egi_checkin.EGICheckinOpenIdConnect",
+    "oidc": "social_core.backends.open_id_connect.OpenIdConnectAuth",
+    "tapis": "galaxy.authnz.tapis.TapisOAuth2",
 }
 
 BACKENDS_NAME = {
     "google": "google-openidconnect",
     "globus": "globus",
     "elixir": "elixir",
+    "lifescience": "life_science",
+    "einfracz": "e-infra_cz",
+    "nfdi": "infraproxy",
     "okta": "okta-openidconnect",
-    "azure": "azuread-tenant-oauth2",
+    "azure": "azuread-v2-tenant-oauth2",
+    "egi_checkin": "egi-checkin",
+    "oidc": "oidc",
+    "tapis": "tapis",
 }
 
 AUTH_PIPELINE = (
@@ -121,8 +141,11 @@ class PSAAuthnz(IdentityProvider):
         self.config[setting_name("AUTH_EXTRA_ARGUMENTS")] = {"access_type": "offline"}
         self.config["KEY"] = oidc_backend_config.get("client_id")
         self.config["SECRET"] = oidc_backend_config.get("client_secret")
+        self.config["TENANT_ID"] = oidc_backend_config.get("tenant_id")
         self.config["redirect_uri"] = oidc_backend_config.get("redirect_uri")
         self.config["EXTRA_SCOPES"] = oidc_backend_config.get("extra_scopes")
+        if oidc_backend_config.get("oidc_endpoint"):
+            self.config["OIDC_ENDPOINT"] = oidc_backend_config["oidc_endpoint"]
         if oidc_backend_config.get("prompt") is not None:
             self.config[setting_name("AUTH_EXTRA_ARGUMENTS")]["prompt"] = oidc_backend_config.get("prompt")
         if oidc_backend_config.get("api_url") is not None:
@@ -142,7 +165,54 @@ class PSAAuthnz(IdentityProvider):
     def _login_user(self, backend, user, social_user):
         self.config["user"] = user
 
-    def authenticate(self, trans):
+    def refresh_azure(self, user_authnz_token):
+        logging.getLogger("msal").setLevel(logging.WARN)
+        old_extra_data = user_authnz_token.extra_data
+        app = ConfidentialClientApplication(
+            self.config["KEY"],
+            self.config["SECRET"],
+            authority="https://login.microsoftonline.com/" + self.config["TENANT_ID"],
+        )
+        extra_data = app.acquire_token_by_refresh_token(
+            old_extra_data["refresh_token"], scopes=["https://graph.microsoft.com/.default"]
+        )
+        decoded_token = jwt.decode(extra_data["id_token"], options={"verify_signature": False})
+        if "auth_time" not in extra_data:
+            extra_data["auth_time"] = decoded_token["iat"]
+        expires = decoded_token["exp"]
+        extra_data["expires"] = int(expires - time.time())
+        user_authnz_token.set_extra_data(extra_data)
+
+    def refresh(self, trans, user_authnz_token):
+        if (
+            not user_authnz_token
+            or not user_authnz_token.extra_data
+            or "refresh_token" not in user_authnz_token.extra_data
+        ):
+            return False
+        # refresh tokens if they reached their half lifetime
+        if "expires" in user_authnz_token.extra_data:
+            expires = user_authnz_token.extra_data["expires"]
+        elif "expires_in" in user_authnz_token.extra_data:
+            expires = user_authnz_token.extra_data["expires_in"]
+        else:
+            log.debug("No `expires` or `expires_in` key found in token extra data, cannot refresh")
+            return False
+        if (
+            int(user_authnz_token.extra_data["auth_time"]) + int(expires) / 2
+            <= int(time.time())
+            < int(user_authnz_token.extra_data["auth_time"]) + int(expires)
+        ):
+            on_the_fly_config(trans.sa_session)
+            if self.config["provider"] == "azure":
+                self.refresh_azure(user_authnz_token)
+            else:
+                strategy = Strategy(trans.request, trans.session, Storage, self.config)
+                user_authnz_token.refresh_token(strategy)
+            return True
+        return False
+
+    def authenticate(self, trans, idphint=None):
         on_the_fly_config(trans.sa_session)
         strategy = Strategy(trans.request, trans.session, Storage, self.config)
         backend = self._load_backend(strategy, self.config["redirect_uri"])
@@ -170,9 +240,10 @@ class PSAAuthnz(IdentityProvider):
             user=trans.user,
             state=state_token,
         )
+
         return redirect_url, self.config.get("user", None)
 
-    def disconnect(self, provider, trans, disconnect_redirect_url=None, association_id=None):
+    def disconnect(self, provider, trans, disconnect_redirect_url=None, email=None, association_id=None):
         on_the_fly_config(trans.sa_session)
         self.config[setting_name("DISCONNECT_REDIRECT_URL")] = (
             disconnect_redirect_url if disconnect_redirect_url is not None else ()
@@ -244,19 +315,6 @@ class Strategy(BaseStrategy):
 
     def render_html(self, tpl=None, html=None, context=None):
         raise NotImplementedError("Not implemented.")
-
-    def start(self):
-        self.clean_partial_pipeline()
-        if self.backend.uses_redirect():
-            return self.redirect(self.backend.auth_url())
-        else:
-            return self.html(self.backend.auth_html())
-
-    def complete(self, *args, **kwargs):
-        return self.backend.auth_complete(*args, **kwargs)
-
-    def continue_pipeline(self, *args, **kwargs):
-        return self.backend.continue_pipeline(*args, **kwargs)
 
 
 class Storage:
@@ -438,4 +496,4 @@ def disconnect(
     sa_session.delete(user_authnz)
     # option B
     # user_authnz.extra_data = None
-    sa_session.flush()
+    sa_session.commit()

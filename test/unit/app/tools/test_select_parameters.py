@@ -3,11 +3,12 @@ from unittest.mock import Mock
 import pytest
 
 from galaxy import model
-from galaxy.tools.parameters import basic
+from galaxy.tools.parameters.options import ParameterOption
+from galaxy.tools.parameters.workflow_utils import RuntimeValue
 from .util import BaseParameterTestCase
 
 
-class SelectToolParameterTestCase(BaseParameterTestCase):
+class TestSelectToolParameter(BaseParameterTestCase):
     def test_validated_values(self):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
         with pytest.raises(ValueError) as exc_info:
@@ -35,30 +36,38 @@ class SelectToolParameterTestCase(BaseParameterTestCase):
         self.options_xml = """<options><filter type="data_meta" ref="input_bam" key="dbkey"/></options>"""
         self.trans.workflow_building_mode = True
         assert isinstance(
-            self.param.from_json(model.HistoryDatasetAssociation(), self.trans, {"input_bam": basic.RuntimeValue()}),
+            self.param.from_json(model.HistoryDatasetAssociation(), self.trans, {"input_bam": RuntimeValue()}),
             model.HistoryDatasetAssociation,
         )
 
     def test_filter_param_value(self):
         self.options_xml = """<options from_data_table="test_table"><filter type="param_value" ref="input_bam" column="0" /></options>"""
-        assert ("testname1", "testpath1", False) in self.param.get_options(self.trans, {"input_bam": "testname1"})
-        assert ("testname2", "testpath2", False) in self.param.get_options(self.trans, {"input_bam": "testname2"})
+        assert ParameterOption("testname1", "testpath1", False) in self.param.get_options(
+            self.trans, {"input_bam": "testname1"}
+        )
+        assert ParameterOption("testname2", "testpath2", False) in self.param.get_options(
+            self.trans, {"input_bam": "testname2"}
+        )
         assert len(self.param.get_options(self.trans, {"input_bam": "testname3"})) == 0
 
     def test_filter_param_value2(self):
         # Same test as above, but filtering on a different column.
         self.options_xml = """<options from_data_table="test_table"><filter type="param_value" ref="input_bam" column="1" /></options>"""
-        assert ("testname1", "testpath1", False) in self.param.get_options(self.trans, {"input_bam": "testpath1"})
-        assert ("testname2", "testpath2", False) in self.param.get_options(self.trans, {"input_bam": "testpath2"})
+        assert ParameterOption("testname1", "testpath1", False) in self.param.get_options(
+            self.trans, {"input_bam": "testpath1"}
+        )
+        assert ParameterOption("testname2", "testpath2", False) in self.param.get_options(
+            self.trans, {"input_bam": "testpath2"}
+        )
         assert len(self.param.get_options(self.trans, {"input_bam": "testpath3"})) == 0
 
-    # TODO: Good deal of overlap here with DataToolParameterTestCase,
-    # refactor.
+    # TODO: Good deal of overlap here with TestDataToolParameter, refactor.
     def setUp(self):
         super().setUp()
         self.test_history = model.History()
-        self.app.model.context.add(self.test_history)
-        self.app.model.context.flush()
+        session = self.app.model.context
+        session.add(self.test_history)
+        session.commit()
         self.app.tool_data_tables["test_table"] = MockToolDataTable()
         self.trans = Mock(
             app=self.app,
@@ -66,6 +75,7 @@ class SelectToolParameterTestCase(BaseParameterTestCase):
             get_current_user_roles=lambda: [],
             workflow_building_mode=False,
             webapp=Mock(name="galaxy"),
+            user=None,
         )
         self.type = "select"
         self.set_data_ref = False
@@ -87,8 +97,7 @@ class SelectToolParameterTestCase(BaseParameterTestCase):
             data_ref_text = ""
             if self.set_data_ref:
                 data_ref_text = 'data_ref="input_bam"'
-            template_xml = """<param name="my_name" type="%s" %s %s %s>%s</param>"""
-            param_str = template_xml % (self.type, data_ref_text, multi_text, optional_text, options_text)
+            param_str = f"""<param name="my_name" type="{self.type}" {data_ref_text} {multi_text} {optional_text}>{options_text}</param>"""
             self._param = self._parameter_for(xml=param_str)
 
         return self._param

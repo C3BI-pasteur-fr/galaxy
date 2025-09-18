@@ -1,5 +1,13 @@
 import datetime
 import uuid
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Optional,
+)
+
+ValueMapperT = Dict[str, Callable]
 
 
 def dict_for(obj, **kwds):
@@ -7,12 +15,18 @@ def dict_for(obj, **kwds):
     return dict(model_class=obj.__class__.__name__, **kwds)
 
 
-class Dictifiable:
-    """Mixin that enables objects to be converted to dictionaries. This is useful
-    when for sharing objects across boundaries, such as the API, tool scripts,
-    and JavaScript code."""
+class UsesDictVisibleKeys:
+    """Mixin used to implement to_dict methods that consume dict_{view}_visible_keys to produce dicts.
 
-    def to_dict(self, view="collection", value_mapper=None):
+    For typical to_dict methods that just consume a view and value mapper use the Dictifable mixin instead
+    of this more low level mixin, but if you want to consume other things in your to_dict method that
+    are incompatible (such as required arguments) - inherit this lower level mixin and implement a custom
+    to_dict with whatever signature makes sense for the class.
+    """
+
+    def _dictify_view_keys(
+        self, view: str = "collection", value_mapper: Optional[ValueMapperT] = None
+    ) -> Dict[str, Any]:
         """
         Return item dictionary.
         """
@@ -29,11 +43,12 @@ class Dictifiable:
             try:
                 return item.to_dict(view=view, value_mapper=value_mapper)
             except Exception:
+                assert value_mapper is not None
                 if key in value_mapper:
-                    return value_mapper.get(key)(item)
-                if type(item) == datetime.datetime:
+                    return value_mapper[key](item)
+                if isinstance(item, datetime.datetime):
                     return item.isoformat()
-                elif type(item) == uuid.UUID:
+                elif isinstance(item, uuid.UUID):
                     return str(item)
                 # Leaving this for future reference, though we may want a more
                 # generic way to handle special type mappings going forward.
@@ -63,3 +78,15 @@ class Dictifiable:
                 rval[key] = None
 
         return rval
+
+
+class Dictifiable(UsesDictVisibleKeys):
+    """Mixin that enables objects to be converted to dictionaries. This is useful
+    when for sharing objects across boundaries, such as the API, tool scripts,
+    and JavaScript code."""
+
+    def to_dict(self, view: str = "collection", value_mapper: Optional[ValueMapperT] = None) -> Dict[str, Any]:
+        """
+        Return item dictionary.
+        """
+        return self._dictify_view_keys(view=view, value_mapper=value_mapper)

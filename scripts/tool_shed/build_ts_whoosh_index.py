@@ -40,13 +40,14 @@ def parse_arguments():
     config = ts_config.ToolShedAppConfiguration(**app_properties)
     args.dburi = config.database_connection
     args.hgweb_config_dir = config.hgweb_config_dir
+    args.hgweb_repo_prefix = config.hgweb_repo_prefix
     args.whoosh_index_dir = config.whoosh_index_dir
     args.file_path = config.file_path
     if args.debug:
         log.setLevel(logging.DEBUG)
         log.debug("Full options:")
-        for i in vars(args).items():
-            log.debug("%s: %s" % i)
+        for key, value in vars(args).items():
+            log.debug("%s: %s", key, value)
     return args
 
 

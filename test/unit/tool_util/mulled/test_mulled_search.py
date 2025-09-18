@@ -1,13 +1,13 @@
 import pytest
 
 from galaxy.tool_util.deps.mulled.mulled_search import (
-    conda_path,
     CondaSearch,
     get_package_hash,
     GitHubSearch,
     QuaySearch,
     singularity_search,
 )
+from galaxy.util.unittest_utils import skip_unless_executable
 from ..util import external_dependency_management
 
 
@@ -22,13 +22,13 @@ def test_quay_search():
 
 
 @external_dependency_management
-@pytest.mark.skipif(not conda_path, reason="requires conda on path")
+@skip_unless_executable("conda")
 def test_conda_search():
     t = CondaSearch("bioconda")
-    search1 = t.get_json("asdfasdf")
-    search2 = t.get_json("bioconductor-gosemsim")
-    assert search1 == []
-    assert all(r["package"] == "bioconductor-gosemsim" for r in search2)
+    search = t.get_json("asdfasdf")
+    assert search == []
+    search = t.get_json("bioconductor-gosemsim")
+    assert all(r["package"] == "bioconductor-gosemsim" for r in search)
 
 
 @external_dependency_management

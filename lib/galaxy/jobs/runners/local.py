@@ -1,6 +1,7 @@
 """
 Job runner plugin for executing jobs on the local system via the command line.
 """
+
 import datetime
 import logging
 import os
@@ -8,6 +9,10 @@ import subprocess
 import tempfile
 import threading
 from time import sleep
+from typing import (
+    Tuple,
+    TYPE_CHECKING,
+)
 
 from galaxy import model
 from galaxy.job_execution.output_collect import default_exit_code_file
@@ -21,6 +26,9 @@ from .util.process_groups import (
     check_pg,
     kill_pg,
 )
+
+if TYPE_CHECKING:
+    from galaxy.jobs import MinimalJobWrapper
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +57,7 @@ class LocalJobRunner(BaseJobRunner):
 
         super().__init__(app, nworkers)
 
-    def __command_line(self, job_wrapper):
+    def _command_line(self, job_wrapper: "MinimalJobWrapper") -> Tuple[str, str]:
         """ """
         command_line = job_wrapper.runner_command_line
 
@@ -82,7 +90,7 @@ class LocalJobRunner(BaseJobRunner):
         stderr = stdout = ""
 
         # command line has been added to the wrapper by prepare_job()
-        job_file, exit_code_path = self.__command_line(job_wrapper)
+        job_file, exit_code_path = self._command_line(job_wrapper)
         job_id = job_wrapper.get_id_tag()
 
         try:
@@ -163,7 +171,7 @@ class LocalJobRunner(BaseJobRunner):
             return
         pid = int(pid)
         if not check_pg(pid):
-            log.warning("stop_job(): %s: Process group %d was already dead or can't be signaled" % (job.id, pid))
+            log.warning("stop_job(): %s: Process group %d was already dead or can't be signaled", job.id, pid)
             return
         log.debug("stop_job(): %s: Terminating process group %d", job.id, pid)
         kill_pg(pid)

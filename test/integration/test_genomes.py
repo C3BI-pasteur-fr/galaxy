@@ -26,7 +26,7 @@ def get_key(has_len_file=True):
     return BUILDS_DATA[pos].split("\t")[0]
 
 
-class GenomesTestCase(integration_util.IntegrationTestCase):
+class TestGenomes(integration_util.IntegrationTestCase):
     @classmethod
     def handle_galaxy_config_kwds(cls, config):
         super().handle_galaxy_config_kwds(config)
@@ -83,8 +83,9 @@ class GenomesTestCase(integration_util.IntegrationTestCase):
             sequence = "test-value"
 
         key = get_key()
-        with patch.object(self._app.genomes, "has_reference_data", return_value=True), patch.object(
-            self._app.genomes, "_get_reference_data", return_value=RefDataMock()
+        with (
+            patch.object(self._app.genomes, "has_reference_data", return_value=True),
+            patch.object(self._app.genomes, "_get_reference_data", return_value=RefDataMock()),
         ):
             response = self._get(f"genomes/{key}/sequences")
             self._assert_status_code_is(response, 200)

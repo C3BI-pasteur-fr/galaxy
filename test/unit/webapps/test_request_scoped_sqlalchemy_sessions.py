@@ -8,13 +8,18 @@ import uuid
 import pytest
 from fastapi import FastAPI
 from fastapi.param_functions import Depends
-from httpx import AsyncClient
+from httpx import (
+    ASGITransport,
+    AsyncClient,
+)
 from starlette_context import context as request_context
 
 from galaxy.app_unittest_utils.galaxy_mock import MockApp
 from galaxy.webapps.base.api import add_request_id_middleware
 
 app = FastAPI()
+add_request_id_middleware(app)
+transport = ASGITransport(app=app)
 GX_APP = None
 
 
@@ -95,8 +100,7 @@ def assert_scoped_session_is_thread_local(gx_app):
 
 @pytest.mark.asyncio
 async def test_request_scoped_sa_session_single_request():
-    add_request_id_middleware(app)
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(base_url="http://test", transport=transport) as client:
         response = await client.get("/")
         assert response.status_code == 200
         assert response.json() == {"msg": "Hello World"}
@@ -106,8 +110,7 @@ async def test_request_scoped_sa_session_single_request():
 
 @pytest.mark.asyncio
 async def test_request_scoped_sa_session_exception():
-    add_request_id_middleware(app)
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(base_url="http://test", transport=transport) as client:
         with pytest.raises(UnexpectedException):
             await client.get("/internal_server_error")
         assert GX_APP
@@ -116,8 +119,7 @@ async def test_request_scoped_sa_session_exception():
 
 @pytest.mark.asyncio
 async def test_request_scoped_sa_session_concurrent_requests_sync():
-    add_request_id_middleware(app)
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(base_url="http://test", transport=transport) as client:
         awaitables = (client.get("/sync_wait") for _ in range(10))
         result = await asyncio.gather(*awaitables)
         uuids = []
@@ -131,8 +133,7 @@ async def test_request_scoped_sa_session_concurrent_requests_sync():
 
 @pytest.mark.asyncio
 async def test_request_scoped_sa_session_concurrent_requests_async():
-    add_request_id_middleware(app)
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(base_url="http://test", transport=transport) as client:
         awaitables = (client.get("/async_wait") for _ in range(10))
         result = await asyncio.gather(*awaitables)
         uuids = []
@@ -146,12 +147,11 @@ async def test_request_scoped_sa_session_concurrent_requests_async():
 
 @pytest.mark.asyncio
 async def test_request_scoped_sa_session_concurrent_requests_and_background_thread():
-    add_request_id_middleware(app)
     loop = asyncio.get_running_loop()
     target = functools.partial(assert_scoped_session_is_thread_local, GX_APP)
     with concurrent.futures.ThreadPoolExecutor() as pool:
         background_pool = loop.run_in_executor(pool, target)
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(base_url="http://test", transport=transport) as client:
             awaitables = (client.get("/async_wait") for _ in range(10))
             result = await asyncio.gather(*awaitables)
             uuids = []

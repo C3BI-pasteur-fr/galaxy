@@ -3,6 +3,7 @@ Execute an external process to evaluate expressions for Galaxy jobs.
 
 Galaxy should be importable on sys.path .
 """
+
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), os.pa
 warnings.filterwarnings("ignore", message=r"[\n.]DEPRECATION: Python 2", module="cwltool")
 
 try:
-    from cwltool import expression
+    from cwl_utils import expression
 except ImportError:
     expression = None  # type: ignore[assignment]
 
@@ -26,7 +27,7 @@ log = logging.getLogger(__name__)
 
 def run(environment_path=None):
     if expression is None:
-        raise Exception("Python library cwltool must be available to evaluate expressions.")
+        raise Exception("Python library cwl-utils must be available to evaluate expressions.")
 
     if environment_path is None:
         environment_path = os.environ.get("GALAXY_EXPRESSION_INPUTS")

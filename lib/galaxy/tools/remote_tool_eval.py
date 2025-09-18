@@ -12,6 +12,7 @@ from galaxy.datatypes.registry import Registry
 from galaxy.files import ConfiguredFileSources
 from galaxy.job_execution.compute_environment import SharedComputeEnvironment
 from galaxy.job_execution.setup import JobIO
+from galaxy.managers.dbkeys import GenomeBuilds
 from galaxy.metadata.set_metadata import (
     get_metadata_params,
     get_object_store,
@@ -19,15 +20,17 @@ from galaxy.metadata.set_metadata import (
 )
 from galaxy.model import store
 from galaxy.model.store import SessionlessContext
-from galaxy.objectstore import ObjectStore
+from galaxy.objectstore import BaseObjectStore
 from galaxy.structured_app import MinimalToolApp
 from galaxy.tools import (
     create_tool_from_representation,
     evaluation,
 )
-from galaxy.tools.data import ToolDataTableManager
+from galaxy.tools.data import (
+    from_dict,
+    ToolDataTableManager,
+)
 from galaxy.util.bunch import Bunch
-from galaxy.util.dbkeys import GenomeBuilds
 
 
 class ToolAppConfig(NamedTuple):
@@ -46,17 +49,19 @@ class ToolApp(MinimalToolApp):
     """Dummy App that allows loading tools"""
 
     name = "tool_app"
+    is_webapp = False
 
     def __init__(
         self,
         sa_session: SessionlessContext,
         tool_app_config: ToolAppConfig,
         datatypes_registry: Registry,
-        object_store: ObjectStore,
+        object_store: BaseObjectStore,
         tool_data_table_manager: ToolDataTableManager,
         file_sources: ConfiguredFileSources,
     ):
-        self.model = Bunch(context=sa_session)
+        # For backward compatibility we need both context and session attributes that point to sa_session.
+        self.model = Bunch(context=sa_session, session=sa_session)
         self.config = tool_app_config
         self.datatypes_registry = datatypes_registry
         self.object_store = object_store
@@ -64,9 +69,10 @@ class ToolApp(MinimalToolApp):
         self.tool_data_tables = tool_data_table_manager
         self.file_sources = file_sources
         self.biotools_metadata_source = None
+        self.security = None  # type: ignore[assignment]
 
 
-def main(TMPDIR, WORKING_DIRECTORY, IMPORT_STORE_DIRECTORY):
+def main(TMPDIR, WORKING_DIRECTORY, IMPORT_STORE_DIRECTORY) -> None:
     metadata_params = get_metadata_params(WORKING_DIRECTORY)
     datatypes_config = metadata_params["datatypes_config"]
     if not os.path.exists(datatypes_config):
@@ -74,6 +80,7 @@ def main(TMPDIR, WORKING_DIRECTORY, IMPORT_STORE_DIRECTORY):
     datatypes_registry = validate_and_load_datatypes_config(datatypes_config)
     object_store = get_object_store(WORKING_DIRECTORY)
     import_store = store.imported_store_for_metadata(IMPORT_STORE_DIRECTORY)
+    assert isinstance(import_store.sa_session, SessionlessContext)
     # TODO: clean up random places from which we read files in the working directory
     job_io = JobIO.from_json(os.path.join(IMPORT_STORE_DIRECTORY, "job_io.json"), sa_session=import_store.sa_session)
     tool_app_config = ToolAppConfig(
@@ -87,7 +94,7 @@ def main(TMPDIR, WORKING_DIRECTORY, IMPORT_STORE_DIRECTORY):
         is_admin_user=lambda _: job_io.user_context.is_admin,
     )
     with open(os.path.join(IMPORT_STORE_DIRECTORY, "tool_data_tables.json")) as data_tables_json:
-        tdtm = ToolDataTableManager.from_dict(json.load(data_tables_json))
+        tdtm = from_dict(json.load(data_tables_json))
     app = ToolApp(
         sa_session=import_store.sa_session,
         tool_app_config=tool_app_config,
@@ -108,7 +115,7 @@ def main(TMPDIR, WORKING_DIRECTORY, IMPORT_STORE_DIRECTORY):
     )
     tool_evaluator.set_compute_environment(compute_environment=SharedComputeEnvironment(job_io=job_io, job=job_io.job))
     with open(os.path.join(WORKING_DIRECTORY, "tool_script.sh"), "a") as out:
-        command_line, version_command_line, extra_filenames, environment_variables = tool_evaluator.build()
+        command_line, version_command_line, extra_filenames, environment_variables, *_ = tool_evaluator.build()
         out.write(f'{version_command_line or ""}{command_line}')
 
 

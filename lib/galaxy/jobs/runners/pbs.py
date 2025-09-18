@@ -13,7 +13,7 @@ except ImportError as exc:
     PBS_IMPORT_MESSAGE = (
         "The Python pbs-python package is required to use "
         "this feature, please install it or correct the "
-        "following error:\nImportError %s" % str(exc)
+        f"following error:\nImportError {exc}"
     )
 
 from galaxy import (
@@ -104,7 +104,7 @@ class PBSJobRunner(AsynchronousJobRunner):
 
         # Set the default server during startup
         self.__default_pbs_server = None
-        self.default_pbs_server  # this is a method with a property decorator, so this causes the default server to be set
+        self.default_pbs_server  # noqa: B018 this is a method with a property decorator, so this causes the default server to be set
 
         # Proceed with general initialization
         super().__init__(app, nworkers)
@@ -122,7 +122,7 @@ class PBSJobRunner(AsynchronousJobRunner):
         if not url:
             return
 
-        # Determine the the PBS server
+        # Determine the PBS server
         url_split = url.split("/")
         server = url_split[2]
         if server == "":
@@ -132,8 +132,7 @@ class PBSJobRunner(AsynchronousJobRunner):
 
         # Determine the queue, set the PBS destination (not the same thing as a Galaxy job destination)
         pbs_destination = f"@{server}"
-        pbs_queue = url_split[3] or None
-        if pbs_queue is not None:
+        if (pbs_queue := url_split[3] or None) is not None:
             pbs_destination = f"{pbs_queue}{pbs_destination}"
 
         params = dict(destination=pbs_destination)
@@ -238,9 +237,9 @@ class PBSJobRunner(AsynchronousJobRunner):
             return
 
         # define job attributes
-        ofile = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.o"
-        efile = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.e"
-        ecfile = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.ec"
+        ofile = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.o"
+        efile = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.e"
+        ecfile = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.ec"
 
         output_fnames = job_wrapper.job_io.get_output_fnames()
 
@@ -293,7 +292,7 @@ class PBSJobRunner(AsynchronousJobRunner):
         script = self.get_job_file(
             job_wrapper, exit_code_path=ecfile, env_setup_commands=env_setup_commands, shell=job_wrapper.shell
         )
-        job_file = f"{self.app.config.cluster_files_directory}/{job_wrapper.job_id}.sh"
+        job_file = f"{job_wrapper.working_directory}/{job_wrapper.job_id}.sh"
         self.write_executable_script(job_file, script, job_io=job_wrapper.job_io)
         # job was deleted while we were preparing it
         if job_wrapper.get_state() in (model.Job.states.DELETED, model.Job.states.STOPPED):
@@ -318,7 +317,7 @@ class PBSJobRunner(AsynchronousJobRunner):
                 pbs.pbs_disconnect(c)
                 break
             errno, text = pbs.error()
-            log.warning("(%s) pbs_submit failed (try %d/5), PBS error %d: %s" % (galaxy_job_id, tries, errno, text))
+            log.warning("(%s) pbs_submit failed (try %d/5), PBS error %d: %s", galaxy_job_id, tries, errno, text)
             time.sleep(2)
         else:
             log.error(f"({galaxy_job_id}) All attempts to submit job failed")
@@ -387,7 +386,7 @@ class PBSJobRunner(AsynchronousJobRunner):
                     else:
                         # Unhandled error, continue to monitor
                         log.info(
-                            "(%s/%s) PBS state check resulted in error (%d): %s" % (galaxy_job_id, job_id, errno, text)
+                            "(%s/%s) PBS state check resulted in error (%d): %s", galaxy_job_id, job_id, errno, text
                         )
                         new_watched.append(pbs_job_state)
                 continue
@@ -515,7 +514,7 @@ class PBSJobRunner(AsynchronousJobRunner):
         try:
             pbs_server_name = self.__get_pbs_server(job.destination_params)
             if pbs_server_name is None:
-                log.debug("(%s) Job queued but no destination stored in job params, cannot delete" % job_tag)
+                log.debug("(%s) Job queued but no destination stored in job params, cannot delete", job_tag)
                 return
             c = pbs.pbs_connect(util.smart_str(pbs_server_name))
             if c <= 0:
@@ -537,10 +536,10 @@ class PBSJobRunner(AsynchronousJobRunner):
         pbs_job_state = AsynchronousJobState(
             job_wrapper=job_wrapper,
             job_id=job_id,
-            job_file=f"{self.app.config.cluster_files_directory}/{job.id}.sh",
-            output_file=f"{self.app.config.cluster_files_directory}/{job.id}.o",
-            error_file=f"{self.app.config.cluster_files_directory}/{job.id}.e",
-            exit_code_file=f"{self.app.config.cluster_files_directory}/{job.id}.ec",
+            job_file=f"{job_wrapper.working_directory}/{job.id}.sh",
+            output_file=f"{job_wrapper.working_directory}/{job.id}.o",
+            error_file=f"{job_wrapper.working_directory}/{job.id}.e",
+            exit_code_file=f"{job_wrapper.working_directory}/{job.id}.ec",
             job_destination=job_wrapper.job_destination,
         )
         pbs_job_state.runner_url = job_wrapper.get_job_runner_url()

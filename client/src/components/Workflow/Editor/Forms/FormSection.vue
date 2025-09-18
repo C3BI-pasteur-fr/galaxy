@@ -12,13 +12,13 @@
             :value="deleteActionValue"
             title="Output cleanup"
             type="boolean"
-            help="Upon completion of this step, delete non-starred outputs from completed workflow steps if they are no longer required as inputs."
+            help="Upon completion of this step, delete unchecked outputs from completed workflow steps if they are no longer required as inputs."
             @input="onInput" />
         <FormOutput
             v-for="(output, index) in outputs"
             :key="index"
             :output-name="output.name"
-            :active-outputs="nodeActiveOutputs"
+            :step="step"
             :inputs="nodeInputs"
             :datatypes="datatypes"
             :form-data="formData"
@@ -28,8 +28,8 @@
 </template>
 
 <script>
-import FormElement from "components/Form/FormElement";
-import FormOutput from "./FormOutput";
+import FormElement from "@/components/Form/FormElement";
+import FormOutput from "@/components/Workflow/Editor/Forms/FormOutput";
 
 export default {
     components: {
@@ -38,7 +38,7 @@ export default {
     },
     props: {
         id: {
-            type: String,
+            type: Number,
             required: true,
         },
         nodeInputs: {
@@ -49,7 +49,8 @@ export default {
             type: Array,
             required: true,
         },
-        nodeActiveOutputs: {
+        step: {
+            // type Step from @/stores/workflowStepStore
             type: Object,
             required: true,
         },
@@ -93,8 +94,8 @@ export default {
     created() {
         this.setFormData();
     },
-    watch: {
-        formData() {
+    methods: {
+        postPostJobActions() {
             // The formData shape is kind of unfortunate, but it is what we have now.
             // This should be a properly nested object whose values should be retrieved and set via a store
             const postJobActions = {};
@@ -120,8 +121,6 @@ export default {
             });
             this.$emit("onChange", postJobActions);
         },
-    },
-    methods: {
         setFormData() {
             const pjas = {};
             Object.values(this.postJobActions).forEach((pja) => {
@@ -138,7 +137,6 @@ export default {
             if (pjas[this.emailPayloadKey]) {
                 pjas[this.emailActionKey] = true;
             }
-            console.debug("FormSection - Setting new data.", this.postJobActions, pjas);
             this.formData = pjas;
         },
         setEmailAction(pjas) {
@@ -164,6 +162,7 @@ export default {
             this.setEmailAction(this.formData);
             if (changed) {
                 this.formData = Object.assign({}, this.formData);
+                this.postPostJobActions();
             }
         },
         onDatatype(pjaKey, outputName, newDatatype) {

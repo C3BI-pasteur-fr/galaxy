@@ -49,19 +49,19 @@ class Tools(BaseUIController):
     def formatted(self, date, colored=False):
         splited = str(date).split(",")
         if len(splited) == 2:
-            returned = "%s %dH" % (splited[0], int(splited[1].split(":")[0]))
+            returned = "{} {}H".format(splited[0], int(splited[1].split(":")[0]))
             if colored:
                 return f'<font color="red">{returned}</font>'
             return returned
         else:
             splited = tuple(float(_) for _ in str(date).split(":"))
             if splited[0]:
-                returned = "%d h. %d min." % splited[:2]
+                returned = f"{int(splited[0])} h. {int(splited[1])} min."
                 if colored:
                     return f'<font color="orange">{returned}</font>'
                 return returned
             if splited[1]:
-                return "%d min. %d sec." % splited[1:3]
+                return f"{int(splited[1])} min. {int(splited[2])} sec."
             return f"{splited[2]:.1f} sec."
 
     @web.expose
@@ -90,19 +90,21 @@ class Tools(BaseUIController):
         data = {}
 
         # select count(id), tool_id from job where state='ok' group by tool_id;
-        tools_and_jobs_ok = sa.select(
-            (galaxy.model.Job.table.c.tool_id.label("tool"), sa.func.count(galaxy.model.Job.table.c.id).label("job")),
-            from_obj=[galaxy.model.Job.table],
-            whereclause=(galaxy.model.Job.table.c.state == "ok"),
-            group_by=["tool"],
+        tools_and_jobs_ok = (
+            sa.select(
+                galaxy.model.Job.table.c.tool_id.label("tool"), sa.func.count(galaxy.model.Job.table.c.id).label("job")
+            )
+            .where(galaxy.model.Job.table.c.state == "ok")
+            .group_by("tool")
         )
 
         # select count(id), tool_id from job where state='error' group by tool_id;
-        tools_and_jobs_error = sa.select(
-            (galaxy.model.Job.table.c.tool_id.label("tool"), sa.func.count(galaxy.model.Job.table.c.id).label("job")),
-            from_obj=[galaxy.model.Job.table],
-            whereclause=(galaxy.model.Job.table.c.state == "error"),
-            group_by=["tool"],
+        tools_and_jobs_error = (
+            sa.select(
+                galaxy.model.Job.table.c.tool_id.label("tool"), sa.func.count(galaxy.model.Job.table.c.id).label("job")
+            )
+            .where(galaxy.model.Job.table.c.state == "error")
+            .group_by("tool")
         )
 
         tools_and_jobs_ok = dict(list(trans.sa_session.execute(tools_and_jobs_ok)))
@@ -148,25 +150,23 @@ class Tools(BaseUIController):
         data = {}
 
         # select count(id), create_time from job where state='ok' and tool_id=$tool group by date;
-        date_and_jobs_ok = sa.select(
-            (
+        date_and_jobs_ok = (
+            sa.select(
                 sa.func.date(galaxy.model.Job.table.c.create_time).label("date"),
                 sa.func.count(galaxy.model.Job.table.c.id).label("job"),
-            ),
-            from_obj=[galaxy.model.Job.table],
-            whereclause=and_(galaxy.model.Job.table.c.state == "ok", galaxy.model.Job.table.c.tool_id == tool),
-            group_by=["date"],
+            )
+            .where(and_(galaxy.model.Job.table.c.state == "ok", galaxy.model.Job.table.c.tool_id == tool))
+            .group_by("date")
         )
 
         # select count(id), create_time from job where state='error' and tool_id=$tool group by date;
-        date_and_jobs_error = sa.select(
-            (
+        date_and_jobs_error = (
+            sa.select(
                 sa.func.date(galaxy.model.Job.table.c.create_time).label("date"),
                 sa.func.count(galaxy.model.Job.table.c.id).label("job"),
-            ),
-            from_obj=[galaxy.model.Job.table],
-            whereclause=and_(galaxy.model.Job.table.c.state == "error", galaxy.model.Job.table.c.tool_id == tool),
-            group_by=["date"],
+            )
+            .where(and_(galaxy.model.Job.table.c.state == "error", galaxy.model.Job.table.c.tool_id == tool))
+            .group_by("date")
         )
 
         date_and_jobs_ok = dict(list(trans.sa_session.execute(date_and_jobs_ok)))
@@ -215,13 +215,10 @@ class Tools(BaseUIController):
         sort_keys = (lambda v: v.lower(), lambda v: data[v]["avg"], lambda v: data[v]["min"], lambda v: data[v]["max"])
 
         jobs_times = sa.select(
-            (
-                galaxy.model.Job.table.c.tool_id.label("name"),
-                galaxy.model.Job.table.c.create_time.label("create_time"),
-                galaxy.model.Job.table.c.update_time.label("update_time"),
-                galaxy.model.Job.table.c.update_time - galaxy.model.Job.table.c.create_time,
-            ),
-            from_obj=[galaxy.model.Job.table],
+            galaxy.model.Job.table.c.tool_id.label("name"),
+            galaxy.model.Job.table.c.create_time.label("create_time"),
+            galaxy.model.Job.table.c.update_time.label("update_time"),
+            galaxy.model.Job.table.c.update_time - galaxy.model.Job.table.c.create_time,
         )
 
         jobs_times = [
@@ -285,16 +282,15 @@ class Tools(BaseUIController):
         ordered_data = {}
         sort_keys = [(lambda v, i=i: v[i]) for i in range(4)]
 
-        jobs_times = sa.select(
-            (
+        jobs_times = (
+            sa.select(
                 sa.func.date_trunc("month", galaxy.model.Job.table.c.create_time).label("date"),
                 sa.func.max(galaxy.model.Job.table.c.update_time - galaxy.model.Job.table.c.create_time),
                 sa.func.avg(galaxy.model.Job.table.c.update_time - galaxy.model.Job.table.c.create_time),
                 sa.func.min(galaxy.model.Job.table.c.update_time - galaxy.model.Job.table.c.create_time),
-            ),
-            from_obj=[galaxy.model.Job.table],
-            whereclause=galaxy.model.Job.table.c.tool_id == tool,
-            group_by=["date"],
+            )
+            .where(galaxy.model.Job.table.c.tool_id == tool)
+            .group_by("date")
         )
 
         months = list(trans.sa_session.execute(jobs_times.execute))
@@ -332,16 +328,8 @@ class Tools(BaseUIController):
         tool_errors = [
             [unicodify(a), b]
             for a, b in trans.sa_session.execute(
-                sa.select(
-                    (
-                        galaxy.model.Job.table.c.tool_stderr,
-                        galaxy.model.Job.table.c.create_time,
-                    ),
-                    from_obj=[galaxy.model.Job.table],
-                    whereclause=and_(
-                        galaxy.model.Job.table.c.tool_id == tool_name,
-                        galaxy.model.Job.table.c.state == "error",
-                    ),
+                sa.select(galaxy.model.Job.table.c.tool_stderr, galaxy.model.Job.table.c.create_time).where(
+                    and_(galaxy.model.Job.table.c.tool_id == tool_name, galaxy.model.Job.table.c.state == "error")
                 )
             )
         ]
@@ -377,7 +365,7 @@ class Tools(BaseUIController):
                         sentence += f"</br>{word}"
                         count += 1
                     if sentence in new_key:
-                        new_key = new_key.replace(sentence, f"</br>{word}{' [this line in %d times]' % count}")
+                        new_key = new_key.replace(sentence, f"</br>{word} [this line in {count} times]")
             data[new_key] = counter[key]
 
         return trans.fill_template(

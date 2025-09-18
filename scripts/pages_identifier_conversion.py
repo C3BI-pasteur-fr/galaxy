@@ -41,7 +41,7 @@ def main(argv):
         )
 
     model = init_models_from_config(config, object_store=object_store)
-    session = model.context.current
+    session = model.context.current()
     pagerevs = session.query(model.PageRevision).all()
     mock_trans = Bunch(app=Bunch(security=security_helper), model=model, user_is_admin=lambda: True, sa_session=session)
     for p in pagerevs:
@@ -53,13 +53,13 @@ def main(argv):
                 if not args.dry_run:
                     p.content = unicodify(processor.output(), "utf-8")
                     session.add(p)
-                    session.flush()
+                    session.commit()
                 else:
-                    print("Modifying revision %s." % p.id)
+                    print(f"Modifying revision {p.id}.")
                     print(difflib.unified_diff(p.content, newcontent))
         except Exception:
             logging.exception(
-                "Error parsing page, rolling changes back and skipping revision %s.  Please report this error." % p.id
+                "Error parsing page, rolling changes back and skipping revision %s.  Please report this error.", p.id
             )
             session.rollback()
 

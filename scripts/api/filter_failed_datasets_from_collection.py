@@ -9,13 +9,14 @@ python filter_failed_datasets_from_collection.py <GalaxyUrl> <ApiKey> MySpecialH
 
 import sys
 
-from bioblend.galaxy import dataset_collections as collections
-from bioblend.galaxy import GalaxyInstance
+from bioblend.galaxy import (
+    dataset_collections as collections,
+    GalaxyInstance,
+)
 
 if len(sys.argv) < 5:
     print(
-        "Usage: %s <GalaxyUrl> <ApiKey> <HistoryName (must be unique)> <CollectionHistoryId (i.e. the simple integer id)>"
-        % sys.argv[0]
+        f"Usage: {sys.argv[0]} <GalaxyUrl> <ApiKey> <HistoryName (must be unique)> <CollectionHistoryId (i.e. the simple integer id)>"
     )
     exit(0)
 

@@ -1,6 +1,9 @@
 import errno
+import os
 import tempfile
+from enum import Enum
 from io import StringIO
+from pathlib import Path
 from typing import Dict
 
 import pytest
@@ -99,3 +102,80 @@ def test_safe_loads():
     assert "foo" not in d
     s = '{"foo": "bar"}'
     assert safe_loads(s) == {"foo": "bar"}
+
+
+def test_in_packages(monkeypatch):
+    util_path = Path(util.__file__).parent
+    assert util.in_packages() == (not str(util_path).endswith("lib/galaxy/util"))
+
+
+def test_galaxy_directory(monkeypatch):
+    galaxy_dir = util.galaxy_directory()
+    assert os.path.isabs(galaxy_dir)
+    assert os.path.isfile(os.path.join(galaxy_dir, "run.sh"))
+
+
+def test_listify() -> None:
+    assert util.listify(None) == []
+    assert util.listify(False) == []
+    assert util.listify(True) == [True]
+    assert util.listify("foo") == ["foo"]
+    assert util.listify("foo, bar") == ["foo", " bar"]
+    assert util.listify("foo, bar", do_strip=True) == ["foo", "bar"]
+    list_ = [1, 2, 3]
+    assert util.listify(list_) is list_
+    assert util.listify((1, 2, 3)) == [1, 2, 3]
+    s = {1, 2, 3}
+    assert util.listify(s) == [s]
+    d = {"a": 1, "b": 2, "c": 3}
+    assert util.listify(d) == [d]
+    o = object()
+    assert util.listify(o) == [o]
+
+
+def test_enum_values():
+    class Stuff(str, Enum):
+        A = "a"
+        C = "c"
+        B = "b"
+
+    assert util.enum_values(Stuff) == ["a", "c", "b"]
+
+
+DOI_VALID_VALUES = [
+    "https://doi.org/10.1234/42",
+    "doi.org/10.1234/42",
+    "doi:10.1234/42",
+    "doi:10.1234567890/42",  # longer prefix
+    "doi:10.1234/42ab:%&*$//crazy-suffix/%/&/",
+    "doi:10.1234/aa",
+]
+
+
+@pytest.mark.parametrize("input", DOI_VALID_VALUES)
+def test_validate_doi_pass(input):
+    assert util.validate_doi(input)
+
+
+DOI_INVALID_VALUES = [
+    "http://doi.org/10.1234/42",
+    "invalid:10.1234/42",
+    "doi:11.1234/42",
+    "doi:101234/42",
+    "doi:10. 1234/42",
+    "doi:10.abc/42",
+    "doi:10.1234/ 42",
+    "doi:10.1234/42/a b",
+]
+
+
+@pytest.mark.parametrize("input", DOI_INVALID_VALUES)
+def test_validate_doi_fail(input):
+    assert not util.validate_doi(input)
+
+
+def test_validate_doi_fail_too_long():
+    long_suffix = "a" * (util.DOI_MAX_LENGTH - 12)
+    doi = f"doi:10.1000/{long_suffix}"
+    assert util.validate_doi(doi)
+    assert not util.validate_doi(doi + "a")  # Increase length by 1 past max limit

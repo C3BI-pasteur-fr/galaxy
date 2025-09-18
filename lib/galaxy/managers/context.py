@@ -28,6 +28,7 @@ should annotate their dependency on the narrowest context they require.
 A method that requires a user but not a history should declare its
 ``trans`` argument as requiring type :class:`galaxy.managers.context.ProvidesUserContext`.
 """
+
 # TODO: Refactor this class so that galaxy.managers depends on a package
 # containing this.
 # TODO: Provide different classes for real users and potentially bootstrapped
@@ -38,10 +39,17 @@ import abc
 import string
 from json import dumps
 from typing import (
+    Any,
     Callable,
+    cast,
+    Dict,
     List,
+    Literal,
     Optional,
+    Tuple,
 )
+
+from sqlalchemy import select
 
 from galaxy.exceptions import (
     AuthenticationRequired,
@@ -49,12 +57,16 @@ from galaxy.exceptions import (
 )
 from galaxy.model import (
     Dataset,
+    Event,
+    GalaxySession,
     History,
     HistoryDatasetAssociation,
     Role,
+    User,
+    UserAction,
 )
 from galaxy.model.base import ModelMapping
-from galaxy.model.scoped_session import galaxy_scoped_session
+from galaxy.model.tags import GalaxyTagHandlerSession
 from galaxy.schema.tasks import RequestUser
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.security.vault import UserVaultWrapper
@@ -69,11 +81,13 @@ class ProvidesAppContext:
     Mixed in class must provide `app` property.
     """
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def app(self) -> MinimalManagerApp:
         """Provide access to the Galaxy ``app`` object."""
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def url_builder(self) -> Optional[Callable[..., str]]:
         """
         Provide access to Galaxy URLs (if available).
@@ -96,7 +110,7 @@ class ProvidesAppContext:
         Application-level logging of user actions.
         """
         if self.app.config.log_actions:
-            action = self.app.model.UserAction(action=action, context=context, params=str(dumps(params)))
+            action = UserAction(action=action, context=context, params=str(dumps(params)))
             try:
                 if user:
                     action.user = user
@@ -109,7 +123,7 @@ class ProvidesAppContext:
             except Exception:
                 action.session_id = None
             self.sa_session.add(action)
-            self.sa_session.flush()
+            self.sa_session.commit()
 
     def log_event(self, message, tool_id=None, **kwargs):
         """
@@ -117,7 +131,7 @@ class ProvidesAppContext:
         Logging events is a config setting - if False, do not log.
         """
         if self.app.config.log_events:
-            event = self.app.model.Event()
+            event = Event()
             event.tool_id = tool_id
             try:
                 event.message = message % kwargs
@@ -140,26 +154,15 @@ class ProvidesAppContext:
             except Exception:
                 event.session_id = None
             self.sa_session.add(event)
-            self.sa_session.flush()
+            self.sa_session.commit()
 
     @property
-    def sa_session(self) -> galaxy_scoped_session:
+    def sa_session(self):
         """Provide access to Galaxy's SQLAlchemy session.
 
-        :rtype: galaxy.model.scoped_session.galaxy_scoped_session
+        :rtype: sqlalchemy.orm.scoped_session
         """
         return self.app.model.session
-
-    def expunge_all(self):
-        """Expunge all the objects in Galaxy's SQLAlchemy sessions."""
-        app = self.app
-        context = app.model.context
-        context.expunge_all()
-        # This is a bit hacky, should refctor this. Maybe refactor to app -> expunge_all()
-        if hasattr(app, "install_model"):
-            install_model = app.install_model
-            if install_model != app.model:
-                install_model.context.expunge_all()
 
     def get_toolbox(self):
         """Returns the application toolbox.
@@ -201,13 +204,31 @@ class ProvidesUserContext(ProvidesAppContext):
     properties.
     """
 
+    workflow_building_mode: Literal[1, True, False] = False
+    galaxy_session: Optional[GalaxySession] = None
+    _tag_handler: Optional[GalaxyTagHandlerSession] = None
+    _short_term_cache: Dict[Tuple[str, ...], Any]
+
+    def set_cache_value(self, args: Tuple[str, ...], value: Any):
+        self._short_term_cache[args] = value
+
+    def get_cache_value(self, args: Tuple[str, ...], default: Any = None) -> Any:
+        return self._short_term_cache.get(args, default)
+
+    @property
+    def tag_handler(self):
+        if self._tag_handler is None:
+            self._tag_handler = self.app.tag_handler.create_tag_handler_session(self.galaxy_session)
+        return self._tag_handler
+
     @property
     def async_request_user(self) -> RequestUser:
         if self.user is None:
             raise AuthenticationRequired("The async task requires user authentication.")
         return RequestUser(user_id=self.user.id)
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def user(self):
         """Provide access to the user object."""
 
@@ -216,13 +237,16 @@ class ProvidesUserContext(ProvidesAppContext):
         """Provide access to a user's personal vault."""
         return UserVaultWrapper(self.app.vault, self.user)
 
+    def get_user(self) -> Optional[User]:
+        user = cast(Optional[User], self.user or self.galaxy_session and self.galaxy_session.user)
+        return user
+
     @property
     def anonymous(self) -> bool:
         return self.user is None
 
     def get_current_user_roles(self) -> List[Role]:
-        user = self.user
-        if user:
+        if user := self.user:
             roles = user.all_roles()
         else:
             roles = []
@@ -277,7 +301,8 @@ class ProvidesHistoryContext(ProvidesUserContext):
     properties.
     """
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def history(self) -> Optional[History]:
         """Provide access to the user's current history model object.
 
@@ -296,15 +321,8 @@ class ProvidesHistoryContext(ProvidesUserContext):
             return None
         non_ready_or_ok = set(Dataset.non_ready_states)
         non_ready_or_ok.add(HistoryDatasetAssociation.states.OK)
-        datasets = (
-            self.sa_session.query(HistoryDatasetAssociation)
-            .filter_by(deleted=False, history_id=self.history.id, extension="len")
-            .filter(
-                HistoryDatasetAssociation.table.c._state.in_(non_ready_or_ok),
-            )
-        )
         valid_ds = None
-        for ds in datasets:
+        for ds in get_hdas(self.sa_session, self.history.id, non_ready_or_ok):
             if ds.dbkey == dbkey:
                 if ds.state == HistoryDatasetAssociation.states.OK:
                     return ds
@@ -319,3 +337,12 @@ class ProvidesHistoryContext(ProvidesUserContext):
         """
         # FIXME: This method should be removed
         return self.app.genome_builds.get_genome_build_names(trans=self)
+
+
+def get_hdas(session, history_id, states):
+    stmt = (
+        select(HistoryDatasetAssociation)
+        .filter_by(deleted=False, history_id=history_id, extension="len")
+        .where(HistoryDatasetAssociation._state.in_(states))
+    )
+    return session.scalars(stmt)

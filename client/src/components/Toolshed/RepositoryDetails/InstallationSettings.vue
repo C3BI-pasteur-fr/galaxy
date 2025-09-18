@@ -1,9 +1,9 @@
 <template>
     <b-modal id="repo-install-settings" v-model="modalShow" :static="modalStatic" @ok="onOk" @hide="onHide">
         <template v-slot:modal-header>
-            <h4 class="title m-0">
+            <h2 class="title m-0 h-sm">
                 {{ modalTitle }}
-            </h4>
+            </h2>
         </template>
         <div class="description mb-1">
             {{ repo.long_description || repo.description }}
@@ -46,6 +46,8 @@
     </b-modal>
 </template>
 <script>
+import { useConfig } from "@/composables/config";
+
 export default {
     props: {
         repo: {
@@ -65,7 +67,7 @@ export default {
             required: true,
         },
         currentPanel: {
-            type: Array,
+            type: Object,
             default: null,
         },
         toolDynamicConfigs: {
@@ -77,13 +79,17 @@ export default {
             default: false,
         },
     },
+    setup() {
+        const { config, isConfigLoaded } = useConfig(true);
+        return { config, isConfigLoaded };
+    },
     data() {
         return {
             modalShow: true,
             advancedShow: false,
-            installToolDependencies: true,
-            installRepositoryDependencies: true,
-            installResolverDependencies: true,
+            installToolDependencies: this.config.install_tool_dependencies,
+            installRepositoryDependencies: this.config.install_repository_dependencies,
+            installResolverDependencies: this.config.install_resolver_dependencies,
             toolConfig: null,
             toolSection: null,
         };
@@ -99,9 +105,9 @@ export default {
             return this.toolConfigs.length > 1;
         },
         toolSections() {
-            const panel = this.currentPanel;
+            const panel = Object.values(this.currentPanel);
             if (panel) {
-                return panel.filter((x) => x.elems);
+                return panel.filter((x) => x.tools);
             } else {
                 return [];
             }

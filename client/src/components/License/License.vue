@@ -1,41 +1,37 @@
 <template>
-    <loading-span v-if="license == null" message="Loading license information"> </loading-span>
-    <div v-else-if="license.name" class="text-muted">
+    <LoadingSpan v-if="license == null" message="Loading license information"> </LoadingSpan>
+    <span v-else-if="license.name" class="text-muted">
         <link itemprop="license" :href="license.licenseId" />
         <span v-if="title">
             {{ title }}
         </span>
-        {{ license.name }}
-        <a target="_blank" :href="license.url">
-            <font-awesome-icon icon="external-link-alt" />
-        </a>
+        <ExternalLink :href="license.url">
+            {{ license.name }}
+        </ExternalLink>
         <slot name="buttons"></slot>
-    </div>
-    <div v-else>
+    </span>
+    <span v-else>
         Unknown License (<i>{{ license.url }}</i
         >)
         <slot name="buttons"></slot>
-    </div>
+    </span>
 </template>
 
 <script>
-import { getAppRoot } from "onload/loadConfig";
-import axios from "axios";
+import ExternalLink from "components/ExternalLink";
 import LoadingSpan from "components/LoadingSpan";
-import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import { library } from "@fortawesome/fontawesome-svg-core";
 
-import { faExternalLinkAlt } from "@fortawesome/free-solid-svg-icons";
-library.add(faExternalLinkAlt);
+import { GalaxyApi } from "@/api";
 
 export default {
     components: {
         LoadingSpan,
-        FontAwesomeIcon,
+        ExternalLink,
     },
     props: {
         licenseId: {
             type: String,
+            required: true,
         },
         inputLicenseInfo: {
             type: Object,
@@ -66,9 +62,14 @@ export default {
     methods: {
         fetchLicense() {
             this.license = null;
-            const url = `${getAppRoot()}api/licenses/${this.licenseId}`;
-            axios
-                .get(url)
+            GalaxyApi()
+                .GET("/api/licenses/{license_id}", {
+                    params: {
+                        path: {
+                            license_id: this.licenseId,
+                        },
+                    },
+                })
                 .then((response) => response.data)
                 .then((data) => {
                     this.license = data;

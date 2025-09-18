@@ -1,6 +1,6 @@
+import { visitInputs } from "components/Form/utilities";
 import _ from "underscore";
 import { isEmpty } from "utils/utils";
-import { visitInputs } from "components/Form/utilities";
 
 export class WorkflowRunModel {
     constructor(runData) {
@@ -100,7 +100,7 @@ export class WorkflowRunModel {
                 name: wp_name,
                 type: "text",
                 color: `hsl( ${++wp_count * 100}, 70%, 30% )`,
-                style: "ui-form-wp-source",
+                cls: "ui-input-linked",
                 links: [],
                 optional: true,
             });
@@ -122,8 +122,7 @@ export class WorkflowRunModel {
                     wp_input.links.push(step);
                     input.wp_linked = true;
                     input.type = "text";
-                    input.backdrop = true;
-                    input.style = "ui-form-wp-target";
+                    input.cls = "ui-input-linked";
                 });
             });
             _.each(step.replacement_parameters, (wp_name) => {
@@ -137,34 +136,30 @@ export class WorkflowRunModel {
         // or if an explicit reference is specified as data_ref and available
         _.each(this.steps, (step) => {
             if (step.step_type == "tool") {
-                var data_resolved = true;
+                let dataResolved = true;
                 visitInputs(step.inputs, (input, name, context) => {
-                    var is_runtime_value = input.value && input.value.__class__ == "RuntimeValue";
-                    var is_data_input = ["data", "data_collection"].indexOf(input.type) != -1;
-                    var data_ref = context[input.data_ref];
+                    const isRuntimeValue = input.value && input.value.__class__ == "RuntimeValue";
+                    const isDataInput = ["data", "data_collection"].indexOf(input.type) != -1;
+                    const dataRef = context[input.data_ref];
                     if (input.step_linked && !isDataStep(input.step_linked)) {
-                        data_resolved = false;
+                        dataResolved = false;
                     }
-                    if (input.options && ((input.options.length == 0 && !data_resolved) || input.wp_linked)) {
+                    if (input.options && ((input.options.length == 0 && !dataResolved) || input.wp_linked)) {
                         input.is_workflow = true;
                     }
-                    if (data_ref) {
+                    if (dataRef) {
                         input.is_workflow =
-                            (data_ref.step_linked && !isDataStep(data_ref.step_linked)) || input.wp_linked;
+                            (dataRef.step_linked && !isDataStep(dataRef.step_linked)) || input.wp_linked;
                     }
-                    if (
-                        !input.optional &&
-                        (is_data_input ||
-                            (input.value && input.value.__class__ == "RuntimeValue" && !input.step_linked))
-                    ) {
+                    if ((isDataInput && !input.optional) || (!isDataInput && isRuntimeValue && !input.step_linked)) {
                         step.expanded = true;
                         hasOpenToolSteps = true;
                     }
-                    if (is_runtime_value) {
+                    if (isRuntimeValue) {
                         input.value = null;
                     }
                     input.flavor = "workflow";
-                    if (!is_runtime_value && !is_data_input && input.type !== "hidden" && !input.wp_linked) {
+                    if (!isRuntimeValue && !isDataInput && input.type !== "hidden" && !input.wp_linked) {
                         if (input.optional || (!isEmpty(input.value) && input.value !== "")) {
                             input.collapsible_value = input.value;
                             input.collapsible_preview = true;

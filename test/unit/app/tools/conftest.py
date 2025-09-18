@@ -5,8 +5,8 @@ import pytest
 
 from galaxy.model import tool_shed_install
 from galaxy.model.tool_shed_install import mapping
+from galaxy.tool_shed.cache import ToolShedRepositoryCache
 from galaxy.tool_util.toolbox.base import ToolConfRepository
-from galaxy.tools.cache import ToolShedRepositoryCache
 
 
 @pytest.fixture
@@ -24,10 +24,9 @@ def tool_shed_repository_cache(mock_app):
 
 @pytest.fixture
 def repos(mock_app):
-    repositories = [
-        create_repo(mock_app.install_model.context, changeset=i + 1, installed_changeset=i) for i in range(10)
-    ]
-    mock_app.install_model.context.flush()
+    session = mock_app.install_model.context
+    repositories = [create_repo(session, changeset=i + 1, installed_changeset=i) for i in range(10)]
+    session.commit()
     return repositories
 
 
@@ -53,7 +52,7 @@ def create_repo(session, changeset, installed_changeset, config_filename=None):
         "tools": [
             {
                 "add_to_tool_panel": False,  # to have repository.includes_tools_for_display_in_tool_panel=False in InstalledRepositoryManager.activate_repository()
-                "guid": "github.com/galaxyproject/example/test_tool/0.%s" % changeset,
+                "guid": f"github.com/galaxyproject/example/test_tool/0.{changeset}",
                 "tool_config": "tool.xml",
             }
         ],
@@ -69,7 +68,7 @@ def create_repo(session, changeset, installed_changeset, config_filename=None):
     repository.deleted = False
     repository.uninstalled = False
     session.add(repository)
-    session.flush()
+    session.commit()
     tool_dependency = tool_shed_install.ToolDependency(
         name="Name",
         version="100",

@@ -1,7 +1,6 @@
 import os
 
 import pytest
-from selenium.webdriver.common.keys import Keys
 
 from .framework import (
     selenium_test,
@@ -10,14 +9,14 @@ from .framework import (
 )
 
 
-class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
+class TestUploads(SeleniumTestCase, UsesHistoryItemAssertions):
     @selenium_test
     def test_upload_file(self):
         self.perform_upload(self.get_filename("1.sam"))
 
         self.history_panel_wait_for_hid_ok(1)
         history_count = len(self.history_contents())
-        assert history_count == 1, "Incorrect number of items in history - expected 1, found %d" % history_count
+        assert history_count == 1, f"Incorrect number of items in history - expected 1, found {history_count}"
 
         self.history_panel_click_item_title(hid=1, wait=True)
         self.assert_item_summary_includes(1, "28 lines")
@@ -29,7 +28,7 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
 
         self.history_panel_wait_for_hid_ok(1)
         history_count = len(self.history_contents())
-        assert history_count == 1, "Incorrect number of items in history - expected 1, found %d" % history_count
+        assert history_count == 1, f"Incorrect number of items in history - expected 1, found {history_count}"
 
     @selenium_test
     def test_upload_pasted_url_content(self):
@@ -38,7 +37,7 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
 
         self.history_panel_wait_for_hid_ok(1)
         history_count = len(self.history_contents())
-        assert history_count == 1, "Incorrect number of items in history - expected 1, found %d" % history_count
+        assert history_count == 1, f"Incorrect number of items in history - expected 1, found {history_count}"
 
     @selenium_test
     def test_upload_composite_dataset_pasted_data(self):
@@ -47,11 +46,11 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
 
         self.history_panel_wait_for_hid_ok(1)
         history_count = len(self.history_contents())
-        assert history_count == 1, "Incorrect number of items in history - expected 1, found %d" % history_count
+        assert history_count == 1, f"Incorrect number of items in history - expected 1, found {history_count}"
 
         self.history_panel_click_item_title(hid=1, wait=True)
         self.history_panel_item_view_dataset_details(1)
-        param_values = self.driver.find_elements_by_css_selector("#tool-parameters td.tool-parameter-value")
+        param_values = self.driver.find_elements(self.by.CSS_SELECTOR, "#tool-parameters td.tool-parameter-value")
         request_json = param_values[1].text
         for data in paste_content:
             assert f'"paste_content": "{data}"' in request_json
@@ -63,7 +62,7 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
         self.history_panel_wait_for_hid_ok(1)
         history_contents = self.history_contents()
         history_count = len(history_contents)
-        assert history_count == 1, "Incorrect number of items in history - expected 1, found %d" % history_count
+        assert history_count == 1, f"Incorrect number of items in history - expected 1, found {history_count}"
 
         hda = history_contents[0]
         assert hda["name"] == "1.sam", hda
@@ -119,11 +118,11 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
     @selenium_test
     def test_upload_list(self):
         self.upload_list([self.get_filename("1.tabular")], name="Test List")
-        self.history_panel_wait_for_hid_ok(2)
+        self.history_panel_wait_for_hid_ok(3)
         # Make sure modals disappeared - both List creator (TODO: upload).
         self.wait_for_selector_absent_or_hidden(".collection-creator")
 
-        self.assert_item_name(2, "Test List")
+        self.assert_item_name(3, "Test List")
 
         # Make sure source item is hidden when the collection is created.
         self.history_panel_wait_for_hid_hidden(1)
@@ -131,15 +130,17 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
     @selenium_test
     def test_upload_pair(self):
         self.upload_list([self.get_filename("1.tabular"), self.get_filename("2.tabular")], name="Test Pair")
-        self.history_panel_wait_for_hid_ok(3)
+        self.history_panel_wait_for_hid_ok(5)
         # Make sure modals disappeared - both collection creator (TODO: upload).
         self.wait_for_selector_absent_or_hidden(".collection-creator")
 
-        self.assert_item_name(3, "Test Pair")
+        self.assert_item_name(5, "Test Pair")
 
         # Make sure source items are hidden when the collection is created.
         self.history_panel_wait_for_hid_hidden(1)
         self.history_panel_wait_for_hid_hidden(2)
+        self.history_panel_wait_for_hid_hidden(3)
+        self.history_panel_wait_for_hid_hidden(4)
 
     @selenium_test
     def test_upload_pair_specify_extension(self):
@@ -162,14 +163,46 @@ class UploadsTestCase(SeleniumTestCase, UsesHistoryItemAssertions):
         self.upload_paired_list(
             [self.get_filename("1.tabular"), self.get_filename("2.tabular")], name="Test Paired List"
         )
-        self.history_panel_wait_for_hid_ok(3)
+        self.history_panel_wait_for_hid_ok(5)
         # Make sure modals disappeared - both collection creator (TODO: upload).
         self.wait_for_selector_absent_or_hidden(".collection-creator")
-        self.assert_item_name(3, "Test Paired List")
+        self.assert_item_name(5, "Test Paired List")
 
         # Make sure source items are hidden when the collection is created.
         self.history_panel_wait_for_hid_hidden(1)
         self.history_panel_wait_for_hid_hidden(2)
+        self.history_panel_wait_for_hid_hidden(3)
+        self.history_panel_wait_for_hid_hidden(4)
+
+    @selenium_test
+    def test_upload_modal_retains_content(self):
+        self.home()
+
+        # initialize 2 uploads and close modal
+        self.upload_start_click()
+        self.upload_queue_local_file(self.get_filename("1.sam"))
+        self.upload_paste_data("some pasted data")
+        self.components.upload.close_button.wait_for_and_click()
+
+        # reopen modal and check that the files are still there
+        self.upload_start_click()
+        self.wait_for_selector_visible("#upload-row-0.upload-init")
+        self.wait_for_selector_visible("#upload-row-1.upload-init")
+
+        # perform upload and close modal
+        self.upload_start()
+        self.components.upload.close_button.wait_for_and_click()
+
+        # add another pasted file, but don't upload it
+        self.upload_start_click()
+        self.upload_paste_data("some more pasted data")
+        self.components.upload.close_button.wait_for_and_click()
+
+        # reopen modal and see 2 uploaded, 1 yet to upload
+        self.upload_start_click()
+        self.wait_for_selector_visible("#upload-row-0.upload-success")
+        self.wait_for_selector_visible("#upload-row-1.upload-success")
+        self.wait_for_selector_visible("#upload-row-2.upload-init")
 
     @selenium_test
     @pytest.mark.gtn_screenshot
@@ -201,7 +234,7 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
         rule_builder.menu_item_rule_type(rule_type="add-filter-count").wait_for_and_click()
         filter_editor = rule_builder.rule_editor(rule_type="add-filter-count")
         filter_editor_element = filter_editor.wait_for_visible()
-        filter_input = filter_editor_element.find_element_by_css_selector("input[type='number']")
+        filter_input = filter_editor_element.find_element(self.by.CSS_SELECTOR, "input[type='number']")
         filter_input.clear()
         filter_input.send_keys("1")
         self.screenshot("rules_example_1_4_filter_header")
@@ -222,10 +255,9 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
         self.perform_upload(self.get_filename("rules/PRJDA60709.tsv"))
         self.history_panel_wait_for_hid_ok(1)
         self.upload_rule_start()
-        self.upload_rule_set_data_type("Collection")
-        self.upload_rule_set_input_type("History Dataset")
+        self.upload_rule_set_data_type("Collections")
+        self.upload_rule_dataset_dialog()
         self.upload_rule_set_dataset(1)
-        self._wait_for_upload_modal()
         self.screenshot("rules_example_2_1_inputs")
         self.upload_rule_build()
         rule_builder = self.components.rule_builder
@@ -250,8 +282,8 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
         self.perform_upload(self.get_filename("rules/PRJDB3920.tsv"))
         self.history_panel_wait_for_hid_ok(1)
         self.upload_rule_start()
-        self.upload_rule_set_data_type("Collection")
-        self.upload_rule_set_input_type("History Dataset")
+        self.upload_rule_set_data_type("Collections")
+        self.upload_rule_dataset_dialog()
         self.upload_rule_set_dataset(1)
         self._wait_for_upload_modal()
         self.screenshot("rules_example_3_1_inputs")
@@ -361,8 +393,8 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
         self.perform_upload(self.get_filename("rules/PRJNA355367.tsv"))
         self.history_panel_wait_for_hid_ok(1)
         self.upload_rule_start()
-        self.upload_rule_set_data_type("Collection")
-        self.upload_rule_set_input_type("History Dataset")
+        self.upload_rule_set_data_type("Collections")
+        self.upload_rule_dataset_dialog()
         self.upload_rule_set_dataset(1)
 
         self._wait_for_upload_modal()
@@ -418,7 +450,7 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
         rule_builder.menu_item_rule_type(rule_type="add-filter-count").wait_for_and_click()
         filter_editor = rule_builder.rule_editor(rule_type="add-filter-count")
         filter_editor_element = filter_editor.wait_for_visible()
-        filter_input = filter_editor_element.find_element_by_css_selector("input[type='number']")
+        filter_input = filter_editor_element.find_element(self.by.CSS_SELECTOR, "input[type='number']")
         filter_input.clear()
         filter_input.send_keys("1")
         self.screenshot("rules_deferred_datasets_4_filter_header")
@@ -439,8 +471,8 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
         self.perform_upload(self.get_filename("rules/PRJNA355367.tsv"))
         self.history_panel_wait_for_hid_ok(1)
         self.upload_rule_start()
-        self.upload_rule_set_data_type("Collection")
-        self.upload_rule_set_input_type("History Dataset")
+        self.upload_rule_set_data_type("Collections")
+        self.upload_rule_dataset_dialog()
         self.upload_rule_set_dataset(1)
 
         self._wait_for_upload_modal()
@@ -475,26 +507,29 @@ PRJDA60709  SAMD00016382    DRX000480   ftp.sra.ebi.ac.uk/vol1/fastq/DRR000/DRR0
             return f.read()
 
     def _wait_for_upload_modal(self):
-        self.components.upload.build_btn.wait_for_visible()
-        self.components.upload.build_btn.wait_for_clickable()
+        self.components.upload.build_button.wait_for_visible()
+        self.components.upload.build_button.wait_for_clickable()
 
     def _scroll_to_end_of_table(self):
         rule_builder = self.components.rule_builder
         table_elem = rule_builder.table.wait_for_visible()
-        first_cell = table_elem.find_elements_by_css_selector("td")[0]
+        # handsontable
+        # first_cell = table_elem.find_elements(self.by.CSS_SELECTOR, "td")[0]
+        # aggrid
+        first_cell = table_elem.find_elements(self.by.CSS_SELECTOR, ".ag-cell")[0]
         action_chains = self.action_chains()
         action_chains.move_to_element(first_cell)
         action_chains.click(first_cell)
         for _ in range(15):
-            action_chains.send_keys(Keys.ARROW_RIGHT)
+            action_chains.send_keys(self.keys.ARROW_RIGHT)
         action_chains.perform()
 
     def _setup_uniprot_example(self):
         self.perform_upload(self.get_filename("rules/uniprot.tsv"))
         self.history_panel_wait_for_hid_ok(1)
         self.upload_rule_start()
-        self.upload_rule_set_data_type("Collection")
-        self.upload_rule_set_input_type("History Dataset")
+        self.upload_rule_set_data_type("Collections")
+        self.upload_rule_dataset_dialog()
         self.upload_rule_set_dataset(1)
 
     # @selenium_test

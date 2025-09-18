@@ -9,6 +9,10 @@ import random
 import string
 import time
 from abc import abstractmethod
+from dataclasses import (
+    dataclass,
+    field,
+)
 from functools import (
     partial,
     wraps,
@@ -17,22 +21,30 @@ from typing import (
     Any,
     cast,
     Dict,
+    List,
+    Literal,
+    NamedTuple,
     Optional,
+    Tuple,
     Union,
 )
 
-import requests
 import yaml
-from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support import expected_conditions as ec
 
-from galaxy.util import DEFAULT_SOCKET_TIMEOUT
-from . import sizzle
-from .components import (
+from galaxy.navigation.components import (
     Component,
     HasText,
 )
-from .data import load_root_component
+from galaxy.navigation.data import load_root_component
+from galaxy.util import (
+    DEFAULT_SOCKET_TIMEOUT,
+    requests,
+)
+from . import sizzle
 from .has_driver import (
     exception_indicates_click_intercepted,
     exception_indicates_not_clickable,
@@ -49,8 +61,15 @@ RETRY_DURING_TRANSITIONS_SLEEP_DEFAULT = 0.1
 RETRY_DURING_TRANSITIONS_ATTEMPTS_DEFAULT = 10
 
 GALAXY_MAIN_FRAME_ID = "galaxy_main"
+GALAXY_VISUALIZATION_FRAME_ID = "galaxy_visualization"
 
 WaitType = collections.namedtuple("WaitType", ["name", "default_length"])
+
+
+class HistoryEntry(NamedTuple):
+    id: str
+    hid: str
+    history_content_type: str
 
 
 # Default wait times should make sense for a development server under low
@@ -72,7 +91,7 @@ class WAIT_TYPES:
     SHED_SEARCH = WaitType("shed_search", 30)
     # Wait time for repository installation
     REPO_INSTALL = WaitType("repo_install", 60)
-    # Beta history Polling Duration
+    # History Polling Duration
     HISTORY_POLL = WaitType("history_poll", 3)
 
 
@@ -81,7 +100,7 @@ DEFAULT_WAIT_TYPE = WAIT_TYPES.DATABASE_OPERATION
 
 
 class NullTourCallback:
-    def handle_step(self, step, step_index):
+    def handle_step(self, step, step_index: int):
         pass
 
 
@@ -142,22 +161,51 @@ def retry_during_transitions(
     return _retry
 
 
+def retry_index_during_transitions():
+
+    def exception_check(e):
+        return exception_seems_to_indicate_transition(e) or isinstance(e, IndexError)
+
+    return partial(retry_during_transitions, exception_check=exception_check)
+
+
 def edit_details(f, scope=".history-index"):
     """Open the editor, run the edits, hit the save button"""
 
     @wraps(f)
     def func_wrapper(self, *args, **kwds):
         # open editor
-        if self.is_beta_history():
-            self.open_history_editor(scope=scope)
+        self.open_history_editor(scope=scope)
         # run edits
         result = f(self, *args, **kwds)
         # save edits
-        if self.is_beta_history():
-            self.history_click_editor_save()
+        self.history_click_editor_save()
         return result
 
     return func_wrapper
+
+
+@dataclass
+class ConfigTemplateParameter:
+    form_element_type: Literal["string", "boolean", "integer"]
+    name: str
+    value: Any
+
+
+@dataclass
+class FileSourceInstance:
+    template_id: str
+    name: str
+    description: Optional[str]
+    parameters: List[ConfigTemplateParameter] = field(default_factory=list)
+
+
+@dataclass
+class ObjectStoreInstance:
+    template_id: str
+    name: str
+    description: Optional[str]
+    parameters: List[ConfigTemplateParameter] = field(default_factory=list)
 
 
 class NavigatesGalaxy(HasDriver):
@@ -183,6 +231,16 @@ class NavigatesGalaxy(HasDriver):
     @abstractmethod
     def build_url(self, url: str, for_selenium: bool = True) -> str:
         """Build URL to the target Galaxy."""
+
+    @abstractmethod
+    def screenshot(self, label: str) -> None:
+        """Take a screenshot of the current browser with the specified label."""
+
+    def screenshot_if(self, label: Optional[str]) -> Optional[str]:
+        target = None
+        if label:
+            target = self.screenshot(label)
+        return target
 
     default_password = DEFAULT_PASSWORD
     wait_types = WAIT_TYPES
@@ -236,7 +294,20 @@ class NavigatesGalaxy(HasDriver):
     def home(self) -> None:
         """Return to root Galaxy page and wait for some basic widgets to appear."""
         self.get()
+        try:
+            self.wait_for_masthead()
+        except SeleniumTimeoutException as e:
+            raise ClientBuildException(e)
+
+    def wait_for_masthead(self):
         self.components.masthead._.wait_for_visible()
+
+    def go_to_workflow_landing(self, uuid: str, public: Literal["false", "true"], client_secret: Optional[str]):
+        path = f"workflow_landings/{uuid}?public={public}"
+        if client_secret:
+            path = f"{path}&client_secret={client_secret}"
+        self.driver.get(self.build_url(path))
+        self.components.workflow_run.run_workflow.wait_for_visible()
 
     def go_to_trs_search(self) -> None:
         self.driver.get(self.build_url("workflows/trs_search"))
@@ -250,10 +321,14 @@ class NavigatesGalaxy(HasDriver):
         self.driver.get(self.build_url(f"workflows/sharing?id={workflow_id}"))
 
     def go_to_workflow_export(self, workflow_id: str) -> None:
-        self.driver.get(self.build_url(f"workflow/export?id={workflow_id}"))
+        self.driver.get(self.build_url(f"workflows/export?id={workflow_id}"))
 
     def go_to_history_sharing(self, history_id: str) -> None:
         self.driver.get(self.build_url(f"histories/sharing?id={history_id}"))
+
+    def go_to_import_zip(self) -> None:
+        self.driver.get(self.build_url("import/zip"))
+        self.components.masthead._.wait_for_visible()
 
     def switch_to_main_panel(self):
         self.driver.switch_to.frame(GALAXY_MAIN_FRAME_ID)
@@ -276,16 +351,22 @@ class NavigatesGalaxy(HasDriver):
         finally:
             self.driver.switch_to.default_content()
 
+    @contextlib.contextmanager
+    def visualization_panel(self):
+        """Decorator to operate within the context of Galaxy's visualization frame."""
+        try:
+            self.driver.switch_to.frame(GALAXY_VISUALIZATION_FRAME_ID)
+            yield
+        finally:
+            self.driver.switch_to.default_content()
+
     def api_get(self, endpoint, data=None, raw=False):
         data = data or {}
         full_url = self.build_url(f"api/{endpoint}", for_selenium=False)
         response = requests.get(
             full_url, data=data, cookies=self.selenium_to_requests_cookies(), timeout=DEFAULT_SOCKET_TIMEOUT
         )
-        if raw:
-            return response
-        else:
-            return response.json()
+        return self._handle_response(response, raw)
 
     def api_post(self, endpoint, data=None):
         data = data or {}
@@ -300,10 +381,13 @@ class NavigatesGalaxy(HasDriver):
         response = requests.delete(
             full_url, cookies=self.selenium_to_requests_cookies(), timeout=DEFAULT_SOCKET_TIMEOUT
         )
+        return self._handle_response(response, raw)
+
+    def _handle_response(self, response: requests.Response, raw: bool = False):
         if raw:
             return response
         else:
-            return response.json()
+            return response.json() if response.content else None
 
     def get_galaxy_session(self):
         for cookie in self.driver.get_cookies():
@@ -314,10 +398,7 @@ class NavigatesGalaxy(HasDriver):
         return {"galaxysession": self.get_galaxy_session()}
 
     def history_panel_name_element(self):
-        if self.is_beta_history():
-            component = self.beta_history_element("name display")
-        else:
-            component = self.components.history_panel.name
+        component = self.history_element("name display")
         return component.wait_for_present()
 
     @retry_during_transitions
@@ -325,40 +406,16 @@ class NavigatesGalaxy(HasDriver):
         return self.history_panel_name_element().text
 
     def history_panel_collection_rename(self, hid: int, new_name: str, assert_old_name: Optional[str] = None):
-
-        collection_view = self.history_panel_expand_collection(hid)
-        if self.is_beta_history():
-            self.__beta_rename_collection(new_name)
-            self.sleep_for(WAIT_TYPES.UX_RENDER)
-        else:
-            title_element = collection_view.title.wait_for_visible()
-            if assert_old_name is not None:
-                assert title_element.text == assert_old_name
-            title_element.click()
-            title_rename_element = collection_view.title_input.wait_for_visible()
-            title_rename_element.send_keys(new_name)
-            self.send_enter(title_rename_element)
+        self.history_panel_rename(new_name)
 
     def history_panel_expand_collection(self, collection_hid: int) -> SmartComponent:
         self.history_panel_click_item_title(collection_hid)
-
         collection_view = self.components.history_panel.collection_view
         collection_view._.wait_for_present()
         return collection_view
 
-    @edit_details
-    def __beta_rename_collection(self, new_name):
-        title_element = self.beta_history_element("name input").wait_for_clickable()
-        title_element.clear()
-        title_element.send_keys(new_name)
-
     def history_panel_collection_name_element(self):
-        if self.is_beta_history():
-            title_element = self.beta_history_element("collection name display").wait_for_present()
-        else:
-            collection_view = self.components.history_panel.collection_view
-            collection_view._.wait_for_present()
-            title_element = collection_view.title.wait_for_visible()
+        title_element = self.history_element("name display").wait_for_present()
         return title_element
 
     def make_accessible_and_publishable(self):
@@ -377,18 +434,41 @@ class NavigatesGalaxy(HasDriver):
             endpoint = f"histories/{history_id}?view={view}"
         return self.api_get(endpoint)
 
-    def current_history(self):
+    def current_history(self) -> Dict[str, Any]:
         full_url = self.build_url("history/current_history_json", for_selenium=False)
         response = requests.get(full_url, cookies=self.selenium_to_requests_cookies(), timeout=DEFAULT_SOCKET_TIMEOUT)
         return response.json()
 
-    def current_history_id(self):
+    def current_history_id(self) -> str:
         return self.current_history()["id"]
 
-    def latest_history_item(self):
+    def current_history_publish(self):
+        self.click_history_option_sharing()
+        self.make_accessible_and_publishable()
+
+    def latest_history_entry(self):
+        entry_dict = self._latest_history_item()
+        if entry_dict is None:
+            return None
+        else:
+            return HistoryEntry(
+                id=entry_dict["id"],
+                hid=entry_dict["hid"],
+                history_content_type=entry_dict["history_content_type"],
+            )
+
+    def latest_history_item(self) -> Dict[str, Any]:
+        return_value = self._latest_history_item()
+        assert return_value, "Attempted to get latest history item on empty history."
+        return return_value
+
+    def _latest_history_item(self) -> Optional[Dict[str, Any]]:
         history_contents = self.history_contents()
-        assert len(history_contents) > 0
-        return history_contents[-1]
+        if len(history_contents) > 0:
+            entry_dict = history_contents[-1]
+            return entry_dict
+        else:
+            return None
 
     def wait_for_history(self, assert_ok=True):
         def history_becomes_terminal(driver):
@@ -420,21 +500,22 @@ class NavigatesGalaxy(HasDriver):
     def history_panel_wait_for_hid_deferred(self, hid, allowed_force_refreshes=0):
         return self.history_panel_wait_for_hid_state(hid, "deferred", allowed_force_refreshes=allowed_force_refreshes)
 
+    def wait_for_hid_ok_and_open_details(self, hid):
+        self.history_panel_wait_for_hid_ok(hid, allowed_force_refreshes=1)
+        self.history_panel_click_item_title(hid=hid)
+        self.history_panel_item_view_dataset_details(hid)
+
     def history_panel_item_component(self, history_item=None, hid=None, multi_history_panel=False):
-        if self.is_beta_history():
-            assert hid
-            return self.content_item_by_attributes(hid=hid)
-        if history_item is None:
-            assert hid
-            history_item = self.hid_to_history_item(hid)
-        item = self.components.history_panel.item.selector
-        if multi_history_panel:
-            item = self.components.multi_history_view.item
-        return item(history_content_type=history_item["history_content_type"], id=history_item["id"])
+        assert hid
+        return self.content_item_by_attributes(hid=hid, multi_history_panel=multi_history_panel)
 
     def wait_for_history_to_have_hid(self, history_id, hid):
         def get_hids():
             contents = self.api_get(f"histories/{history_id}/contents")
+            if contents and isinstance(contents, dict) and "err_msg" in contents:
+                raise Exception(f"Error getting history contents: {contents['err_msg']}")
+            if not isinstance(contents, list):
+                raise Exception(f"Expected list of contents, got {type(contents)} for {contents}")
             return [d["hid"] for d in contents]
 
         def history_has_hid(driver):
@@ -463,8 +544,6 @@ class NavigatesGalaxy(HasDriver):
             self.history_item_wait_for(history_item_selector, allowed_force_refreshes)
         except SeleniumTimeoutException as e:
             selector = self.navigation.history_panel.selectors.contents
-            if self.is_beta_history():
-                selector = self.navigation.history_panel.selectors.contents_beta
             contents_elements = self.find_elements(selector)
             div_ids = [f"#{d.get_attribute('id')}" for d in contents_elements]
             template = "Failed waiting on history item %d to become visible, visible datasets include [%s]."
@@ -490,8 +569,7 @@ class NavigatesGalaxy(HasDriver):
                     raise
 
             attempt += 1
-            if not self.is_beta_history():
-                self.history_panel_refresh_click()
+            self.history_panel_refresh_click()
         return rval
 
     def history_panel_wait_for_history_loaded(self):
@@ -509,17 +587,16 @@ class NavigatesGalaxy(HasDriver):
         history_item_selector = self.history_panel_wait_for_hid_visible(
             hid, allowed_force_refreshes=allowed_force_refreshes, multi_history_panel=multi_history_panel
         )
-        if self.is_beta_history():
-            history_item_selector_state = self.content_item_by_attributes(hid=hid, state=state)
-        else:
-            # history_item_selector_state = history_item_selector.with_class(f"state-{state}")
-            history_item_selector_state = history_item_selector.with_data("state", state)
+        history_item_selector_state = self.content_item_by_attributes(
+            hid=hid, state=state, multi_history_panel=multi_history_panel
+        )
         try:
             self.history_item_wait_for(history_item_selector_state, allowed_force_refreshes)
         except SeleniumTimeoutException as e:
             history_item = self.wait_for_visible(history_item_selector)
             current_state = "UNKNOWN"
-            classes = history_item.get_attribute("class").split(" ")
+            raw_class_str = history_item.get_attribute("class") or ""
+            classes = raw_class_str.split(" ")
             for clazz in classes:
                 if clazz.startswith("state-"):
                     current_state = clazz[len("state-") :]
@@ -528,22 +605,82 @@ class NavigatesGalaxy(HasDriver):
             raise self.prepend_timeout_message(e, message)
         return history_item_selector_state
 
-    def click_grid_popup_option(self, item_name, option_label):
-        item_button = None
+    def history_panel_wait_for_and_select(self, hids: List[int]):
+        """
+        Waits for uploads to pass through queued, running, ok. Not all the states are not guaranteed
+        depending on how fast the upload goes compared to the history polling updates, it might just
+        skip to the end for a really fast upload
+        """
+        for hid in hids:
+            self.history_panel_wait_for_hid_ok(hid)
+        self.history_panel_multi_operations_show()
+        for hid in hids:
+            self.history_panel_muli_operation_select_hid(hid)
+
+    @retry_during_transitions
+    def get_grid_entry_names(self, selector):
+        self.sleep_for(self.wait_types.UX_RENDER)
+        names = []
+        grid = self.wait_for_selector(selector)
+        for row in grid.find_elements(By.TAG_NAME, "tr"):
+            td = row.find_elements(By.TAG_NAME, "td")
+            name = td[1].text if td[0].text == "" else td[0].text
+            names.append(name)
+        return names
+
+    def select_grid_operation(self, item_name, option_label):
+        target_item = None
         grid = self.components.grids.body.wait_for_visible()
-        for row in grid.find_elements_by_tag_name("tr"):
-            name_cell = row.find_elements_by_tag_name("td")[1]
-            if name_cell.text == item_name:
-                item_button = name_cell
+        for row in grid.find_elements(By.TAG_NAME, "tr"):
+            for name_column in range(2):
+                name_cell = row.find_elements(By.TAG_NAME, "td")[name_column]
+                if item_name in name_cell.text:
+                    target_item = name_cell
+                    break
+            if target_item is not None:
                 break
 
-        if item_button is None:
+        if target_item is None:
             raise AssertionError(f"Failed to find item with name [{item_name}]")
 
-        popup_menu_button = item_button.find_element_by_css_selector(".dropdown-toggle")
+        popup_menu_button = target_item.find_element(By.CSS_SELECTOR, "button")
         popup_menu_button.click()
-        popup_option = self.driver.find_element_by_link_text(option_label)
+        popup_option = target_item.find_element(
+            By.CSS_SELECTOR, f"[data-description='grid operation {option_label.lower()}'"
+        )
         popup_option.click()
+
+    def select_grid_cell(self, grid_name, item_name, column_index=3):
+        cell = None
+        grid = self.wait_for_selector(f"{grid_name} table")
+        for row in grid.find_elements(By.TAG_NAME, "tr"):
+            td = row.find_elements(By.TAG_NAME, "td")
+            print(td[0].text)
+            print(td[1].text)
+            if item_name in [td[0].text, td[1].text]:
+                cell = td[column_index]
+                break
+
+        if cell is None:
+            raise AssertionError(f"Failed to find cell for item with name [{item_name}]")
+
+        return cell
+
+    def check_grid_rows(self, grid_name, item_names):
+        grid = self.wait_for_selector(grid_name)
+        for row in grid.find_elements(By.TAG_NAME, "tr"):
+            td = row.find_elements(By.TAG_NAME, "td")
+            item_name = td[1].text
+            if item_name in item_names:
+                checkbox = td[0].find_element(self.by.TAG_NAME, "input")
+                # bootstrap vue checkbox seems to be hidden by label, but the label is not interactable
+                self.driver.execute_script("$(arguments[0]).click();", checkbox)
+
+    def check_advanced_search_filter(self, filter_name):
+        filter_div = self.wait_for_selector(f"[data-description='filter {filter_name}']")
+        checkbox = filter_div.find_element(self.by.CSS_SELECTOR, "input")
+        # bootstrap vue checkbox seems to be hidden by label, but the label is not interactable
+        self.driver.execute_script("$(arguments[0]).click();", checkbox)
 
     def published_grid_search_for(self, search_term=None):
         return self._inline_search_for(
@@ -551,22 +688,46 @@ class NavigatesGalaxy(HasDriver):
             search_term,
         )
 
-    def get_logged_in_user(self):
-        return self.api_get("users/current")
-
-    def get_api_key(self, force=False):
-        # If force is false, use the form inputs API and allow the key to be absent.
-        if not force:
-            return self.api_get(f"users/{self.get_user_id()}/api_key/inputs")["inputs"][0]["value"]
+    def get_logged_in_user(self) -> Optional[Dict[str, Any]]:
+        # for user's not logged in - this just returns a {} so lets
+        # key this on an id being available?
+        if "id" in (user_dict := self.api_get("users/current")):
+            return user_dict
         else:
-            return self.api_post(f"users/{self.get_user_id()}/api_key")
+            return None
 
-    def get_user_id(self):
+    def get_api_key(self, force=False) -> Optional[str]:
+        user_id = self.get_user_id()
+        if user_id is None:
+            if force:
+                raise Exception("Attempting to get_api_key but no user logged in.")
+            else:
+                return None
+        elif not force:
+            response = self.api_get(f"users/{user_id}/api_key/detailed")
+            return response["key"] if response else None
+        else:
+            return self.api_post(f"users/{user_id}/api_key")
+
+    def get_user_id(self) -> Optional[str]:
+        if (user := self.get_logged_in_user()) is not None:
+            return user["id"]
+        else:
+            return None
+
+    def get_user_email(self) -> str:
         user = self.get_logged_in_user()
-        return user["id"]
+        if user is None:
+            raise Exception("No user is logged in, cannot fetch user e-mail.")
+        else:
+            return user["email"]
 
-    def is_logged_in(self):
-        return "email" in self.get_logged_in_user()
+    def is_logged_in(self) -> bool:
+        user_object = self.get_logged_in_user()
+        if not user_object:
+            return False
+        else:
+            return "email" in user_object
 
     @retry_during_transitions
     def _inline_search_for(self, selector, search_term=None, escape_to_clear=False):
@@ -624,10 +785,10 @@ class NavigatesGalaxy(HasDriver):
             "login": email,
             "password": password,
         }
-        form = self.wait_for_visible(self.navigation.login.selectors.form)
-        self.fill(form, login_info)
+        login = self.components.login
+        self.fill(login.form.wait_for_visible(), login_info)
         self.snapshot("logging-in")
-        self.wait_for_and_click(self.navigation.login.selectors.submit)
+        login.submit.wait_for_and_click()
         self.snapshot("login-submitted")
 
     def register(self, email=None, password=None, username=None, confirm=None, assert_valid=True):
@@ -642,37 +803,15 @@ class NavigatesGalaxy(HasDriver):
 
         self.home()
         self.components.masthead.register_or_login.wait_for_and_click()
-        self.wait_for_and_click(self.navigation.registration.selectors.toggle)
-        form = self.wait_for_visible(self.navigation.registration.selectors.form)
+        registration = self.components.registration
+        registration.toggle.wait_for_and_click()
+        form = registration.form.wait_for_visible()
         self.fill(form, dict(email=email, password=password, username=username, confirm=confirm))
-        self.wait_for_and_click(self.navigation.registration.selectors.submit)
+        registration.submit.wait_for_and_click()
         if assert_valid is False:
             self.assert_error_message()
         elif assert_valid:
             self.wait_for_logged_in()
-
-            # Code below previously was needed because there was a bug that would prevent the masthead from changing,
-            # the bug seems maybe to be fixed though - so we could consider eliminating these extra checks to speed
-            # up tests.
-            self.home()
-            self.wait_for_logged_in()
-            self.click_masthead_user()
-            # Make sure the user menu was dropped down
-            user_menu = self.components.masthead.user_menu.wait_for_visible()
-            try:
-                username_element = self.components.masthead.username.wait_for_visible()
-            except SeleniumTimeoutException as e:
-                menu_items = user_menu.find_elements_by_css_selector("li a")
-                menu_text = [mi.text for mi in menu_items]
-                message = f"Failed to find logged in message in menu items {', '.join(menu_text)}"
-                raise self.prepend_timeout_message(e, message)
-
-            text = username_element.text
-            assert username in text
-            assert self.get_logged_in_user()["email"] == email
-
-            # clicking away no longer closes menu post Masthead -> VueJS
-            self.click_masthead_user()
 
     def wait_for_logged_in(self):
         try:
@@ -680,9 +819,7 @@ class NavigatesGalaxy(HasDriver):
         except SeleniumTimeoutException as e:
             ui_logged_out = self.components.masthead.logged_out_only.is_displayed
             if ui_logged_out:
-                dom_message = (
-                    "Element a.loggedout-only is present in DOM, indicating Login or Register button still in masthead."
-                )
+                dom_message = "Element a.loggedout-only is present in DOM, indicating Log in or Register button still in masthead."
             else:
                 dom_message = "Element a.loggedout-only is *not* present in DOM."
             user_info = self.api_get("users/current")
@@ -695,8 +832,21 @@ class NavigatesGalaxy(HasDriver):
 
     def click_center(self):
         action_chains = self.action_chains()
-        center_element = self.driver.find_element_by_css_selector("#center")
+        center_element = self.driver.find_element(By.CSS_SELECTOR, "#center")
         action_chains.move_to_element(center_element).click().perform()
+
+    def hover_over(self, target):
+        action_chains = self.action_chains()
+        action_chains.move_to_element(target).perform()
+
+    def perform_single_upload(self, test_path, **kwd) -> HistoryEntry:
+        before_latest_history_item = self.latest_history_entry()
+        self._perform_upload(test_path=test_path, **kwd)
+        after_latest_history_item = self.latest_history_entry()
+        assert after_latest_history_item
+        if before_latest_history_item is not None:
+            assert before_latest_history_item.id != after_latest_history_item.id
+        return after_latest_history_item
 
     def perform_upload(self, test_path, **kwd):
         self._perform_upload(test_path=test_path, **kwd)
@@ -705,9 +855,18 @@ class NavigatesGalaxy(HasDriver):
         self._perform_upload(paste_data=paste_data, **kwd)
 
     def _perform_upload(
-        self, test_path=None, paste_data=None, ext=None, genome=None, ext_all=None, genome_all=None, deferred=None
+        self,
+        test_path=None,
+        paste_data=None,
+        ext=None,
+        genome=None,
+        ext_all=None,
+        genome_all=None,
+        deferred=None,
+        on_current_page=False,
     ):
-        self.home()
+        if not on_current_page:
+            self.home()
         self.upload_start_click()
 
         self.upload_set_footer_extension(ext_all)
@@ -717,15 +876,22 @@ class NavigatesGalaxy(HasDriver):
             self.upload_queue_local_file(test_path)
         else:
             assert paste_data is not None
-            self.upload_paste_data(paste_data)
+            if isinstance(paste_data, dict):
+                for name, value in paste_data.items():
+                    self.upload_paste_data(value)
+                    name_input = self.wait_for_selector("div#regular .upload-row:last-of-type .upload-title")
+                    name_input.clear()
+                    name_input.send_keys(name)
+            else:
+                self.upload_paste_data(paste_data)
 
         if ext is not None:
             self.wait_for_selector_visible(".upload-extension")
-            self.select2_set_value(".upload-extension", ext)
+            self.select_set_value(".upload-extension", ext)
 
         if genome is not None:
             self.wait_for_selector_visible(".upload-genome")
-            self.select2_set_value(".upload-genome", genome)
+            self.select_set_value(".upload-genome", genome)
 
         if deferred is not None:
             upload = self.components.upload
@@ -740,7 +906,7 @@ class NavigatesGalaxy(HasDriver):
 
         self.upload_start()
 
-        self.wait_for_and_click_selector("button#btn-close")
+        self.components.upload.close_button.wait_for_and_click()
 
     def perform_upload_of_composite_dataset_pasted_data(self, ext, paste_content):
         self.home()
@@ -748,18 +914,14 @@ class NavigatesGalaxy(HasDriver):
         self.components.upload.tab(tab="composite").wait_for_and_click()
         self.upload_set_footer_extension(ext, tab_id="composite")
 
-        table = self.components.upload.composite.table().wait_for_visible()
-        source_select_buttons = table.find_elements_by_css_selector("div.dropdown button.btn")
-        paste_buttons = table.find_elements_by_css_selector(".upload-source .dropdown-menu .dropdown-item .fa-edit")
-        textareas = table.find_elements_by_css_selector("div.upload-text-column textarea.upload-text-content")
-
         for i in range(len(paste_content)):
-            source_select_buttons[i].click()
-            paste_buttons[i].click()
-            textareas[i].send_keys(paste_content[i])
+            self.components.upload.source_button(n=i).wait_for_and_click()
+            self.components.upload.paste_option(n=i).wait_for_and_click()
+            textarea = self.components.upload.paste_content(n=i).wait_for_visible()
+            textarea.send_keys(paste_content[i])
 
         self.upload_start(tab_id="composite")
-        self.components.upload.composite.close.wait_for_and_click()
+        self.components.upload.composite_close_button.wait_for_and_click()
 
     def upload_list(self, test_paths, name="test", ext=None, genome=None, hide_source_items=True):
         self._collection_upload_start(test_paths, ext, genome, "List")
@@ -782,14 +944,24 @@ class NavigatesGalaxy(HasDriver):
         if not hide_source_items:
             self.collection_builder_hide_originals()
 
-        self.collection_builder_clear_filters()
-        # TODO: generalize and loop these clicks so we don't need the assert
         assert len(test_paths) == 2
-        self.collection_builder_click_paired_item("forward", 0)
-        self.collection_builder_click_paired_item("reverse", 1)
+        self.collection_builder_pair_rows(0, 1)
+
+        row0 = self.components.collection_builders.list_wizard.row._(index=0)
+        row0.link_button.assert_absent()
 
         self.collection_builder_set_name(name)
         self.collection_builder_create()
+
+    def collection_builder_pair_rows(self, row_forward: int, row_reverse: int):
+        row0 = self.components.collection_builders.list_wizard.row._(index=row_forward)
+        row1 = self.components.collection_builders.list_wizard.row._(index=row_reverse)
+
+        row0.unlink_button.assert_absent()
+        row1.unlink_button.assert_absent()
+
+        row0.link_button.wait_for_and_click()
+        row1.link_button.wait_for_and_click()
 
     def _collection_upload_start(self, test_paths, ext, genome, collection_type):
         # Perform upload of files and open the collection builder for specified
@@ -819,19 +991,19 @@ class NavigatesGalaxy(HasDriver):
         if ext is not None:
             selector = f"div#{tab_id} .upload-footer-extension"
             self.wait_for_selector_visible(selector)
-            self.select2_set_value(selector, ext)
+            self.select_set_value(selector, ext)
 
     @retry_during_transitions
     def upload_set_footer_genome(self, genome, tab_id="regular"):
         if genome is not None:
             selector = f"div#{tab_id} .upload-footer-genome"
             self.wait_for_selector_visible(selector)
-            self.select2_set_value(selector, genome)
+            self.select_set_value(selector, genome)
 
     @retry_during_transitions
     def upload_set_collection_type(self, collection_type):
         self.wait_for_selector_visible(".upload-footer-collection-type")
-        self.select2_set_value(".upload-footer-collection-type", collection_type)
+        self.select_set_value(".upload-footer-collection-type", collection_type)
 
     def upload_start(self, tab_id="regular"):
         self.wait_for_and_click_selector(f"div#{tab_id} button#btn-start")
@@ -862,8 +1034,28 @@ class NavigatesGalaxy(HasDriver):
         tab_locator = f"div#{tab_id}"
         self.wait_for_and_click_selector(f"{tab_locator} button#btn-new")
 
-        textarea = self.wait_for_selector(f"{tab_locator} .upload-text-content")
+        textarea = self.wait_for_selector(f"{tab_locator} .upload-row:last-of-type .upload-text-content")
         textarea.send_keys(pasted_content)
+
+    def upload_uri(self, uri, wait=False):
+        upload = self.components.upload
+        upload.start.wait_for_and_click()
+        upload.file_dialog.wait_for_and_click()
+        scheme, uri_rest = uri.split("://", 1)
+        parts = uri_rest.split("/")
+
+        root = f"{scheme}://{parts[0]}"
+        upload.file_source_selector(path=root).wait_for_and_click()
+        rest_parts = parts[1:]
+        path = root
+        for part in rest_parts:
+            path = f"{path}/{part}"
+            upload.file_source_selector(path=path).wait_for_and_click()
+        upload.file_dialog_ok.wait_for_and_click()
+        self.upload_start()
+        if wait:
+            self.sleep_for(self.wait_types.UX_RENDER)
+            self.wait_for_history()
 
     def upload_rule_start(self):
         self.upload_start_click()
@@ -872,15 +1064,14 @@ class NavigatesGalaxy(HasDriver):
     def upload_rule_build(self):
         self.upload_build(tab="rule-based")
 
+    def upload_rule_dataset_dialog(self):
+        upload = self.components.upload
+        upload.rule_dataset_dialog.wait_for_and_click()
+
     def upload_rule_set_data_type(self, type_description):
         upload = self.components.upload
         data_type_element = upload.rule_select_data_type.wait_for_visible()
-        self.select2_set_value(data_type_element, type_description)
-
-    def upload_rule_set_input_type(self, input_description):
-        upload = self.components.upload
-        input_type_element = upload.rule_select_input_type.wait_for_visible()
-        self.select2_set_value(input_type_element, input_description)
+        self.select_set_value(data_type_element, type_description)
 
     def upload_rule_set_dataset(self, row=1):
         upload = self.components.upload
@@ -900,7 +1091,7 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_filter.wait_for_and_click()
         with self.rule_builder_rule_editor("add-filter-count") as editor_element:
-            filter_input = editor_element.find_element_by_css_selector("input[type='number']")
+            filter_input = editor_element.find_element(By.CSS_SELECTOR, "input[type='number']")
             filter_input.clear()
             filter_input.send_keys(f"{count}")
 
@@ -908,7 +1099,7 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_rules.wait_for_and_click()
         with self.rule_builder_rule_editor("sort") as editor_element:
-            column_elem = editor_element.find_element_by_css_selector(".rule-column-selector")
+            column_elem = editor_element.find_element(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elem, column_label)
             self.screenshot_if(screenshot_name)
 
@@ -916,18 +1107,17 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_column.wait_for_and_click()
         with self.rule_builder_rule_editor("add-column-regex") as editor_element:
-
-            column_elem = editor_element.find_element_by_css_selector(".rule-column-selector")
+            column_elem = editor_element.find_element(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elem, column_label)
 
-            groups_elem = editor_element.find_element_by_css_selector("input[type='radio'][value='groups']")
+            groups_elem = editor_element.find_element(By.CSS_SELECTOR, "input[type='radio'][value='groups']")
             groups_elem.click()
 
-            regex_elem = editor_element.find_element_by_css_selector("input.rule-regular-expression")
+            regex_elem = editor_element.find_element(By.CSS_SELECTOR, "input.rule-regular-expression")
             regex_elem.clear()
             regex_elem.send_keys(regex)
 
-            filter_input = editor_element.find_element_by_css_selector("input[type='number']")
+            filter_input = editor_element.find_element(By.CSS_SELECTOR, "input[type='number']")
             filter_input.clear()
             filter_input.send_keys(f"{group_count}")
 
@@ -937,18 +1127,17 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_column.wait_for_and_click()
         with self.rule_builder_rule_editor("add-column-regex") as editor_element:
-
-            column_elem = editor_element.find_element_by_css_selector(".rule-column-selector")
+            column_elem = editor_element.find_element(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elem, column_label)
 
-            groups_elem = editor_element.find_element_by_css_selector("input[type='radio'][value='replacement']")
+            groups_elem = editor_element.find_element(By.CSS_SELECTOR, "input[type='radio'][value='replacement']")
             groups_elem.click()
 
-            regex_elem = editor_element.find_element_by_css_selector("input.rule-regular-expression")
+            regex_elem = editor_element.find_element(By.CSS_SELECTOR, "input.rule-regular-expression")
             regex_elem.clear()
             regex_elem.send_keys(regex)
 
-            filter_input = editor_element.find_element_by_css_selector("input.rule-replacement")
+            filter_input = editor_element.find_element(By.CSS_SELECTOR, "input.rule-replacement")
             filter_input.clear()
             filter_input.send_keys(f"{replacement}")
 
@@ -958,7 +1147,7 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_column.wait_for_and_click()
         with self.rule_builder_rule_editor("add-column-value") as editor_element:
-            filter_input = editor_element.find_element_by_css_selector("input[type='text']")
+            filter_input = editor_element.find_element(By.CSS_SELECTOR, "input[type='text']")
             filter_input.clear()
             filter_input.send_keys(value)
 
@@ -968,7 +1157,7 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_rules.wait_for_and_click()
         with self.rule_builder_rule_editor("remove-columns") as filter_editor_element:
-            column_elem = filter_editor_element.find_element_by_css_selector(".rule-column-selector")
+            column_elem = filter_editor_element.find_element(By.CSS_SELECTOR, ".rule-column-selector")
             for column_label in column_labels:
                 self.select2_set_value(column_elem, column_label)
             self.screenshot_if(screenshot_name)
@@ -977,9 +1166,9 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_column.wait_for_and_click()
         with self.rule_builder_rule_editor("add-column-concatenate") as filter_editor_element:
-            column_elems = filter_editor_element.find_elements_by_css_selector(".rule-column-selector")
+            column_elems = filter_editor_element.find_elements(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elems[0], column_label_1)
-            column_elems = filter_editor_element.find_elements_by_css_selector(".rule-column-selector")
+            column_elems = filter_editor_element.find_elements(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elems[1], column_label_2)
             self.screenshot_if(screenshot_name)
 
@@ -987,13 +1176,13 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_rules.wait_for_and_click()
         with self.rule_builder_rule_editor("split-columns") as filter_editor_element:
-            column_elems = filter_editor_element.find_elements_by_css_selector(".rule-column-selector")
+            column_elems = filter_editor_element.find_elements(By.CSS_SELECTOR, ".rule-column-selector")
             clear = True
             for column_label_1 in column_labels_1:
                 self.select2_set_value(column_elems[0], column_label_1, clear_value=clear)
                 clear = False
 
-            column_elems = filter_editor_element.find_elements_by_css_selector(".rule-column-selector")
+            column_elems = filter_editor_element.find_elements(By.CSS_SELECTOR, ".rule-column-selector")
             clear = True
             for column_label_2 in column_labels_2:
                 self.select2_set_value(column_elems[1], column_label_2, clear_value=clear)
@@ -1005,9 +1194,9 @@ class NavigatesGalaxy(HasDriver):
         rule_builder = self.components.rule_builder
         rule_builder.menu_button_rules.wait_for_and_click()
         with self.rule_builder_rule_editor("swap-columns") as filter_editor_element:
-            column_elems = filter_editor_element.find_elements_by_css_selector(".rule-column-selector")
+            column_elems = filter_editor_element.find_elements(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elems[0], column_label_1)
-            column_elems = filter_editor_element.find_elements_by_css_selector(".rule-column-selector")
+            column_elems = filter_editor_element.find_elements(By.CSS_SELECTOR, ".rule-column-selector")
             self.select2_set_value(column_elems[1], column_label_2)
             self.screenshot_if(screenshot_name)
 
@@ -1054,10 +1243,30 @@ class NavigatesGalaxy(HasDriver):
         text_area_elem.clear()
         text_area_elem.send_keys(json)
 
+    def workflow_editor_add_input(self, item_name="data_input"):
+        editor = self.components.workflow_editor
+
+        # Make sure we're on the workflow editor and not clicking the main tool panel.
+        editor.canvas_body.wait_for_visible()
+
+        if editor.inputs.activity_panel.is_absent:
+            editor.inputs.activity_button.wait_for_and_click()
+
+        editor.inputs.input(id=item_name).wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+    def workflow_editor_set_license(self, license: str) -> None:
+        license_selector = self.components.workflow_editor.license_selector
+        license_selector.wait_for_and_click()
+        license_selector.wait_for_and_send_keys(license)
+
+        license_selector_option = self.components.workflow_editor.license_selector_option
+        license_selector_option.wait_for_and_click()
+
     def workflow_editor_click_option(self, option_label):
         self.workflow_editor_click_options()
         menu_element = self.workflow_editor_options_menu_element()
-        option_elements = menu_element.find_elements_by_css_selector("a")
+        option_elements = menu_element.find_elements(By.CSS_SELECTOR, "button")
         assert len(option_elements) > 0, "Failed to find workflow editor options"
         self.sleep_for(WAIT_TYPES.UX_RENDER)
         found_option = False
@@ -1074,10 +1283,10 @@ class NavigatesGalaxy(HasDriver):
             raise Exception(f"Failed to find workflow editor option with label [{option_label}]")
 
     def workflow_editor_click_options(self):
-        return self.wait_for_and_click_selector("#workflow-options-button")
+        return self.wait_for_and_click_selector("#activity-settings")
 
     def workflow_editor_options_menu_element(self):
-        return self.wait_for_selector_visible("#workflow-options-button")
+        return self.wait_for_selector_visible(".activity-settings")
 
     def workflow_editor_click_run(self):
         return self.wait_for_and_click_selector("#workflow-run-button")
@@ -1086,63 +1295,147 @@ class NavigatesGalaxy(HasDriver):
         self.wait_for_and_click_selector("#workflow-save-button")
         self.sleep_for(self.wait_types.DATABASE_OPERATION)
 
+    def workflow_editor_search_for_workflow(self, name: str):
+        self.wait_for_and_click(self.components.workflow_editor.workflow_activity)
+        self.sleep_for(self.wait_types.UX_RENDER)
+        self.clear_tooltips(".workflow-scroll-list")
+
+        input = self.wait_for_selector(".activity-panel input")
+        input.send_keys(name)
+
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+    def workflow_editor_add_steps(self, name: str):
+        self.workflow_editor_search_for_workflow(name)
+
+        self.components.workflows.workflow_copy_steps.wait_for_and_click()
+
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+    def workflow_editor_add_subworkflow(self, name: str):
+        self.workflow_editor_search_for_workflow(name)
+
+        self.components.workflows.workflow_insert_sub_workflow.wait_for_and_click()
+
+        self.components.workflow_editor.node._(label=name).wait_for_present()
+
+        self.sleep_for(self.wait_types.UX_RENDER)
+
     def navigate_to_histories_page(self):
         self.home()
-        self.click_masthead_user()
-        self.components.masthead.histories.wait_for_and_click()
+        self.components.histories.activity.wait_for_and_click()
+        self.components.histories.histories.wait_for_present()
+
+    def navigate_to_histories_shared_with_me_page(self):
+        self.home()
+        self.components.histories.activity.wait_for_and_click()
+        self.components.shared_histories.tab.wait_for_and_click()
 
     def navigate_to_user_preferences(self):
         self.home()
-        self.click_masthead_user()
+        self.components.masthead.user.wait_for_and_click()
         self.components.masthead.preferences.wait_for_and_click()
 
-    def navigate_to_invocations(self):
+    def navigate_to_invocations_grid(self):
         self.home()
-        self.click_masthead_user()
-        self.components.masthead.invocations.wait_for_and_click()
+        self.components.invocations.activity.wait_for_and_click()
+        self.components.invocations.activity_expand.wait_for_and_click()
 
     def navigate_to_pages(self):
         self.home()
-        self.click_masthead_user()
-        self.components.masthead.pages.wait_for_and_click()
+        self.components.pages.activity.wait_for_and_click()
+
+    def navigate_to_published_workflows(self):
+        self.home()
+        self.components.workflows.activity.wait_for_and_click()
+        self.components.workflows.published_tab.wait_for_and_click()
+
+    def navigate_to_published_histories(self):
+        self.home()
+        self.components.histories.activity.wait_for_and_click()
+        self.components.published_histories.tab.wait_for_and_click()
+
+    def navigate_to_tools(self):
+        self.home()
+        self.components.tools.activity.wait_for_and_click()
 
     def admin_open(self):
-        self.components.masthead.admin.wait_for_and_click()
+        self.components.admin.activity.wait_for_and_click()
+
+    def create_quota(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        amount: Optional[str] = None,
+        quota_source_label: Optional[str] = None,
+        user: Optional[str] = None,
+    ):
+        admin_component = self.components.admin
+
+        self.admin_open()
+        quota_link = admin_component.index.quotas
+        quota_link.wait_for_and_click()
+        quota_component = admin_component.quota
+
+        quota_component.add_new.wait_for_and_click()
+        form = quota_component.add_form.wait_for_visible()
+
+        name = name or self._get_random_name()
+        description = description or f"quota description for {name}"
+        amount = amount or ""
+        self.fill(
+            form,
+            {
+                "name": name,
+                "description": description,
+                "amount": amount,
+            },
+        )
+        if quota_source_label:
+            self.select_set_value("#quota_source_label", quota_source_label)
+        if user:
+            self.select_set_value("#in_users", user, multiple=True)
+        quota_component.add_form_submit.wait_for_and_click()
 
     def select_dataset_from_lib_import_modal(self, filenames):
         for name in filenames:
             self.components.libraries.folder.select_import_dir_item(name=name).wait_for_and_click()
         self.components.libraries.folder.import_dir_btn.wait_for_and_click()
 
-    def create_new_library(self, login=True):
-        if login:
-            self.admin_login()
+    def create_new_library(self):
         self.libraries_open()
         self.name = self._get_random_name(prefix="testcontents")
         self.libraries_index_create(self.name)
 
     def libraries_open(self):
         self.home()
-        self.click_masthead_shared_data()
-        self.components.masthead.libraries.wait_for_and_click()
+        self.components.libraries.activity.wait_for_and_click()
         self.components.libraries.selector.wait_for_visible()
 
     def libraries_open_with_name(self, name):
         self.libraries_open()
         self.libraries_index_search_for(name)
-        self.libraries_index_table_elements()[0].find_element_by_css_selector("td a").click()
+        self.libraries_index_table_elements()[0].find_element(By.CSS_SELECTOR, "td a").click()
+
+    def page_open_and_screenshot(self, page_name, screenshot_name):
+        self.home()
+        self.navigate_to_pages()
+        self.select_grid_operation(page_name, "View")
+        if screenshot_name:
+            self.sleep_for(self.wait_types.UX_RENDER)
+            self.screenshot(screenshot_name)
 
     @retry_during_transitions
     def libraries_index_table_elements(self):
         container = self.components.libraries._.wait_for_visible()
 
-        elements = container.find_elements_by_css_selector("tbody")
+        elements = container.find_elements(By.CSS_SELECTOR, "tbody")
         if not elements:
             return []
         else:
             assert len(elements) == 1
             element = elements[0]
-            return element.find_elements_by_css_selector("tr")  # [style='display: table-row']
+            return element.find_elements(By.CSS_SELECTOR, "tr")  # [style='display: table-row']
 
     def libraries_index_create(self, name):
         self.components.libraries.create_new_library_btn.wait_for_and_click()
@@ -1188,37 +1481,48 @@ class NavigatesGalaxy(HasDriver):
         self.libraries_click_dataset_import()
         self.wait_for_and_click(btn)
 
+    def libraries_dataset_import_from_history_search_for(self, search_term=None):
+        return self._inline_search_for(
+            self.navigation.libraries.folder.selectors.import_datasets_from_history_modal_history_search,
+            search_term,
+        )
+
     def libraries_dataset_import_from_history_select(self, to_select_items):
-        self.wait_for_visible(self.navigation.libraries.folder.selectors.import_history_content)
-        history_elements = self.find_elements(self.navigation.libraries.folder.selectors.import_history_contents_items)
+        self.wait_for_visible(
+            self.navigation.libraries.folder.selectors.import_datasets_from_history_modal_list_is_ready
+        )
         for to_select_item in to_select_items:
             found = False
-            for history_element in history_elements:
-                if to_select_item in history_element.text:
-                    history_element.find_element_by_css_selector("input").click()
-                    found = True
-                    break
-
-            if not found:
-                raise Exception(f"Failed to find history item [{to_select_item}] to select")
+            self._inline_search_for(
+                self.navigation.libraries.folder.selectors.import_datasets_from_history_modal_dataset_search,
+                to_select_item,
+            )
+            self.components.libraries.folder.import_datasets_from_history_modal_select_list_item_by_index(
+                row_index=1
+            ).wait_for_and_click()
+            found = True
+        if not found:
+            raise Exception(f"Failed to find history item [{to_select_item}] to select")
 
     def libraries_dataset_import_from_history_click_ok(self, wait=True):
-        self.wait_for_and_click(self.navigation.libraries.folder.selectors.import_datasets_ok_button)
+        self.wait_for_and_click(self.navigation.libraries.folder.selectors.import_datasets_from_history_modal_ok)
         if wait:
             # Let the progress bar disappear...
-            self.wait_for_absent_or_hidden(self.navigation.libraries.folder.selectors.import_progress_bar)
+            self.wait_for_absent_or_hidden(
+                self.navigation.libraries.folder.selectors.import_datasets_from_history_modal
+            )
 
     def libraries_table_elements(self):
         tbody_element = self.wait_for_selector_visible("#folder_list_body > tbody")
-        return tbody_element.find_elements_by_css_selector("tr:not(.b-table-empty-row)")
+        return tbody_element.find_elements(By.CSS_SELECTOR, "tr:not(.b-table-empty-row)")
 
     def populate_library_folder_from_import_dir(self, library_name, filenames):
         self.libraries_open_with_name(library_name)
         self.libraries_dataset_import(self.navigation.libraries.folder.labels.from_import_dir)
         self.select_dataset_from_lib_import_modal(filenames)
 
-    def navigate_to_new_library(self, login=True):
-        self.create_new_library(login)
+    def navigate_to_new_library(self):
+        self.create_new_library()
         self.libraries_open_with_name(self.name)
 
     def wait_for_overlays_cleared(self):
@@ -1226,33 +1530,51 @@ class NavigatesGalaxy(HasDriver):
         self.wait_for_selector_absent_or_hidden(".ui-modal", wait_type=WAIT_TYPES.UX_POPUP)
         self.wait_for_selector_absent_or_hidden(".toast", wait_type=WAIT_TYPES.UX_POPUP)
 
-    def clear_tooltips(self):
+    def clear_tooltips(self, selector_to_move="#center"):
         action_chains = self.action_chains()
-        center_element = self.driver.find_element_by_css_selector("#center")
+        center_element = self.driver.find_element(By.CSS_SELECTOR, selector_to_move)
         action_chains.move_to_element(center_element).perform()
         self.wait_for_selector_absent_or_hidden(".b-tooltip", wait_type=WAIT_TYPES.UX_POPUP)
 
+    def pages_index_table_elements(self):
+        pages = self.components.pages
+        pages.index_table.wait_for_visible()
+        return pages.index_rows.all()
+
     def workflow_index_open(self):
         self.home()
-        self.click_masthead_workflow()
+        self.click_activity_workflow()
 
-    def workflow_index_table_elements(self):
-        workflows = self.components.workflows
-        workflows.workflow_table.wait_for_visible()
-        return workflows.workflow_rows.all()
+    def workflow_shared_with_me_open(self):
+        self.workflow_index_open()
+        self.components.workflows.shared_with_me_tab.wait_for_and_click()
 
-    def workflow_index_table_row(self, workflow_index=0):
-        self.components.workflows.workflow_rows.wait_for_element_count_of_at_least(workflow_index + 1)
-        return self.workflow_index_table_elements()[workflow_index]
+    def workflow_card_elements(self):
+        self.components.workflows.workflow_cards.wait_for_visible()
+        return self.components.workflows.workflow_card.all()
+
+    def workflow_card_element(self, workflow_index=0):
+
+        @retry_index_during_transitions()
+        def fetch():
+            return self.workflow_card_elements()[workflow_index]
+
+        return fetch()
 
     @retry_during_transitions
     def workflow_index_column_text(self, column_index, workflow_index=0):
-        row_element = self.workflow_index_table_row(workflow_index=workflow_index)
-        columns = row_element.find_elements_by_css_selector("td")
+        row_element = self.workflow_card_element(workflow_index=workflow_index)
+        columns = row_element.find_elements(By.CSS_SELECTOR, "td")
         return columns[column_index].text
 
     def workflow_index_click_search(self):
-        return self.wait_for_and_click_selector("#workflow-search")
+        return self.wait_for_and_click_selector(
+            '.workflows-list input.search-query[data-description="filter text input"]'
+        )
+
+    def workflow_index_get_current_filter(self):
+        filter_element = self.components.workflows.search_box.wait_for_and_click()
+        return filter_element.get_attribute("value")
 
     def workflow_index_search_for(self, search_term=None):
         return self._inline_search_for(
@@ -1264,43 +1586,49 @@ class NavigatesGalaxy(HasDriver):
     def workflow_index_click_import(self):
         return self.components.workflows.import_button.wait_for_and_click()
 
-    def workflow_index_rename(self, new_name, workflow_index=0):
-        self.workflow_index_click_option("Rename", workflow_index=workflow_index)
-        alert = self.driver.switch_to.alert
-        alert.send_keys(new_name)
-        alert.accept()
-        self.components.workflows.workflow_with_name(workflow_name=new_name).wait_for_visible()
+    def workflow_rename(self, new_name, workflow_index=0):
+        workflow = self.workflow_card_element(workflow_index=workflow_index)
+        action_chains = self.action_chains()
+        action_chains.move_to_element(workflow).perform()
+        workflow.find_element(By.CSS_SELECTOR, ".g-card-rename").click()
+        self.components.workflows.rename_input.wait_for_visible().clear()
+        self.components.workflows.rename_input.wait_for_and_send_keys(new_name)
+        self.components.workflows.rename_input.wait_for_and_send_keys(self.keys.ENTER)
+
+    def workflow_delete_by_name(self, name):
+        self.workflow_index_search_for(name)
+        self.components.workflows.workflow_drop_down.wait_for_and_click()
+        self.components.workflows.delete_button.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+        self.components._.confirm_button(name="Delete").wait_for_and_click()
+
+    def workflow_bookmark_by_name(self, name):
+        self.workflow_index_search_for(name)
+        self.components.workflows.bookmark_link(action="add").wait_for_and_click()
 
     @retry_during_transitions
     def workflow_index_name(self, workflow_index=0):
-        """Get workflow name for workflow_index'th row."""
-        row_element = self.workflow_index_table_row(workflow_index=workflow_index)
-        workflow_button = row_element.find_element_by_css_selector(".workflow-dropdown")
-        return workflow_button.text
-
-    @retry_during_transitions
-    def workflow_click_option(self, workflow_selector, workflow_index=0):
-        workflow_row = self.workflow_index_table_row(workflow_index=workflow_index)
-        workflow_button = workflow_row.find_element_by_css_selector(workflow_selector)
-        workflow_button.click()
+        workflow = self.workflow_card_element(workflow_index=workflow_index)
+        return workflow.find_element(By.CSS_SELECTOR, '[id^="g-card-title-"] a').text
 
     def select_dropdown_item(self, option_title):
         menu_element = self.wait_for_selector_visible(".dropdown-menu.show")
-        menu_options = menu_element.find_elements_by_css_selector("a.dropdown-item")
+        menu_options = menu_element.find_elements(By.CSS_SELECTOR, "a.dropdown-item")
         for menu_option in menu_options:
             if option_title in menu_option.text:
                 menu_option.click()
                 return True
 
-    def workflow_index_click_option(self, option_title, workflow_index=0):
-        self.workflow_click_option(".workflow-dropdown", workflow_index)
-        if not self.select_dropdown_item(option_title):
-            raise AssertionError(f"Failed to find workflow action option with title [{option_title}]")
+    def workflow_share_click(self):
+        self.components.workflows.share_button.wait_for_and_click()
+
+    def workflow_index_view_external_link(self, workflow_index=0):
+        self.components.workflows.workflow_drop_down.wait_for_and_click()
+        self.components.workflows.view_external_link.wait_for_and_click()
 
     def workflow_index_click_tag_display(self, workflow_index=0):
-        workflow_row_element = self.workflow_index_table_row(workflow_index)
-        tag_display = workflow_row_element.find_element_by_css_selector(".tags-display")
-        tag_display.click()
+        workflow_element = self.workflow_card_element(workflow_index=workflow_index)
+        workflow_element.find_element(By.CSS_SELECTOR, ".stateless-tags .headless-multiselect .toggle-button").click()
 
     def workflow_index_add_tag(self, tag: str, workflow_index: int = 0):
         self.workflow_index_click_tag_display(workflow_index=workflow_index)
@@ -1316,9 +1644,9 @@ class NavigatesGalaxy(HasDriver):
 
     @retry_during_transitions
     def workflow_index_tag_elements(self, workflow_index=0):
-        workflow_row_element = self.workflow_index_table_row(workflow_index)
-        tag_display = workflow_row_element.find_element_by_css_selector(".tags-display")
-        tag_spans = tag_display.find_elements_by_css_selector(".tag-name")
+        workflow_row_element = self.workflow_card_element(workflow_index)
+        tag_display = workflow_row_element.find_element(By.CSS_SELECTOR, ".stateless-tags")
+        tag_spans = tag_display.find_elements(By.CSS_SELECTOR, ".tag")
         return tag_spans
 
     @retry_during_transitions
@@ -1343,49 +1671,60 @@ class NavigatesGalaxy(HasDriver):
         self.wait_for_and_click_selector("input[name='make_accessible_and_publish']")
 
     def tagging_add(self, tags, auto_closes=True, parent_selector=""):
-
         for i, tag in enumerate(tags):
             if auto_closes or i == 0:
-                tag_area = f"{parent_selector}.tags-input input[type='text']"
-                tag_area = self.wait_for_selector_clickable(tag_area)
+                tag_area_selector = f"{parent_selector}.headless-multiselect input[type='text']"
+                tag_area = self.wait_for_selector_clickable(tag_area_selector)
                 tag_area.click()
 
             tag_area.send_keys(tag)
             self.send_enter(tag_area)
+        self.send_escape(tag_area)
 
     def workflow_run_with_name(self, name: str):
         self.workflow_index_open()
         self.workflow_index_search_for(name)
-        self.workflow_click_option(".workflow-run")
+        self.components.workflows.run_button.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
 
     def workflow_run_specify_inputs(self, inputs: Dict[str, Any]):
         workflow_run = self.components.workflow_run
         for label, value in inputs.items():
             input_div_element = workflow_run.input_data_div(label=label).wait_for_visible()
-            self.select2_set_value(input_div_element, "%d: " % value["hid"])
+            hid = value.pop("hid")
+            self.select_set_value(input_div_element, f"{hid}: ")
 
     def workflow_run_submit(self):
+        self.components.workflow_run.run_workflow_disabled.wait_for_absent()
         self.components.workflow_run.run_workflow.wait_for_and_click()
 
     def workflow_run_ensure_expanded(self):
         workflow_run = self.components.workflow_run
         if workflow_run.expanded_form.is_absent:
+            workflow_run.runtime_setting_button.wait_for_and_click()
             workflow_run.expand_form_link.wait_for_and_click()
             workflow_run.expanded_form.wait_for_visible()
 
-    def workflow_create_new(self, annotation=None, clear_placeholder=False):
+    def workflow_create_new(
+        self, annotation: Optional[str] = None, clear_placeholder: bool = False, save_workflow: bool = True
+    ):
         self.workflow_index_open()
         self.sleep_for(self.wait_types.UX_RENDER)
         self.click_button_new_workflow()
         self.sleep_for(self.wait_types.UX_RENDER)
         name = self._get_random_name()
-        name_component = self.components.workflows.create.name
+        name_component = self.components.workflow_editor.edit_name
         if clear_placeholder:
             name_component.wait_for_visible().clear()
         name_component.wait_for_and_send_keys(name)
         annotation = annotation or self._get_random_name()
-        self.components.workflows.create.annotation.wait_for_and_send_keys(annotation)
-        self.components.workflows.create.submit.wait_for_and_click()
+        self.components.workflow_editor.edit_annotation.wait_for_and_send_keys(annotation)
+        if save_workflow:
+            save_button = self.components.workflow_editor.save_button
+            save_button.wait_for_visible()
+            assert not save_button.has_class("disabled")
+            save_button.wait_for_and_click()
+            self.sleep_for(self.wait_types.UX_RENDER)
         return name
 
     def invocation_index_table_elements(self):
@@ -1393,7 +1732,34 @@ class NavigatesGalaxy(HasDriver):
         invocations.invocations_table.wait_for_visible()
         return invocations.invocations_table_rows.all()
 
+    def open_toolbox(self):
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        if self.element_absent(self.components.tools.tools_activity_workflow_editor):
+            if self.element_absent(self.components._.toolbox_panel):
+                self.components.tools.activity.wait_for_and_click()
+        else:
+            if self.element_absent(self.components._.toolbox_panel):
+                self.components.tools.tools_activity_workflow_editor.wait_for_and_click()
+
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+    def swap_to_tool_panel(self, panel_id: str) -> None:
+        tool_panel = self.components.tool_panel
+        tool_panel.views_button.wait_for_and_click()
+        tool_panel.views_menu_item(panel_id=panel_id).wait_for_and_click()
+
+    def swap_to_tool_panel_edam_operations(self) -> None:
+        self.swap_to_tool_panel("ontology:edam_operations")
+
     def tool_open(self, tool_id, outer=False):
+        self.open_toolbox()
+
+        self.components.tools.clear_search.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
+
+        self.components.tools.search.wait_for_and_send_keys(f"id:{tool_id}")
+
         if outer:
             tool_link = self.components.tool_panel.outer_tool_link(tool_id=tool_id)
         else:
@@ -1408,24 +1774,41 @@ class NavigatesGalaxy(HasDriver):
         self.driver.execute_script("arguments[0].scrollIntoView(true);", tool_element)
         tool_link.wait_for_and_click()
 
-    def create_page_and_edit(self, name=None, slug=None, content_format=None, screenshot_name=None):
-        name = self.create_page(name=name, slug=slug, content_format=content_format, screenshot_name=screenshot_name)
-        self.click_grid_popup_option(name, "Edit content")
-        self.components.pages.editor.wym_iframe.wait_for_visible()
+    def run_environment_test_tool(self, inttest_value="42", select_storage: Optional[str] = None):
+        self.home()
+        self.tool_open("environment_variables")
+        if select_storage:
+            self.components.tool_form.storage_options.wait_for_and_click()
+            self.select_storage(select_storage)
+        self.tool_set_value("inttest", inttest_value)
+        self.tool_form_execute()
+
+    def select_storage(self, storage_id: str) -> None:
+        selection_component = self.components.preferences.object_store_selection
+        selection_component.option_buttons.wait_for_present()
+        button = selection_component.option_button(object_store_id=storage_id)
+        button.wait_for_and_click()
+        selection_component.option_buttons.wait_for_absent_or_hidden()
+
+    def create_page_and_edit(self, name=None, slug=None, screenshot_name=None):
+        name = self.create_page(name=name, slug=slug, screenshot_name=screenshot_name)
+        self.components.pages.editor.markdown_editor.wait_for_visible()
         return name
 
-    def create_page(self, name=None, slug=None, content_format=None, screenshot_name=None):
-        self.components.pages.create.wait_for_and_click()
+    def create_page(self, name=None, slug=None, screenshot_name=None):
         name = name or self._get_random_name(prefix="page")
         slug = slug = self._get_random_name(prefix="pageslug")
-        content_format = content_format or "HTML"
-        self.tool_set_value("title", name)
-        self.tool_set_value("slug", slug)
-        self.tool_set_value("content_format", content_format, expected_type="select")
-        self.screenshot_if(screenshot_name)
-        # Sometimes 'submit' button not yet hooked up?
+        self.components.pages.create.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_TRANSITION)
+        self.screenshot("before_title_input")
+        self.components.pages.title_input.wait_for_and_send_keys(name)
         self.sleep_for(self.wait_types.UX_RENDER)
+        self.screenshot("before_slug_input")
+        self.components.pages.slug_input.wait_for_and_send_keys(slug)
+        self.sleep_for(self.wait_types.UX_RENDER)
+        self.screenshot_if(screenshot_name)
         self.components.pages.submit.wait_for_and_click()
+        self.sleep_for(self.wait_types.UX_RENDER)
         return name
 
     def tool_parameter_div(self, expanded_parameter_id):
@@ -1433,17 +1816,19 @@ class NavigatesGalaxy(HasDriver):
 
     def tool_parameter_edit_rules(self):
         rules_div_element = self.tool_parameter_div("rules")
-        edit_button_element = rules_div_element.find_element_by_css_selector("i.fa-edit")
+        edit_button_element = rules_div_element.find_element(By.CSS_SELECTOR, ".form-rules-edit button")
         edit_button_element.click()
 
     def tool_set_value(self, expanded_parameter_id, value, expected_type=None):
         div_element = self.tool_parameter_div(expanded_parameter_id)
         assert div_element
         if expected_type in ["select", "data", "data_collection"]:
-            div_selector = f"div.ui-form-element[id$='form-element-{expanded_parameter_id}']"
-            self.select2_set_value(div_selector, value)
+            select_field = self.components.tool_form.parameter_data_select(
+                parameter=expanded_parameter_id
+            ).wait_for_visible()
+            self.select_set_value(select_field, value)
         else:
-            input_element = div_element.find_element_by_css_selector("input")
+            input_element = div_element.find_element(By.CSS_SELECTOR, "input")
             # Clear default value
             input_element.clear()
             input_element.send_keys(value)
@@ -1455,14 +1840,8 @@ class NavigatesGalaxy(HasDriver):
     def tool_form_execute(self):
         self.components.tool_form.execute.wait_for_and_click()
 
-    def click_masthead_user(self):
-        self.components.masthead.user.wait_for_and_click()
-
-    def click_masthead_shared_data(self):
-        self.components.masthead.shared_data.wait_for_and_click()
-
-    def click_masthead_workflow(self):
-        self.components.masthead.workflow.wait_for_and_click()
+    def click_activity_workflow(self):
+        self.components.workflows.activity.wait_for_and_click()
 
     def click_button_new_workflow(self):
         self.wait_for_and_click(self.navigation.workflows.selectors.new_button)
@@ -1476,24 +1855,14 @@ class NavigatesGalaxy(HasDriver):
 
     @retry_during_transitions
     def click_history_options(self):
-        if self.is_beta_history():
-            component = self.components.history_panel.options_button_icon_beta
-        else:
-            component = self.components.history_panel.options_button_icon
+        component = self.components.history_panel.options_button_icon
         component.wait_for_and_click()
 
     def click_history_option_export_to_file(self):
-        if self.is_beta_history():
-            self.use_bootstrap_dropdown(option="export to file", menu="history options")
-        else:
-            self.click_history_options()
-            self.components.history_panel.options_show_export_history_to_file.wait_for_and_click()
+        self.use_bootstrap_dropdown(option="export to file", menu="history options")
 
     def click_history_option_sharing(self):
-        if self.is_beta_history():
-            self.use_bootstrap_dropdown(option="share or publish", menu="history options")
-        else:
-            self.click_history_option("Share or Publish")
+        self.use_bootstrap_dropdown(option="share and manage access", menu="history options")
 
     def click_history_option(self, option_label_or_component):
         # Open menu
@@ -1512,50 +1881,29 @@ class NavigatesGalaxy(HasDriver):
             option_component = option_label_or_component
             option_component.wait_for_and_click()
 
-    def use_beta_history(self):
-        if not self.is_beta_history():
-            self.click_history_option(self.components.history_panel.options_use_beta_history)
-            self.components.history_panel.beta.wait_for_present()
-
-    def is_beta_history(self):
-        old_panel = self.components.history_panel.beta.is_absent
-        new_panel = self.components.history_panel.new_history_button.is_absent
-        if old_panel and new_panel:
-            # both absent, let page render a bit...
-            self.sleep_for(self.wait_types.UX_RENDER)
-        else:
-            return new_panel
-
-        old_panel = self.components.history_panel.beta.is_absent
-        return not old_panel
-
     # avoids problematic ID and classes on markup
-    def beta_history_element(self, attribute_value, attribute_name="data-description", scope=".history-index"):
+    def history_element(self, attribute_value, attribute_name="data-description", scope=".history-index"):
         return self.components._.by_attribute(name=attribute_name, value=attribute_value, scope=scope)
 
-    # join list of attrs into css attribute selectors and append to base beta_item selector
-    def content_item_by_attributes(self, **attrs):
-        suffix_list = [f'[data-{k}="{v}"]' for (k, v) in attrs.items()]
+    # join list of attrs into css attribute selectors and append to base item selector
+    def content_item_by_attributes(self, multi_history_panel=False, **attrs):
+        suffix_list = [f'[data-{k}="{v}"]' for (k, v) in attrs.items() if v is not None]
         suffix = "".join(suffix_list)
-        return self.components.history_panel.content_item.selector(suffix=suffix)
+        selector = self.components.history_panel.content_item.selector
+        if multi_history_panel:
+            selector = self.components.multi_history_panel.selector(suffix=suffix)
+        return selector(suffix=suffix)
 
     def history_click_create_new(self):
-        if not self.is_beta_history():
-            self.components.history_panel.new_history_button.wait_for_and_click()
-        else:
-            option = self.beta_history_element("create new history")
-            option.wait_for_and_click()
+        self.components.history_panel.new_history_button.wait_for_and_click()
 
     def history_click_editor_save(self):
-        option = self.beta_history_element("editor save button")
+        option = self.history_element("editor save button")
         option.wait_for_and_click()
         self.sleep_for(self.wait_types.UX_RENDER)
 
     def history_panel_click_copy_elements(self):
-        if self.is_beta_history():
-            self.use_bootstrap_dropdown(option="copy datasets", menu="history action menu")
-        else:
-            self.click_history_option("Copy Datasets")
+        self.use_bootstrap_dropdown(option="copy datasets", menu="history action menu")
 
     def use_bootstrap_dropdown(self, option=None, menu=None):
         """uses bootstrap dropdown by data-description attributes"""
@@ -1563,72 +1911,44 @@ class NavigatesGalaxy(HasDriver):
             raise TypeError
         if menu is None:
             raise TypeError
-        toggle = self.beta_history_element(menu).descendant("button")
+        toggle = self.history_element(menu).descendant("button")
         self.wait_for_and_click(toggle)
-        return self.beta_history_element(option).wait_for_and_click()
+        return self.history_element(option).wait_for_and_click()
 
     @retry_during_transitions
     def histories_click_advanced_search(self):
         search_selector = "#standard-search .advanced-search-toggle"
         self.wait_for_and_click_selector(search_selector)
 
-    @retry_during_transitions
-    def histories_get_history_names(self):
-        self.sleep_for(self.wait_types.UX_RENDER)
-        names = []
-        grid = self.wait_for_selector("#grid-table-body")
-        for row in grid.find_elements_by_tag_name("tr"):
-            td = row.find_elements_by_tag_name("td")
-            name = td[1].text if td[0].text == "" else td[0].text
-            if name != "No items" and not name.startswith("No matching entries found"):
-                names.append(name)
-        return names
-
     @edit_details
     def history_panel_add_tags(self, tags):
-        tag_icon = self.components.history_panel.tag_icon
-        tag_area = self.components.history_panel.tag_area
-        tag_area_input = self.components.history_panel.tag_area_input
+        tag_area_button = self.components.history_panel.tag_area_button
 
-        # if the tag editor is not present but the tag_icon is, then click it
-        if not tag_icon.is_absent and (tag_area.is_absent or not tag_area.is_displayed):
-            tag_icon.wait_for_and_click()
-
-        input_element = tag_area_input.wait_for_and_click()
-        self.sleep_for(self.wait_types.UX_RENDER)
+        tag_area_button.wait_for_and_click()
+        input_element = self.components.history_panel.tag_area_input.wait_for_visible()
 
         for tag in tags:
             input_element.send_keys(tag)
             self.send_enter(input_element)
             self.sleep_for(self.wait_types.UX_RENDER)
 
-    @edit_details
+        self.send_escape(input_element)
+
     def history_panel_rename(self, new_name):
         editable_text_input_element = self.history_panel_name_input()
-        if self.is_beta_history():
-            editable_text_input_element.clear()
+        # a simple .clear() doesn't work here since we perform a .blur because of that
+        self.driver.execute_script("arguments[0].value = '';", editable_text_input_element)
         editable_text_input_element.send_keys(new_name)
-        if not self.is_beta_history():
-            # in the new history 'enter' submits the change, which we don't want
-            # to automatically do here since we may edit other fields prior to
-            # submitting
-            self.send_enter(editable_text_input_element)
+        editable_text_input_element.send_keys(self.keys.ENTER)
         return editable_text_input_element
 
     def history_panel_name_input(self):
-        if not self.is_beta_history():
-            editable_text_input_element = self.history_panel_click_to_rename()
         history_panel = self.components.history_panel
-        edit = history_panel.name_edit_input
-        editable_text_input_element = edit.wait_for_visible()
+        edit_label = history_panel.history_name_edit_label
+        # then, edit_label once clicked, will be replaced by an input field
+        edit_label.wait_for_and_click()
+        editable_text_input_element = history_panel.history_name_edit_input.wait_for_visible()
         return editable_text_input_element
-
-    def history_panel_click_to_rename(self):
-        history_panel = self.components.history_panel
-        name = history_panel.name
-        edit = history_panel.name_edit_input
-        name.wait_for_and_click()
-        return edit.wait_for_visible()
 
     def history_panel_refresh_click(self):
         self.wait_for_and_click(self.navigation.history_panel.selectors.refresh_button)
@@ -1649,46 +1969,66 @@ class NavigatesGalaxy(HasDriver):
         @retry_during_transitions
         def _click_action_in_menu():
             menu_element = self.wait_for_visible(self.navigation.history_panel.multi_operations.selectors.action_menu)
-            menu_element.find_element_by_link_text(action.text).click()
+            menu_element.find_element(By.LINK_TEXT, action.text).click()
 
         _click_action_in_menu()
 
     def open_history_multi_view(self):
-        if self.is_beta_history():
-            self.components.history_panel.histories_operation_menu.wait_for_and_click()
-            self.components.history_panel.multi_view_button_beta.wait_for_and_click()
-        else:
-            self.components.history_panel.multi_view_button.wait_for_and_click()
-
-    def history_panel_show_structure(self):
-        if self.is_beta_history():
-            self.use_bootstrap_dropdown(option="show structure", menu="history options")
-        else:
-            self.click_history_option(self.components.history_panel.options_show_history_structure)
+        self.components.history_panel.histories_operation_menu.wait_for_and_click()
+        self.components.history_panel.multi_view_button.wait_for_and_click()
 
     def history_multi_view_display_collection_contents(self, collection_hid, collection_type="list"):
         self.open_history_multi_view()
 
         selector = self.history_panel_wait_for_hid_state(collection_hid, "ok", multi_history_panel=True)
         self.click(selector)
-        next_level_element_selector = selector
         for _ in range(len(collection_type.split(":")) - 1):
-            next_level_element_selector = next_level_element_selector.descendant(".dataset-collection-element")
-            self.wait_for_and_click(next_level_element_selector)
+            selector = self.history_panel_wait_for_hid_state(1, "ok", multi_history_panel=True)
+            self.click(selector)
 
-        dataset_selector = next_level_element_selector.descendant(".dataset")
+        dataset_selector = self.history_panel_wait_for_hid_state(1, "ok", multi_history_panel=True)
         self.wait_for_and_click(dataset_selector)
+        self.history_panel_wait_for_hid_state(1, "ok", multi_history_panel=True)
+
+    def history_panel_item_edit(self, hid):
+        self.display_dataset(hid)
+
+        # Find and click the Edit tab - using a more reliable selector
+        # BVue generates '.nav-item a' elements with a title attribute matching the tab title
+        edit_tab_button = self.wait_for_selector_clickable(
+            ".nav-item[title='Edit dataset attributes and metadata'] > a.nav-link"
+        )
+        edit_tab_button.click()
+
+        # Wait for the edit attributes panel to be visible
+        self.components.edit_dataset_attributes._.wait_for_visible()
+
+    def display_dataset(self, hid):
+        item = self.history_panel_item_component(hid=hid)
+        item.display_button.wait_for_and_click()
+        # Wait for the DatasetView component to load
+        self.wait_for_selector_visible(".dataset-view")
+
+    def show_dataset_details(self, hid):
+        self.display_dataset(hid)
+        # Find and click the Details tab
+        details_tab_button = self.wait_for_selector_clickable(
+            ".nav-item[title='View detailed information about this dataset'] > a.nav-link"
+        )
+        details_tab_button.click()
+        self.components.dataset_details._.wait_for_visible()
+
+    def show_dataset_visualizations(self, hid):
+        self.display_dataset(hid)
+        # Find and click the Visualize tab
+        visualize_tab_button = self.wait_for_selector_clickable(
+            ".nav-item[title='Explore available visualizations for this dataset'] > a.nav-link"
+        )
+        visualize_tab_button.click()
 
     def history_panel_item_view_dataset_details(self, hid):
-        if not self.is_beta_history():
-            self.history_panel_ensure_showing_item_details(hid)
-            self.hda_click_details(hid)
-            self.components.dataset_details._.wait_for_visible()
-        else:
-            item = self.history_panel_item_component(hid=hid)
-            item.dataset_operations_dropdown.wait_for_and_click()
-            item.info_button.wait_for_and_click()
-            self.components.dataset_details._.wait_for_visible()
+        self.display_dataset(hid)
+        self.show_dataset_details(hid)
 
     def history_panel_item_click_visualization_menu(self, hid):
         viz_button_selector = f"{self.history_panel_item_selector(hid)} .visualizations-dropdown"
@@ -1698,7 +2038,7 @@ class NavigatesGalaxy(HasDriver):
     def history_panel_item_available_visualizations_elements(self, hid):
         # Precondition: viz menu has been opened with history_panel_item_click_visualization_menu
         viz_menu_selectors = f"{self.history_panel_item_selector(hid)} a.visualization-link"
-        return self.driver.find_elements_by_css_selector(viz_menu_selectors)
+        return self.driver.find_elements(By.CSS_SELECTOR, viz_menu_selectors)
 
     def history_panel_item_get_tags(self, hid):
         item_component = self.history_panel_item_component(hid=hid)
@@ -1747,7 +2087,7 @@ class NavigatesGalaxy(HasDriver):
         button_component.wait_for_and_click()
 
     def hda_click_details(self, hid: int):
-        self.hda_click_primary_action_button(hid, "info")
+        self.history_panel_item_view_dataset_details(hid)
 
     def history_panel_click_item_title(self, hid, **kwds):
         item_component = self.history_panel_item_component(hid=hid)
@@ -1773,23 +2113,78 @@ class NavigatesGalaxy(HasDriver):
             return False
         return item_component.details.is_displayed
 
+    def history_panel_build_list_auto(self):
+        return self.use_bootstrap_dropdown(option="auto build list", menu="selected content menu")
+
+    def history_panel_build_list_advanced(self):
+        return self.use_bootstrap_dropdown(option="advanced build list", menu="selected content menu")
+
+    def history_panel_build_list_of_pairs(self):
+        self.history_panel_build_list_advanced_and_select_builder("list:paired")
+        list_wizard = self.components.collection_builders.list_wizard
+        list_wizard.auto_pairing.wait_for_visible()
+        list_wizard.wizard_next_button.wait_for_and_click()
+
+    def history_panel_build_list_of_paired_or_unpaireds(self):
+        self.history_panel_build_list_advanced_and_select_builder("list:paired_or_unpaired")
+        list_wizard = self.components.collection_builders.list_wizard
+        list_wizard.auto_pairing.wait_for_visible()
+        list_wizard.wizard_next_button.wait_for_and_click()
+
+    def history_panel_build_list_of_lists(self):
+        self.history_panel_build_list_advanced_and_select_builder("list:list")
+
+    def history_panel_build_list_advanced_and_select_builder(self, builder: str):
+        self.history_panel_build_list_advanced()
+        list_wizard = self.components.collection_builders.list_wizard
+        list_wizard.which_builder(builder=builder).wait_for_and_click()
+        list_wizard.wizard_next_button.wait_for_and_click()
+
+    def history_panel_build_rule_builder_for_selection(self):
+        self.history_panel_build_list_advanced()
+        list_wizard = self.components.collection_builders.list_wizard
+        list_wizard.which_builder(builder="rules").wait_for_and_click()
+        list_wizard.wizard_next_button.wait_for_and_click()
+
+    def list_wizard_click_cell_and_send_keys(self, column_identifier: str, row_index: int, text: str):
+        list_wizard = self.components.collection_builders.list_wizard
+        list_wizard.cell(row_index=row_index, column_identifier=column_identifier).wait_for_and_double_click()
+        input = list_wizard.cell_input(row_index=row_index, column_identifier=column_identifier)
+        input.wait_for_and_send_keys(text)
+        self.send_enter(input.wait_for_present())
+
     def collection_builder_set_name(self, name):
-        name_element = self.wait_for_selector_visible("input.collection-name")
-        name_element.send_keys(name)
+        # small sleep here seems to be needed in the case of the
+        # collection builder even though we wait for the component
+        # to be clickable - which should make it enabled and should
+        # allow send_keys to work. The send_keys occasionally doesn't
+        # result in the name being filled out in the UI without this.
+        self.sleep_for(WAIT_TYPES.UX_RENDER)
+        self._wait_for_input_text_component_and_fill(self.components.collection_builders.name, name)
+
+    def _wait_for_input_text_component_and_fill(self, component, text):
+        target_element = component.wait_for_clickable()
+        target_element.send_keys(text)
 
     def collection_builder_hide_originals(self):
-        self.wait_for_and_click_selector("input.hide-originals")
+        self.wait_for_and_click_selector('[data-description="hide original elements"]')
 
     def collection_builder_create(self):
-        self.wait_for_and_click_selector("button.create-collection")
+        list_wizard_create = self.components.collection_builders.list_wizard.create
+        modal_create = self.components.collection_builders.modals.create
+        if not list_wizard_create.is_absent:
+            list_wizard_create.wait_for_and_click()
+        else:
+            modal_create.wait_for_and_click()
 
     def collection_builder_clear_filters(self):
-        self.wait_for_and_click_selector("a.clear-filters-link")
+        clear_filters = self.components.collection_builders.clear_filters
+        clear_filters.wait_for_and_click()
 
     def collection_builder_click_paired_item(self, forward_or_reverse, item):
         assert forward_or_reverse in ["forward", "reverse"]
         forward_column = self.wait_for_selector_visible(f".{forward_or_reverse}-column .column-datasets")
-        first_datset_forward = forward_column.find_elements_by_css_selector("li")[item]
+        first_datset_forward = forward_column.find_elements(By.CSS_SELECTOR, "li")[item]
         first_datset_forward.click()
 
     def logout_if_needed(self):
@@ -1799,12 +2194,12 @@ class NavigatesGalaxy(HasDriver):
 
     def logout(self):
         self.components.masthead.logged_in_only.wait_for_visible()
-        self.click_masthead_user()
+        self.components.masthead.user.wait_for_and_click()
         self.components.masthead.logout.wait_for_and_click()
         try:
             self.components.masthead.logged_out_only.wait_for_visible()
         except SeleniumTimeoutException as e:
-            message = "Clicked logout button but waiting for 'Login or Registration' button failed, perhaps the logout button was clicked before the handler was setup?"
+            message = "Clicked logout button but waiting for 'Log in or Registration' button failed, perhaps the logout button was clicked before the handler was setup?"
             raise self.prepend_timeout_message(e, message)
         assert (
             not self.is_logged_in()
@@ -1838,9 +2233,9 @@ class NavigatesGalaxy(HasDriver):
     def tour_wait_for_clickable_element(self, selector):
         timeout = self.timeout_for(wait_type=WAIT_TYPES.JOB_COMPLETION)
         wait = self.wait(timeout=timeout)
-        timeout_message = self._timeout_message(f"sizzle (jQuery) selector [{selector}] to become clickable")
+        timeout_message = self._timeout_message(f"Tour CSS selector [{selector}] to become clickable")
         element = wait.until(
-            sizzle.sizzle_selector_clickable(selector),
+            ec.element_to_be_clickable((By.CSS_SELECTOR, selector)),
             timeout_message,
         )
         return element
@@ -1848,17 +2243,33 @@ class NavigatesGalaxy(HasDriver):
     def tour_wait_for_element_present(self, selector):
         timeout = self.timeout_for(wait_type=WAIT_TYPES.JOB_COMPLETION)
         wait = self.wait(timeout=timeout)
-        timeout_message = self._timeout_message(f"sizzle (jQuery) selector [{selector}] to become present")
+        timeout_message = self._timeout_message(f"Tour CSS selector [{selector}] to become present")
         element = wait.until(
-            sizzle.sizzle_presence_of_selector(selector),
+            ec.presence_of_element_located((By.CSS_SELECTOR, selector)),
             timeout_message,
         )
         return element
 
+    def _clear_tooltip(self, tooltip_component):
+        last_timeout: Optional[SeleniumTimeoutException] = None
+        for _ in range(2):
+            if not tooltip_component.is_absent:
+                move_away_chain = self.action_chains()
+                move_away_chain.move_by_offset(100, 100)
+                move_away_chain.perform()
+            try:
+                tooltip_component.wait_for_absent()
+                return
+            except SeleniumTimeoutException as e:
+                last_timeout = e
+
+        assert last_timeout
+        message = "Failed to force current tool tip off screen, cannot test next tooltip."
+        raise self.prepend_timeout_message(last_timeout, message)
+
     def get_tooltip_text(self, element, sleep=0, click_away=True):
         tooltip_balloon = self.components._.tooltip_balloon
-        tooltip_balloon.wait_for_absent()
-
+        self._clear_tooltip(tooltip_balloon)
         action_chains = self.action_chains()
         action_chains.move_to_element(element)
         action_chains.perform()
@@ -1915,10 +2326,13 @@ class NavigatesGalaxy(HasDriver):
         element = self.components._.messages["warning"]
         return self.assert_message(element, contains=contains)
 
+    def assert_success_message(self, contains=None):
+        element = self.components._.messages["done"]
+        return self.assert_message(element, contains=contains)
+
     def assert_message(self, element, contains=None):
         if contains is not None:
-
-            if type(element) == list:
+            if isinstance(element, list):
                 assert any(
                     contains in el.text for el in element
                 ), f"{contains} was not found in {[el.text for el in element]}"
@@ -1933,12 +2347,12 @@ class NavigatesGalaxy(HasDriver):
     def assert_no_error_message(self):
         self.components._.messages.error.assert_absent_or_hidden()
 
-    def run_tour_step(self, step, step_index, tour_callback):
+    def run_tour_step(self, step, step_index: int, tour_callback):
         element_str = step.get("element", None)
         if element_str is None:
             component = step.get("component", None)
             if component is not None:
-                element_str = self.components.resolve_element_locator(component)[1]
+                element_str = self.components.resolve_component_locator(component).locator
 
         preclick = step.get("preclick", [])
         if preclick is True:
@@ -1953,8 +2367,7 @@ class NavigatesGalaxy(HasDriver):
             element = self.tour_wait_for_element_present(element_str)
             assert element is not None
 
-        textinsert = step.get("textinsert", None)
-        if textinsert is not None:
+        if (textinsert := step.get("textinsert", None)) is not None:
             element.send_keys(textinsert)
 
         tour_callback.handle_step(step, step_index)
@@ -1969,7 +2382,7 @@ class NavigatesGalaxy(HasDriver):
     @retry_during_transitions
     def _tour_wait_for_and_click_element(self, selector):
         element = self.tour_wait_for_clickable_element(selector)
-        element.click()
+        self.driver.execute_script("arguments[0].click();", element)
 
     @retry_during_transitions
     def wait_for_and_click_selector(self, selector):
@@ -1983,34 +2396,21 @@ class NavigatesGalaxy(HasDriver):
         element.click()
         return element
 
+    @retry_during_transitions
+    def wait_for_and_double_click(self, selector_template):
+        element = self.wait_for_clickable(selector_template)
+        action_chains = self.action_chains()
+        action_chains.move_to_element(element).double_click().perform()
+        return element
+
     def set_history_annotation(self, annotation, clear_text=False):
-        history_panel = self.components.history_panel
-
-        if self.is_beta_history():
-            toggle = self.beta_history_element("editor toggle")
-            toggle.wait_for_and_click()
-            annotation_input = self.beta_history_element("annotation input").wait_for_visible()
-            if clear_text:
-                annotation_input.clear()
-            annotation_input.send_keys(annotation)
-            self.history_click_editor_save()
-        else:
-            self.ensure_history_annotation_area_displayed()
-            editable = history_panel.annotation_editable_text
-            edit = history_panel.annotation_edit
-
-            editable.wait_for_and_click()
-            edit_el = edit.wait_for_and_click()
-            if clear_text:
-                # previously this was just edit_el.clear() but
-                # .clear() doesn't work with beta history panel
-                action_chains = self.action_chains()
-                for _ in range(40):
-                    action_chains.send_keys(Keys.BACKSPACE)
-                action_chains.perform()
-            edit_el.send_keys(annotation)
-
-            history_panel.annotation_done.wait_for_and_click()
+        toggle = self.history_element("editor toggle")
+        toggle.wait_for_and_click()
+        annotation_input = self.history_element("annotation input").wait_for_visible()
+        if clear_text:
+            annotation_input.clear()
+        annotation_input.send_keys(annotation)
+        self.history_click_editor_save()
 
     def ensure_history_annotation_area_displayed(self):
         annotation_area = self.components.history_panel.annotation_area
@@ -2018,6 +2418,36 @@ class NavigatesGalaxy(HasDriver):
 
         if annotation_area.is_absent or not annotation_area.is_displayed:
             annotation_icon.wait_for_and_click()
+
+    def select_set_value(self, container_selector_or_elem, value, multiple=False):
+        if hasattr(container_selector_or_elem, "selector"):
+            container_selector_or_elem = container_selector_or_elem.selector
+        if not hasattr(container_selector_or_elem, "find_element"):
+            container_elem = self.wait_for_selector(container_selector_or_elem)
+        else:
+            container_elem = container_selector_or_elem
+        container_elem.click()
+        try:
+            text_input = container_elem.find_element(By.CSS_SELECTOR, "input[class='multiselect__input']")
+        except Exception:
+            text_input = None
+        if text_input:
+            text_input.send_keys(value)
+            self.send_enter(text_input)
+            if multiple:
+                self.send_escape(text_input)
+        else:
+            self.sleep_for(WAIT_TYPES.UX_RENDER)
+            elems = container_elem.find_elements(By.CSS_SELECTOR, "[role='option'] .multiselect__option span")
+            discovered_options = []
+            found = False
+            for elem in elems:
+                elem_value = elem.text
+                discovered_options.append(elem_value)
+                if elem_value == value:
+                    elem.click()
+                    found = True
+            assert found, f"Failed to find specified select value [{value}] in browser options [{discovered_options}]"
 
     def select2_set_value(self, container_selector_or_elem, value, with_click=True, clear_value=False):
         # There are two hacky was to select things from the select2 widget -
@@ -2029,12 +2459,12 @@ class NavigatesGalaxy(HasDriver):
         # doesn't seem to work with the tool form for some reason.
         if hasattr(container_selector_or_elem, "selector"):
             container_selector_or_elem = container_selector_or_elem.selector
-        if not hasattr(container_selector_or_elem, "find_element_by_css_selector"):
+        if not hasattr(container_selector_or_elem, "find_element"):
             container_elem = self.wait_for_selector(container_selector_or_elem)
         else:
             container_elem = container_selector_or_elem
 
-        text_element = container_elem.find_element_by_css_selector("input[type='text']")
+        text_element = container_elem.find_element(By.CSS_SELECTOR, "input[type='text']")
         if clear_value:
             self.send_backspace(text_element)
             self.send_backspace(text_element)
@@ -2047,7 +2477,15 @@ class NavigatesGalaxy(HasDriver):
             # Wait for select2 options to load and then click to add this one.
             self.send_enter(text_element)
         else:
-            select_elem = drop_elem.find_elements_by_css_selector(".select2-result-label")[0]
+            candidate_elements = drop_elem.find_elements(By.CSS_SELECTOR, ".select2-result-label")
+            # try to find exact match
+            for elem in candidate_elements:
+                if elem.text == value:
+                    select_elem = elem
+                    break
+            else:
+                # Pick first match. We're replacing select2 anyway ...
+                select_elem = candidate_elements[0]
             action_chains = self.action_chains()
             action_chains.move_to_element(select_elem).click().perform()
         self.wait_for_selector_absent_or_hidden("#select2-drop")
@@ -2056,26 +2494,20 @@ class NavigatesGalaxy(HasDriver):
         """Test case subclass overrides this to provide detailed logging."""
 
     def open_history_editor(self, scope=".history-index"):
-        if self.is_beta_history():
-            panel = self.components.history_panel.editor.selector(scope=scope)
-            if panel.name_input.is_absent:
-                toggle = panel.toggle
-                toggle.wait_for_and_click()
-                editor = panel.form
-                editor.wait_for_present()
+        panel = self.components.history_panel.editor.selector(scope=scope)
+        if panel.annotation_input.is_absent:
+            toggle = panel.toggle
+            toggle.wait_for_and_click()
+            editor = panel.form
+            editor.wait_for_present()
 
     def close_history_editor(self, scope=".history-index"):
-        if self.is_beta_history():
-            toggle = self.components.history_panel.edit_toggle
-            toggle.wait_for_and_click()
-            editor = self.components.history_panel.editor.selector(scope=scope)
-            self.assert_absent_or_hidden(editor)
+        toggle = self.components.history_panel.edit_toggle
+        toggle.wait_for_and_click()
+        editor = self.components.history_panel.editor.selector(scope=scope)
+        self.assert_absent_or_hidden(editor)
 
     def share_ensure_by_user_available(self, sharing_component):
-        collapse = sharing_component.share_with_collapse
-        collapse.wait_for_visible()
-        if collapse.has_class("collapsed"):
-            collapse.wait_for_and_click()
         sharing_component.share_with_multiselect.wait_for_visible()
 
     def share_unshare_with_user(self, sharing_component, email):
@@ -2109,9 +2541,113 @@ class NavigatesGalaxy(HasDriver):
             self.wait_for_xpath_visible(xpath)
         self.screenshot_if(screenshot_after_submit)
 
+    def create_file_source_template(self, instance: FileSourceInstance) -> str:
+        self.navigate_to_user_preferences()
+        template_id = instance.template_id
+        preferences = self.components.preferences
+        preferences.manage_file_sources.wait_for_and_click()
+        file_source_instances = self.components.file_source_instances
+        file_source_instances.index.create_button.wait_for_and_click()
+
+        select_template = file_source_instances.create.select(template_id=template_id)
+        select_template.wait_for_present()
+        self.screenshot(f"user_file_source_select_{template_id}")
+        select_template.wait_for_and_click()
+
+        file_source_instances.create._.wait_for_present()
+        self.screenshot(f"user_file_source_form_empty_{template_id}")
+        self._fill_configuration_template(instance.name, instance.description, instance.parameters)
+        self.screenshot(f"user_file_source_form_full_{template_id}")
+        file_source_instances.create.submit.wait_for_and_click()
+
+        file_source_instances = self.components.file_source_instances
+        file_source_instances.index._.wait_for_present()
+        self.screenshot(f"user_file_source_created_{template_id}")
+        instances = self.api_get("file_source_instances")
+        newest_instance = instances[-1]
+        uri_root = newest_instance["uri_root"]
+        return uri_root
+
+    def create_object_store_template(self, instance: ObjectStoreInstance) -> str:
+        self.navigate_to_user_preferences()
+        template_id = instance.template_id
+        preferences = self.components.preferences
+        preferences.manage_object_stores.wait_for_and_click()
+        object_store_instances = self.components.object_store_instances
+        object_store_instances.index.create_button.wait_for_and_click()
+
+        select_template = object_store_instances.create.select(template_id=template_id)
+        select_template.wait_for_present()
+        self.screenshot(f"user_object_store_select_{template_id}")
+        select_template.wait_for_and_click()
+
+        object_store_instances.create._.wait_for_present()
+        self.screenshot(f"user_object_store_form_empty_{template_id}")
+        self._fill_configuration_template(instance.name, instance.description, instance.parameters)
+        self.screenshot(f"user_object_store_form_full_{template_id}")
+        object_store_instances.create.submit.wait_for_and_click()
+        object_store_instances.index._.wait_for_present()
+        self.screenshot(f"user_object_store_created_{template_id}")
+        instances = self.api_get("object_store_instances")
+        newest_instance = instances[-1]
+        object_store_id = newest_instance["object_store_id"]
+        return object_store_id
+
+    def _fill_configuration_template(
+        self, name: str, description: Optional[str], parameters: List[ConfigTemplateParameter]
+    ):
+        self.components.tool_form.parameter_input(parameter="_meta_name").wait_for_and_send_keys(
+            name,
+        )
+        if description:
+            self.components.tool_form.parameter_input(parameter="_meta_description").wait_for_and_send_keys(
+                description,
+            )
+
+        for parameter in parameters:
+            form_type = parameter.form_element_type
+            if form_type in ["integer", "string"]:
+                self.components.tool_form.parameter_input(parameter=parameter.name).wait_for_and_send_keys(
+                    str(parameter.value),
+                )
+            else:
+                raise NotImplementedError("Configuration templates of type {form_type} not yet implemented")
+
+    def tutorial_mode_activate(self):
+        search_selector = "#gtn a"
+        self.wait_for_and_click_selector(search_selector)
+        self.wait_for_selector_visible("#gtn-screen")
+
+    def mouse_drag(
+        self,
+        from_element: WebElement,
+        to_element: Optional[WebElement] = None,
+        from_offset=(0, 0),
+        to_offset=(0, 0),
+        via_offsets: Optional[List[Tuple[int, int]]] = None,
+    ):
+        chain = self.action_chains().move_to_element(from_element).move_by_offset(*from_offset)
+        chain = chain.click_and_hold().pause(self.wait_length(self.wait_types.UX_RENDER))
+
+        if via_offsets is not None:
+            for offset in via_offsets:
+                chain = chain.move_by_offset(*offset).pause(self.wait_length(self.wait_types.UX_RENDER))
+
+        if to_element is not None:
+            chain = chain.move_to_element(to_element)
+
+        chain = chain.move_by_offset(*to_offset).pause(self.wait_length(self.wait_types.UX_RENDER)).release()
+        chain.perform()
+
 
 class NotLoggedInException(SeleniumTimeoutException):
     def __init__(self, timeout_exception, user_info, dom_message):
         template = "Waiting for UI to reflect user logged in but it did not occur. API indicates no user is currently logged in. %s API response was [%s]. %s"
         msg = template % (dom_message, user_info, timeout_exception.msg)
+        super().__init__(msg=msg, screen=timeout_exception.screen, stacktrace=timeout_exception.stacktrace)
+
+
+class ClientBuildException(SeleniumTimeoutException):
+    def __init__(self, timeout_exception: SeleniumTimeoutException):
+        msg = f"Error waiting for Galaxy masthead to appear, this frequently means there is a problem with the client build and the Galaxy client is broken. {timeout_exception.msg}"
         super().__init__(msg=msg, screen=timeout_exception.screen, stacktrace=timeout_exception.stacktrace)

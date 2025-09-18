@@ -1,5 +1,9 @@
 import logging
 import os
+from datetime import (
+    datetime,
+    timezone,
+)
 from json import loads
 from typing import (
     Any,
@@ -13,8 +17,10 @@ from fastapi import (
     Body,
     Depends,
     Request,
+    Response,
     UploadFile,
 )
+from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from galaxy import (
@@ -31,7 +37,13 @@ from galaxy.schema.fetch_data import (
     FetchDataFormPayload,
     FetchDataPayload,
 )
+from galaxy.tool_util.verify import ToolTestDescriptionDict
+from galaxy.tool_util_models import UserToolSource
 from galaxy.tools.evaluation import global_tool_errors
+from galaxy.util.hash_util import (
+    HashFunctionNameEnum,
+    memory_bound_hexdigest,
+)
 from galaxy.util.zipstream import ZipstreamWrapper
 from galaxy.web import (
     expose_api,
@@ -39,7 +51,6 @@ from galaxy.web import (
     expose_api_anonymous_and_sessionless,
     expose_api_raw_anonymous_and_sessionless,
 )
-from galaxy.web.framework.decorators import expose_api_raw
 from galaxy.webapps.base.controller import UsesVisualizationMixin
 from galaxy.webapps.base.webapp import GalaxyWebTransaction
 from galaxy.webapps.galaxy.services.tools import ToolsService
@@ -60,15 +71,19 @@ PROTECTED_TOOLS = ["__DATA_FETCH__"]
 # Tool search bypasses the fulltext for the following list of terms
 SEARCH_RESERVED_TERMS_FAVORITES = ["#favs", "#favorites", "#favourites"]
 
+ICON_CACHE_MAX_AGE = 2592000  # 30 days
+
 
 class FormDataApiRoute(APIContentTypeRoute):
-
     match_content_type = "multipart/form-data"
 
 
 class JsonApiRoute(APIContentTypeRoute):
-
     match_content_type = "application/json"
+
+
+class PNGIconResponse(FileResponse):
+    media_type = "image/png"
 
 
 router = Router(tags=["tools"])
@@ -76,12 +91,23 @@ router = Router(tags=["tools"])
 FetchDataForm = as_form(FetchDataFormPayload)
 
 
+async def get_files(request: Request, files: Optional[List[UploadFile]] = None):
+    # FastAPI's UploadFile is a very light wrapper around starlette's UploadFile
+    files2: List[StarletteUploadFile] = cast(List[StarletteUploadFile], files or [])
+    if not files2:
+        data = await request.form()
+        for value in data.values():
+            if isinstance(value, StarletteUploadFile):
+                files2.append(value)
+    return files2
+
+
 @router.cbv
 class FetchTools:
     service: ToolsService = depends(ToolsService)
 
     @router.post("/api/tools/fetch", summary="Upload files to Galaxy", route_class_override=JsonApiRoute)
-    async def fetch_json(self, payload: FetchDataPayload = Body(...), trans: ProvidesHistoryContext = DependsOnTrans):
+    def fetch_json(self, payload: FetchDataPayload = Body(...), trans: ProvidesHistoryContext = DependsOnTrans):
         return self.service.create_fetch(trans, payload)
 
     @router.post(
@@ -89,22 +115,67 @@ class FetchTools:
         summary="Upload files to Galaxy",
         route_class_override=FormDataApiRoute,
     )
-    async def fetch_form(
+    def fetch_form(
         self,
-        request: Request,
         payload: FetchDataFormPayload = Depends(FetchDataForm.as_form),
-        files: Optional[List[UploadFile]] = None,
         trans: ProvidesHistoryContext = DependsOnTrans,
+        files: List[StarletteUploadFile] = Depends(get_files),
     ):
-        files2: List[StarletteUploadFile] = cast(List[StarletteUploadFile], files or [])
+        return self.service.create_fetch(trans, payload, files)
 
-        # FastAPI's UploadFile is a very light wrapper around starlette's UploadFile
-        if not files2:
-            data = await request.form()
-            for value in data.values():
-                if isinstance(value, StarletteUploadFile):
-                    files2.append(value)
-        return self.service.create_fetch(trans, payload, files2)
+    @router.get(
+        "/api/tools/{tool_id:path}/icon",
+        summary="Get the icon image associated with a tool",
+        response_class=PNGIconResponse,
+        responses={
+            200: {
+                "content": {"image/png": {}},
+                "description": "Tool icon image in PNG format",
+            },
+            304: {
+                "description": "Tool icon image has not been modified since the last request",
+            },
+            404: {
+                "description": "Tool icon file not found or not provided by the tool",
+            },
+        },
+    )
+    def get_icon(self, request: Request, tool_id: str, trans: ProvidesHistoryContext = DependsOnTrans):
+        """Returns the icon image associated with a tool.
+
+        The icon image is served with caching headers to allow for efficient
+        client-side caching. The icon image is expected to be in PNG format.
+        """
+        tool_icon_path = self.service.get_tool_icon_path(trans=trans, tool_id=tool_id)
+        if tool_icon_path is None:
+            raise exceptions.ObjectNotFound(f"Tool icon file not found or not provided by the tool: {tool_id}")
+
+        # Get file modification time
+        file_stat = os.stat(tool_icon_path)
+        last_modified = datetime.fromtimestamp(file_stat.st_mtime, tz=timezone.utc).strftime(
+            "%a, %d %b %Y %H:%M:%S GMT"
+        )
+
+        # Check If-Modified-Since
+        if_modified_since = request.headers.get("If-Modified-Since")
+        if if_modified_since == last_modified:
+            return Response(status_code=304)
+
+        # Generate ETag based on file content
+        file_hash = memory_bound_hexdigest(hash_func_name=HashFunctionNameEnum.md5, path=tool_icon_path)
+        etag = f'"{file_hash}"'
+
+        # Check If-None-Match (ETag)
+        if_none_match = request.headers.get("If-None-Match", "").split(",")
+        if any(etag.strip() == e.strip(' W/"') for e in if_none_match):  # Handle weak ETags
+            return Response(status_code=304)
+
+        # Serve the file with caching headers
+        response = PNGIconResponse(tool_icon_path)
+        response.headers["Cache-Control"] = f"public, max-age={ICON_CACHE_MAX_AGE}, immutable"
+        response.headers["ETag"] = etag
+        response.headers["Last-Modified"] = last_modified
+        return response
 
 
 class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
@@ -181,6 +252,40 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
             raise exceptions.InternalServerError("Error: Could not convert toolbox to dictionary")
 
     @expose_api_anonymous_and_sessionless
+    def panel_views(self, trans: GalaxyWebTransaction, **kwds):
+        """
+        GET /api/tool_panels
+        returns a dictionary of available tool panel views and default view
+        """
+
+        rval = {}
+        rval["default_panel_view"] = self.app.toolbox._default_panel_view(trans)
+        rval["views"] = self.app.toolbox.panel_view_dicts()
+        return rval
+
+    @expose_api_anonymous_and_sessionless
+    def panel_view(self, trans: GalaxyWebTransaction, view, **kwds):
+        """
+        GET /api/tool_panels/{view}
+
+        returns a dictionary of tools and tool sections for the given view
+
+        :param trackster: if true, only tools that are compatible with
+                          Trackster are returned
+        """
+
+        # Read param.
+        trackster = util.string_as_bool(kwds.get("trackster", "False"))
+
+        # Return panel view.
+        try:
+            return self.app.toolbox.to_panel_view(trans, trackster=trackster, view=view)
+        except exceptions.MessageException:
+            raise
+        except Exception:
+            raise exceptions.InternalServerError("Error: Could not convert toolbox to dictionary")
+
+    @expose_api_anonymous_and_sessionless
     def show(self, trans: GalaxyWebTransaction, id, **kwd):
         """
         GET /api/tools/{tool_id}
@@ -207,13 +312,13 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
         """
         kwd = _kwd_or_payload(kwd)
         tool_version = kwd.get("tool_version")
-        history_id = kwd.pop("history_id", None)
+        tool_uuid = kwd.get("tool_uuid")
         history = None
-        if history_id:
+        if history_id := kwd.pop("history_id", None):
             history = self.history_manager.get_owned(
                 self.decode_id(history_id), trans.user, current_history=trans.history
             )
-        tool = self.service._get_tool(trans, id, tool_version=tool_version, user=trans.user)
+        tool = self.service._get_tool(trans, id, tool_version=tool_version, user=trans.user, tool_uuid=tool_uuid)
         return tool.to_json(trans, kwd.get("inputs", kwd), history=history)
 
     @web.require_admin
@@ -225,7 +330,10 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
         kwd = _kwd_or_payload(kwd)
         tool_version = kwd.get("tool_version", None)
         tool = self.service._get_tool(trans, id, tool_version=tool_version, user=trans.user)
-        path = tool.test_data_path(kwd.get("filename"))
+        try:
+            path = tool.test_data_path(kwd.get("filename"))
+        except ValueError as e:
+            raise exceptions.MessageException(str(e))
         if path:
             return path
         else:
@@ -241,8 +349,7 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
         filename = kwd.get("filename")
         if filename is None:
             raise exceptions.ObjectNotFound("Test data filename not specified.")
-        path = tool.test_data_path(filename)
-        if path:
+        if path := tool.test_data_path(filename):
             if os.path.isfile(path):
                 trans.response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
                 return open(path, mode="rb")
@@ -284,7 +391,7 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
         return test_counts_by_tool
 
     @expose_api_anonymous_and_sessionless
-    def test_data(self, trans: GalaxyWebTransaction, id, **kwd):
+    def test_data(self, trans: GalaxyWebTransaction, id, **kwd) -> List[ToolTestDescriptionDict]:
         """
         GET /api/tools/{tool_id}/test_data?tool_version={tool_version}
 
@@ -419,6 +526,7 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
         Return diagnostic information to help debug panel
         and dependency related problems.
         """
+
         # TODO: Move this into tool.
         def to_dict(x):
             return x.to_dict()
@@ -428,9 +536,8 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
             lineage_dict = tool.lineage.to_dict()
         else:
             lineage_dict = None
-        tool_shed_dependencies = tool.installed_tool_dependencies
         tool_shed_dependencies_dict: Optional[list] = None
-        if tool_shed_dependencies:
+        if tool_shed_dependencies := tool.installed_tool_dependencies:
             tool_shed_dependencies_dict = list(map(to_dict, tool_shed_dependencies))
         return {
             "tool_id": tool.id,
@@ -481,21 +588,24 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
             ],
             "batch": input_src == "hdca",
         }
-        history_id = payload.get("history_id")
-        if history_id:
+        if history_id := payload.get("history_id"):
             decoded_id = self.decode_id(history_id)
             target_history = self.history_manager.get_owned(decoded_id, trans.user, current_history=trans.history)
         else:
             if input_src == "hdca":
-                target_history = self.hdca_manager.get_dataset_collection_instance(
-                    trans, instance_type="history", id=input_id
-                ).history
+                hdca = self.hdca_manager.get_dataset_collection_instance(trans, instance_type="history", id=input_id)
+                assert hdca.history
+                target_history = hdca.history
             elif input_src == "hda":
                 decoded_id = trans.app.security.decode_id(input_id)
-                target_history = self.hda_manager.get_accessible(decoded_id, trans.user).history
+                hda = self.hda_manager.get_accessible(decoded_id, trans.user)
+                assert hda.history
+                target_history = hda.history
                 self.history_manager.error_unless_owner(target_history, trans.user, current_history=trans.history)
             else:
                 raise exceptions.RequestParameterInvalidException("Must run conversion on either hdca or hda.")
+
+        self.history_manager.error_unless_mutable(target_history)
 
         # Make the target datatype available to the converter
         params["__target_datatype__"] = target_type
@@ -516,15 +626,22 @@ class ToolsController(BaseGalaxyAPIController, UsesVisualizationMixin):
         trans.response.headers["Content-Disposition"] = f'attachment; filename="{id}.tgz"'
         return download_file
 
-    @expose_api_raw
+    @expose_api_raw_anonymous_and_sessionless
     def raw_tool_source(self, trans: GalaxyWebTransaction, id, **kwds):
         """Returns tool source. ``language`` is included in the response header."""
         if not trans.app.config.enable_tool_source_display and not trans.user_is_admin:
             raise exceptions.InsufficientPermissionsException(
                 "Only administrators may display tool sources on this Galaxy server."
             )
-        tool = self.service._get_tool(trans, id, user=trans.user, tool_version=kwds.get("tool_version"))
+        tool = self.service._get_tool(trans, id, user=trans.user, tool_version=kwds.get("tool_version"), tool_uuid=id)
         trans.response.headers["language"] = tool.tool_source.language
+        if dynamic_tool := getattr(tool, "dynamic_tool", None):
+            if dynamic_tool.value.get("class") == "GalaxyUserTool":
+                return UserToolSource(**dynamic_tool.value).model_dump_json(
+                    by_alias=True,
+                    exclude_defaults=True,
+                    exclude_unset=True,
+                )
         return tool.tool_source.to_string()
 
     @web.require_admin

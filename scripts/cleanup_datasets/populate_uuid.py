@@ -37,18 +37,19 @@ def main():
     app_properties = app_properties_from_args(args)
     config = galaxy.config.Configuration(**app_properties)
     model = init_models_from_config(config)
+    session = model.context()
 
-    for row in model.context.query(model.Dataset):
+    for row in session.query(model.Dataset):
         if row.uuid is None:
             row.uuid = uuid.uuid4()
             print("Setting dataset:", row.id, " UUID to ", row.uuid)
-    model.context.flush()
+    session.commit()
 
-    for row in model.context.query(model.Workflow):
+    for row in session.query(model.Workflow):
         if row.uuid is None:
             row.uuid = uuid.uuid4()
             print("Setting Workflow:", row.id, " UUID to ", row.uuid)
-    model.context.flush()
+    session.commit()
     print("Complete")
 
 

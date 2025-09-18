@@ -1,12 +1,16 @@
 """
 SLURM job control via the DRMAA API.
 """
+
 import os
 import time
 
 from galaxy import model
 from galaxy.jobs.runners.drmaa import DRMAAJobRunner
-from galaxy.util import commands
+from galaxy.util import (
+    commands,
+    unicodify,
+)
 from galaxy.util.custom_logging import get_logger
 
 log = get_logger(__name__)
@@ -134,16 +138,8 @@ class SlurmJobRunner(DRMAAJobRunner):
                         ajs.job_wrapper.get_id_tag(),
                         ajs.job_id,
                     )
-                    ajs.job_wrapper.change_state(
-                        model.Job.states.QUEUED, info="Job was resubmitted due to node failure"
-                    )
-                    try:
-                        self.queue_job(ajs.job_wrapper)
-                        return
-                    except Exception:
-                        ajs.fail_message = (
-                            "This job failed due to a cluster node failure, and an attempt to resubmit the job failed."
-                        )
+                    self.mark_as_resubmitted(ajs, info="Job was resubmitted due to node failure")
+                    return
                 elif slurm_state == "OUT_OF_MEMORY":
                     log.info(
                         "(%s/%s) Job hit memory limit (SLURM state: OUT_OF_MEMORY)",
@@ -211,16 +207,19 @@ class SlurmJobRunner(DRMAAJobRunner):
         """
         try:
             log.debug("Checking %s for exceeded memory message from SLURM", efile_path)
-            with open(efile_path) as f:
+            with open(efile_path, "rb") as f:
                 if os.path.getsize(efile_path) > 2048:
                     f.seek(-2048, os.SEEK_END)
                     f.readline()
                 for line in f.readlines():
-                    stripped_line = line.strip()
+                    stripped_line = unicodify(line.strip())
                     if stripped_line == SLURM_MEMORY_LIMIT_EXCEEDED_MSG:
                         return OUT_OF_MEMORY_MSG
                     elif any(_ in stripped_line for _ in SLURM_MEMORY_LIMIT_EXCEEDED_PARTIAL_WARNINGS):
                         return PROBABLY_OUT_OF_MEMORY_MSG
+        except FileNotFoundError:
+            # Entirely expected, as __check_memory_limit is only called if the job state is CANCELLED
+            return False
         except Exception:
             log.exception("Error reading end of %s:", efile_path)
 

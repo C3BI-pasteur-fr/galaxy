@@ -4,9 +4,9 @@ import pytest
 
 from galaxy.files import (
     ConfiguredFileSources,
-    ConfiguredFileSourcesConfig,
     DictFileSourcesUserContext,
 )
+from galaxy.files.plugins import FileSourcePluginsConfig
 from galaxy.job_execution.setup import JobIO
 from galaxy.model import Job
 from galaxy.model.unittest_utils import GalaxyDataTestApp
@@ -28,7 +28,9 @@ USER_CONTEXT = {
 class FileSourcesMockApp(GalaxyDataTestApp):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.file_sources = ConfiguredFileSources(ConfiguredFileSourcesConfig.from_app_config(self.config))  # type: ignore[assignment]
+        self.file_sources = ConfiguredFileSources(
+            FileSourcePluginsConfig.from_app_config(self.config),
+        )
 
 
 @pytest.fixture
@@ -39,8 +41,9 @@ def app() -> FileSourcesMockApp:
 @pytest.fixture
 def job(app: FileSourcesMockApp) -> Job:
     job = Job()
-    app.model.session.add(job)
-    app.model.session.flush()
+    session = app.model.session
+    session.add(job)
+    session.commit()
     return job
 
 

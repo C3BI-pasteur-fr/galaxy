@@ -5,8 +5,7 @@ from .framework import (
 )
 
 
-class LibraryToCollectionsTestCase(SeleniumTestCase, UsesLibraryAssertions):
-
+class TestLibraryToCollections(SeleniumTestCase, UsesLibraryAssertions):
     requires_admin = True
 
     @selenium_test
@@ -34,6 +33,7 @@ class LibraryToCollectionsTestCase(SeleniumTestCase, UsesLibraryAssertions):
         self.list_of_pairs_export()
 
     def prepare_library_for_data_export(self, files_to_import, history_name=None):
+        self.admin_login()
         self.create_new_library()
         self.home()
         self.history_panel_create_new()
@@ -63,7 +63,7 @@ class LibraryToCollectionsTestCase(SeleniumTestCase, UsesLibraryAssertions):
                 collection_option=collection_option
             ).wait_for_and_click()
         self.screenshot(f"libraries_to_collection_landing_is_new_history={is_new_history}")
-        self.components.libraries.folder.import_datasets_ok_button.wait_for_and_click()
+        self.components.libraries.folder.add_to_history_as_collection.wait_for_and_click()
         self.build_collection_and_assert()
         if is_new_history:
             assert self.history_panel_name_element().text == random_name
@@ -78,10 +78,9 @@ class LibraryToCollectionsTestCase(SeleniumTestCase, UsesLibraryAssertions):
             collection_option="list:paired"
         ).wait_for_and_click()
         self.screenshot(f"test_export_pairs_list={is_new_history}")
-        self.components.libraries.folder.import_datasets_ok_button.wait_for_and_click()
-        self.components.libraries.folder.clear_filters.wait_for_and_click()
-        self.collection_builder_click_paired_item("forward", 0)
-        self.collection_builder_click_paired_item("reverse", 1)
+        self.components.libraries.folder.add_to_history_as_collection.wait_for_and_click()
+        self.collection_builder_pair_rows(0, 1)
+        self.components.collection_builders.list_wizard.dismiss_unmatched.wait_for_and_click()
         self.components.libraries.folder.export_to_history_collection_name.wait_for_and_send_keys(
             self._get_random_name()
         )

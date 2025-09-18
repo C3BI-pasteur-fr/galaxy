@@ -22,6 +22,13 @@ for i = 1, #channels do
     channel_args = channel_args .. " -c '" .. channels[i] .. "'"
 end
 
+local strict_channel_priority = VAR.STRICT_CHANNEL_PRIORITY
+if strict_channel_priority == '' then
+    strict_channel_priority = ''
+else
+    strict_channel_priority = '--strict-channel-priority'
+end
+
 local target_args = ''
 local targets = VAR.TARGETS:split(",")
 for i = 1, #targets do
@@ -42,13 +49,14 @@ end
 
 local conda_image = VAR.CONDA_IMAGE
 if conda_image == '' then
-    conda_image = 'continuumio/miniconda3:latest'
+    conda_image = 'quay.io/condaforge/miniforge3:latest'
 end
 
+local conda_bin = VAR.CONDA_BIN
 
 local singularity_image = VAR.SINGULARITY_IMAGE
 if singularity_image == '' then
-    singularity_image = 'quay.io/biocontainers/singularity:2.4.6--0'
+    singularity_image = 'quay.io/singularity/singularity:v3.10.4'
 end
 
 local singularity_image_dir = VAR.SINGULARITY_IMAGE_DIR
@@ -87,10 +95,11 @@ inv.task('build')
     .using(conda_image)
         .withHostConfig({binds = bind_args})
         .run('/bin/sh', '-c', preinstall
-            .. 'conda install '
+            .. conda_bin .. ' create '
             .. channel_args .. ' '
+            .. strict_channel_priority .. ' '
             .. target_args
-            .. ' --strict-channel-priority -p /usr/local --copy --yes '
+            .. ' -p /usr/local --copy --yes '
             .. verbose
             .. postinstall)
     .wrap('build/dist')

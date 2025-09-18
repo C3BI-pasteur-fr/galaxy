@@ -1,14 +1,17 @@
 <template>
     <b-card v-if="hasContent" class="tool-footer">
         <div v-if="hasCitations" class="mb-1">
-            <span v-localize class="footer-section-name">Citations</span>
-            <font-awesome-icon
+            <span v-localize class="footer-section-name">References</span>
+            <b-button
                 v-b-tooltip.hover
-                title="Copy all citations as BibTeX"
-                icon="copy"
+                title="Copy all references as BibTeX"
                 style="cursor: pointer"
-                @click="copyBibtex" />
-            <Citation
+                variant="link"
+                size="sm"
+                @click="copyBibtex">
+                <FontAwesomeIcon icon="copy" />
+            </b-button>
+            <CitationItem
                 v-for="(citation, index) in citations"
                 :key="index"
                 class="formatted-reference"
@@ -17,8 +20,12 @@
         </div>
         <div v-if="hasRequirements" class="mb-1">
             <span v-localize class="footer-section-name">Requirements</span>
-            <a href="https://galaxyproject.org/tools/requirements/" target="_blank">
-                <font-awesome-icon v-b-tooltip.hover title="Learn more about Galaxy Requirements" icon="question" />
+            <a
+                v-b-tooltip.hover
+                title="Learn more about Galaxy Requirements"
+                href="https://galaxyproject.org/tools/requirements/"
+                target="_blank">
+                See details <FontAwesomeIcon icon="external-link-alt" />
             </a>
             <div v-for="(requirement, index) in requirements" :key="index">
                 - {{ requirement.name }}
@@ -30,31 +37,25 @@
             <License :license-id="license" />
         </div>
         <div v-if="hasReferences" class="mb-1">
-            <span v-localize class="footer-section-name">References</span>
+            <span v-localize class="footer-section-name">External links</span>
             <div v-for="(xref, index) in xrefs" :key="index">
                 -
-                <template v-if="xref.reftype == 'bio.tools'">
+                <template v-if="xref.type == 'bio.tools'">
                     bio.tools: {{ xref.value }} (<a :href="`https://bio.tools/${xref.value}`" target="_blank"
                         >bio.tools
-                        <font-awesome-icon
-                            v-b-tooltip.hover
-                            title="Visit bio.tools reference"
-                            icon="external-link-alt" /> </a
+                        <FontAwesomeIcon v-b-tooltip.hover title="Visit bio.tools page" icon="external-link-alt" /> </a
                     >) (<a :href="`https://openebench.bsc.es/tool/${xref.value}`" target="_blank"
                         >OpenEBench
-                        <font-awesome-icon
-                            v-b-tooltip.hover
-                            title="Visit OpenEBench reference"
-                            icon="external-link-alt" /> </a
+                        <FontAwesomeIcon v-b-tooltip.hover title="Visit OpenEBench page" icon="external-link-alt" /> </a
                     >)
                 </template>
-                <template v-else-if="xref.reftype == 'bioconductor'">
+                <template v-else-if="xref.type == 'bioconductor'">
                     Bioconductor Package:
                     <a :href="`https://bioconductor.org/packages/${xref.value}/`" target="_blank"
                         >{{ xref.value }} (doi:10.18129/B9.bioc.{{ xref.value }})</a
                     >
                 </template>
-                <template v-else> {{ xref.reftype }}: {{ xref.value }} </template>
+                <template v-else> {{ xref.type }}: {{ xref.value }} </template>
             </div>
         </div>
         <div v-if="hasCreators" class="mb-1">
@@ -65,21 +66,21 @@
 </template>
 
 <script>
-import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
-import { faQuestion, faCopy, faAngleDoubleDown, faAngleDoubleUp } from "@fortawesome/free-solid-svg-icons";
-
-library.add(faQuestion, faCopy, faAngleDoubleDown, faAngleDoubleUp);
-
+import { faAngleDoubleDown, faAngleDoubleUp, faCopy, faQuestion } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { getCitations } from "components/Citation/services";
-import Citation from "components/Citation/Citation";
 import License from "components/License/License";
 import Creators from "components/SchemaOrg/Creators";
 import { copy } from "utils/clipboard";
 
+import CitationItem from "components/Citation/CitationItem.vue";
+
+library.add(faQuestion, faCopy, faAngleDoubleDown, faAngleDoubleUp);
+
 export default {
     components: {
-        Citation,
+        CitationItem,
         License,
         Creators,
         FontAwesomeIcon,
@@ -90,7 +91,7 @@ export default {
         },
         hasCitations: {
             type: Boolean,
-            default: true,
+            default: false,
         },
         xrefs: {
             type: Array,
@@ -156,7 +157,7 @@ export default {
                 const bibtex = cite.format("bibtex", {});
                 text += bibtex;
             });
-            copy(text, "Citations copied to your clipboard as BibTeX");
+            copy(text, "References copied to your clipboard as BibTeX");
         },
     },
 };

@@ -26,7 +26,7 @@ class CacheableStaticURLParser(StaticURLParser):
                     app.cache_control(max_age=int(self.cache_seconds))
                 return app(environ, start_response)
             return self.add_slash(environ, start_response)
-        if path_info == "/":
+        elif path_info == "/":
             # @@: This should obviously be configurable
             filename = "index.html"
         else:
@@ -36,7 +36,7 @@ class CacheableStaticURLParser(StaticURLParser):
         host = environ.get("HTTP_HOST")
         if self.directory_per_host and host:
             for host_key, host_val in self.directory_per_host.items():
-                if host_key in host:
+                if host_key == host:
                     directory = host_val
                     break
 
@@ -52,8 +52,7 @@ class CacheableStaticURLParser(StaticURLParser):
             return self.__class__(full)(environ, start_response)
         if environ.get("PATH_INFO") and environ.get("PATH_INFO") != "/":
             return self.error_extra_path(environ, start_response)
-        if_none_match = environ.get("HTTP_IF_NONE_MATCH")
-        if if_none_match:
+        if if_none_match := environ.get("HTTP_IF_NONE_MATCH"):
             mytime = os.stat(full).st_mtime
             if str(mytime) == if_none_match:
                 headers: List[Tuple[str, str]] = []

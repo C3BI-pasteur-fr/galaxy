@@ -1,103 +1,51 @@
+<script setup lang="ts">
+import { onMounted } from "vue";
+
+import type { WorkflowInvocation } from "@/api/invocations";
+import Webhooks from "@/utils/webhooks";
+import { startWatchingHistory } from "@/watch/watchHistoryProvided";
+
+import GridInvocation from "@/components/Grid/GridInvocation.vue";
+import WorkflowInvocationState from "@/components/WorkflowInvocationState/WorkflowInvocationState.vue";
+
+const props = defineProps<{
+    workflowName: string;
+    invocations: WorkflowInvocation[];
+}>();
+
+onMounted(() => {
+    new Webhooks.WebhookView({
+        type: "workflow",
+        toolId: null,
+        toolVersion: null,
+    });
+    startWatchingHistory();
+});
+
+const targetHistories = props.invocations.reduce((histories, invocation) => {
+    if (invocation.history_id && !histories.includes(invocation.history_id)) {
+        histories.push(invocation.history_id);
+    }
+    return histories;
+}, [] as string[]);
+</script>
+
 <template>
     <div>
-        <div class="donemessagelarge">
-            <p>
-                Successfully invoked workflow <b>{{ workflowName }}</b
-                ><em v-if="multipleInvocations"> - {{ timesExecuted }} times</em>.
-            </p>
-            <p v-if="multipleInvocations">
+        <div v-if="props.invocations.length > 1" class="donemessagelarge">
+            Successfully invoked workflow <b>{{ props.workflowName }}</b>
+            <em> - {{ props.invocations.length }} times</em>.
+            <span v-if="targetHistories.length > 1">
                 This workflow will generate results in multiple histories. You can observe progress in the
-                <a :href="historyTarget">history multi-view</a>.
-            </p>
-            <p v-else-if="wasNewHistoryTarget">
-                This workflow will generate results in a new history.
-                <a class="workflow-new-history-target-link" :href="historyTarget">Switch to that history now</a>.
-            </p>
-            <p v-else>You can check the status of queued jobs and view the resulting data the History panel.</p>
+                <router-link to="/histories/view_multiple">history multi-view</router-link>.
+            </span>
         </div>
-        <workflow-invocation-state
-            v-for="(invocation, index) in invocations"
-            :key="invocation.id"
-            :index="index"
-            :invocation-id="invocation.id" />
+        <GridInvocation v-if="props.invocations.length > 1" :invocations-list="props.invocations" />
+        <WorkflowInvocationState
+            v-else-if="props.invocations.length === 1 && props.invocations[0]"
+            :invocation-id="props.invocations[0].id"
+            is-full-page
+            success />
         <div id="webhook-view"></div>
     </div>
 </template>
-
-<script>
-import { mapGetters } from "vuex";
-import { WorkflowInvocationState } from "components/WorkflowInvocationState";
-import Webhooks from "mvc/webhooks";
-import { getAppRoot } from "onload/loadConfig";
-import { getGalaxyInstance } from "app";
-
-export default {
-    components: {
-        WorkflowInvocationState,
-    },
-    props: {
-        workflowName: {
-            type: String,
-            required: true,
-        },
-        invocations: {
-            type: Array,
-            required: true,
-        },
-    },
-    data() {
-        return {
-            refreshHistoryTimeout: null,
-        };
-    },
-    computed: {
-        ...mapGetters("history", ["currentHistoryId"]),
-        timesExecuted() {
-            return this.invocations.length;
-        },
-        multipleInvocations() {
-            return this.timesExecuted > 1;
-        },
-        historyTarget() {
-            if (this.multipleInvocations) {
-                return `${getAppRoot()}history/view_multiple`;
-            } else {
-                return `${getAppRoot()}history/switch_to_history?hist_id=${this.invocations[0].history_id}`;
-            }
-        },
-        wasNewHistoryTarget() {
-            if (this.invocations.length < 1) {
-                return false;
-            }
-            return this.invocations[0].history_id && this.currentHistoryId != this.invocations[0].history_id;
-        },
-    },
-    mounted() {
-        new Webhooks.WebhookView({
-            type: "workflow",
-            toolId: null,
-            toolVersion: null,
-        });
-        this._refreshHistory();
-    },
-    methods: {
-        _refreshHistory() {
-            // remove when disabling backbone history
-            const Galaxy = getGalaxyInstance();
-            var history = Galaxy && Galaxy.currHistoryPanel && Galaxy.currHistoryPanel.model;
-            if (this.refreshHistoryTimeout) {
-                window.clearTimeout(this.refreshHistoryTimeout);
-            }
-            if (history && history.refresh) {
-                history.refresh().success(() => {
-                    if (history.numOfUnfinishedShownContents() === 0) {
-                        this.refreshHistoryTimeout = window.setTimeout(() => {
-                            this._refreshHistory();
-                        }, history.UPDATE_DELAY);
-                    }
-                });
-            }
-        },
-    },
-};
-</script>

@@ -1,22 +1,36 @@
 <template>
     <div>
-        <b-alert v-if="errorMessage" class="mt-2" :show="dismissCountDown" variant="info" @dismissed="resetAlert">
+        <b-alert
+            v-if="errorMessage"
+            class="mt-2"
+            :show="dismissCountDown"
+            variant="info"
+            dismissible
+            @dismissed="resetAlert"
+            @dismiss-count-down="($event) => (dismissCountDown = $event)">
             {{ errorMessage }}
+            <b-progress :max="dismissSecs" :value="dismissCountDown" height="4px" class="mt-1">
+                <b-progress-bar :value="dismissCountDown" variant="info" />
+            </b-progress>
         </b-alert>
         <b-row align-v="center">
             <b-col :sm="isRangeValid ? defaultInputSizeWithSlider : false">
                 <!-- regular dot and dot on numpad have different codes -->
                 <b-form-input
                     v-model="currentValue"
+                    class="ui-input"
+                    :no-wheel="true"
                     :step="step"
-                    size="sm"
                     :type="fieldType"
+                    :placeholder="placeholder"
+                    :state="showState ? (!currentValue && currentValue !== 0 ? (optional ? null : false) : true) : null"
                     @change="onInputChange"
+                    @keypress="isNumberOrDecimal"
                     @keydown.190.capture="onFloatInput"
                     @keydown.110.capture="onFloatInput" />
             </b-col>
             <b-col v-if="isRangeValid" class="pl-0">
-                <b-form-input v-model="currentValue" :min="min" :max="max" :step="step" type="range" />
+                <b-form-input v-model="currentValue" class="ui-input" :min="min" :max="max" :step="step" type="range" />
             </b-col>
         </b-row>
     </div>
@@ -37,13 +51,27 @@ export default {
             type: [Number, String],
             required: false,
             default: undefined,
+            validator: (prop) => typeof prop == "number" || prop === null,
         },
         max: {
             type: [Number, String],
             required: false,
             default: undefined,
+            validator: (prop) => typeof prop == "number" || prop === null,
         },
         workflowBuildingMode: {
+            type: Boolean,
+            default: false,
+        },
+        placeholder: {
+            type: String,
+            default: "",
+        },
+        optional: {
+            type: Boolean,
+            default: false,
+        },
+        showState: {
             type: Boolean,
             default: false,
         },
@@ -51,7 +79,7 @@ export default {
     data() {
         return {
             defaultInputSizeWithSlider: 4,
-            dismissSecs: 5,
+            dismissSecs: 4,
             dismissCountDown: 0,
             errorMessage: "",
             fractionWarning: "This output doesn't allow fractions!",
@@ -73,7 +101,7 @@ export default {
             return this.workflowBuildingMode ? "text" : "number";
         },
         isRangeValid() {
-            return !isNaN(this.min) && !isNaN(this.max) && this.max > this.min;
+            return typeof this.min == "number" && typeof this.max == "number" && this.max > this.min;
         },
         isInteger() {
             return this.type.toLowerCase() === "integer";
@@ -122,11 +150,25 @@ export default {
                 this.dismissCountDown = this.dismissSecs;
             }
         },
+        /** To only allow numbers and decimal points as input for this number field */
+        isNumberOrDecimal(event) {
+            const key = event.key;
+            if ((key >= "0" && key <= "9") || key === ".") {
+                return true;
+            }
+            event.preventDefault();
+            return false;
+        },
         isOutOfRange(value) {
-            return this.isRangeValid && (value > this.max || value < this.min);
+            /* If value=null, then value is within range. */
+            return (
+                (typeof this.max == "number" && value > this.max) || (typeof this.min == "number" && value < this.min)
+            );
         },
         showOutOfRangeWarning(value) {
-            const warningMessage = `${value} is out of ${this.min} - ${this.max} range!`;
+            const rangeDetail =
+                typeof this.max == "number" && value > this.max ? `${value} > ${this.max}` : `${value} < ${this.min}`;
+            const warningMessage = `${value} is out of range! (${rangeDetail})`;
             this.showAlert(warningMessage);
         },
         resetAlert() {

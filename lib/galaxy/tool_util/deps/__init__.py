@@ -11,8 +11,9 @@ from typing import (
     Dict,
     List,
     Optional,
-    TYPE_CHECKING,
 )
+
+from typing_extensions import Protocol
 
 from galaxy.util import (
     hash_util,
@@ -32,9 +33,6 @@ from .resolvers import (
     NullDependency,
 )
 from .resolvers.tool_shed_packages import ToolShedPackageDependencyResolver
-
-if TYPE_CHECKING:
-    from galaxy.jobs import JobDestination
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +104,16 @@ def build_dependency_manager(
     return NullDependencyManager()
 
 
+ContainerType = str
+DestinationId = str
+DestinationParametersType = Dict[str, Any]
+
+
+class DestinationProtocol(Protocol):
+    id: Optional[DestinationId]
+    params: DestinationParametersType
+
+
 class DependencyManager:
     """
     A DependencyManager attempts to resolve named and versioned dependencies by
@@ -118,6 +126,7 @@ class DependencyManager:
     dependency available in the current shell environment.
     """
 
+    _destination_for_container_type: Dict[ContainerType, List[DestinationProtocol]]
     cached = False
 
     def __init__(
@@ -145,21 +154,26 @@ class DependencyManager:
             plugin_source = self.__build_dependency_resolvers_plugin_source(conf_file)
         self.dependency_resolvers = self.__parse_resolver_conf_plugins(plugin_source)
         self._enabled_container_types: List[str] = []
-        self._destination_for_container_type: Dict[str, Dict[str, "JobDestination"]] = {}
+        self._destination_for_container_type = {}
 
-    def set_enabled_container_types(self, container_types_to_destinations):
+    def set_enabled_container_types(
+        self, container_types_to_destinations: Dict[ContainerType, List[DestinationProtocol]]
+    ):
         """Set the union of all enabled container types."""
-        self._enabled_container_types = [container_type for container_type in container_types_to_destinations.keys()]
+        self._enabled_container_types = list(container_types_to_destinations.keys())
         # Just pick first enabled destination for a container type, probably covers the most common deployment scenarios
         self._destination_for_container_type = container_types_to_destinations
 
-    def get_destination_info_for_container_type(self, container_type, destination_id=None):
+    def get_destination_info_for_container_type(
+        self, container_type: ContainerType, destination_id: Optional[DestinationId] = None
+    ) -> Optional[DestinationParametersType]:
         if destination_id is None:
             return next(iter(self._destination_for_container_type[container_type])).params
         else:
             for destination in self._destination_for_container_type[container_type]:
                 if destination.id == destination_id:
                     return destination.params
+        return None
 
     @property
     def enabled_container_types(self):
@@ -241,7 +255,6 @@ class DependencyManager:
         tool_info = ToolInfo(**tool_info_kwds)
 
         for i, resolver in enumerate(self.dependency_resolvers):
-
             if index is not None and i != index:
                 continue
 
@@ -304,7 +317,6 @@ class DependencyManager:
                     break
 
             if not isinstance(resolver, ContainerResolver):
-
                 # Check individual requirements
                 for requirement in resolvable_requirements:
                     if requirement in _requirement_to_dependency:
@@ -325,9 +337,9 @@ class DependencyManager:
         return requirement_to_dependency
 
     def uses_tool_shed_dependencies(self):
-        return any(map(lambda r: isinstance(r, ToolShedPackageDependencyResolver), self.dependency_resolvers))
+        return any(isinstance(r, ToolShedPackageDependencyResolver) for r in self.dependency_resolvers)
 
-    def find_dep(self, name, version=None, type="package", **kwds):
+    def find_dep(self, name: str, version: Optional[str] = None, type: str = "package", **kwds):
         log.debug(f"Find dependency {name} version {version}")
         requirements = ToolRequirements([ToolRequirement(name=name, version=version, type=type)])
         dep_dict = self._requirements_to_dependencies_dict(requirements, **kwds)
@@ -431,7 +443,7 @@ class CachedDependencyManager(DependencyManager):
             (dep.name, dep.version, dep.exact, dep.dependency_type) for dep in resolved_dependencies
         ]
         hash_str = json.dumps(sorted(resolved_dependencies))
-        return hash_util.new_secure_hash(hash_str)[:8]  # short hash
+        return hash_util.new_insecure_hash(hash_str)[:8]  # short hash
 
     def get_hashed_dependencies_path(self, resolved_dependencies):
         """

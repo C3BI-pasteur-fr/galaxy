@@ -1,64 +1,51 @@
 /** Adds window manager masthead icon and functionality **/
+import "winbox/src/css/winbox.css";
+
 import _l from "utils/localization";
+import { withPrefix } from "utils/redirect";
 import WinBox from "winbox/src/js/winbox.js";
-import "winbox/dist/css/winbox.min.css";
 
 export class WindowManager {
     constructor(options) {
         options = options || {};
         this.counter = 0;
         this.active = false;
-        this.buttonActive = {
+    }
+
+    /** Return window masthead tab props */
+    getTab() {
+        return {
             id: "enable-window-manager",
             icon: "fa-th",
             tooltip: _l("Enable/Disable Window Manager"),
-            toggle: false,
+            visible: true,
             onclick: () => {
                 this.active = !this.active;
-                this.buttonActive.toggle = this.active;
-                this.buttonActive.show_note = this.active;
-                this.buttonActive.note_cls = this.active && "fa fa-check";
             },
         };
     }
 
     /** Add and display a new window based on options. */
-    add(options) {
-        if (options.target == "_blank") {
-            window.open(options.url);
-        } else if (options.target == "_top" || options.target == "_parent" || options.target == "_self") {
-            window.location = options.url;
-        } else if (!this.active) {
-            const $galaxy_main = window.parent.document.getElementById("galaxy_main");
-            if (options.target == "galaxy_main" || options.target == "center") {
-                if ($galaxy_main.length === 0) {
-                    window.location = this._build_url(options.url, { use_panels: true });
-                } else {
-                    $galaxy_main.attr("src", options.url);
-                }
-            } else {
-                window.location = options.url;
-            }
-        } else {
-            this.counter++;
-            const url = this._build_url(options.url, { hide_panels: true, hide_masthead: true });
-            WinBox.new({
-                title: options.title || "Window",
-                url: url,
-                onclose: () => {
-                    this.counter--;
-                },
-            });
-        }
+    add(options, layout = 10, margin = 20, index = 850) {
+        const url = this._build_url(withPrefix(options.url), { hide_panels: true, hide_masthead: true });
+        const x = this.counter * margin;
+        const y = (this.counter % layout) * margin;
+        this.counter++;
+        WinBox.new({
+            index: index,
+            title: options.title || "Window",
+            url: url,
+            x: x,
+            y: y,
+            onclose: () => {
+                this.counter--;
+            },
+        });
     }
 
     /** Called before closing all windows. */
     beforeUnload() {
-        let confirmText = "";
-        if (this.counter > 0) {
-            confirmText = `You opened ${this.counter} window(s) which will be lost.`;
-        }
-        return confirmText;
+        return this.counter > 0;
     }
 
     /** Url helper */

@@ -1,36 +1,42 @@
+<script setup lang="ts">
+import type { HistorySummary } from "@/api";
+import { useHistoryStore } from "@/stores/historyStore";
+
+import type { DetailsLayoutSummarized } from "../Layout/types";
+
+import HistoryIndicators from "../HistoryIndicators.vue";
+import DetailsLayout from "@/components/History/Layout/DetailsLayout.vue";
+
+interface Props {
+    history: HistorySummary;
+    writeable: boolean;
+    summarized?: DetailsLayoutSummarized;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+    writeable: true,
+    summarized: undefined,
+});
+
+const historyStore = useHistoryStore();
+
+function onSave(newDetails: HistorySummary) {
+    const id = props.history.id;
+    historyStore.updateHistory({ ...newDetails, id });
+}
+</script>
+
 <template>
-    <Details
+    <DetailsLayout
         :name="history.name"
-        :annotation="history.annotation"
+        :annotation="history.annotation || ''"
         :tags="history.tags"
         :writeable="writeable"
+        :summarized="summarized"
+        :update-time="history.update_time"
         @save="onSave">
-        <template v-slot:name>
-            <h3 v-short="history.name || 'History'" data-description="name display" class="my-2" />
+        <template v-if="summarized" v-slot:update-time>
+            <HistoryIndicators :history="history" detailed-time />
         </template>
-    </Details>
+    </DetailsLayout>
 </template>
-
-<script>
-import short from "components/directives/v-short";
-import Details from "components/History/Layout/Details";
-
-export default {
-    components: {
-        Details,
-    },
-    directives: {
-        short,
-    },
-    props: {
-        history: { type: Object, required: true },
-        writeable: { type: Boolean, default: true },
-    },
-    methods: {
-        onSave(newDetails) {
-            const id = this.history.id;
-            this.$emit("update:history", { ...newDetails, id });
-        },
-    },
-};
-</script>

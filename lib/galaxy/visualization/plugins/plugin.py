@@ -2,6 +2,7 @@
 Visualization plugins: instantiate/deserialize data and models
 from a query string and render a webpage based on those data.
 """
+
 import copy
 import logging
 import os
@@ -79,12 +80,11 @@ class VisualizationPlugin(ServesTemplatesPluginMixin):
         base_url = context.get("base_url", "")
         self.base_url = "/".join((base_url, self.name)) if base_url else self.name
         self.static_path = self._get_static_path(self.path)
-        if self.static_path and os.path.exists(os.path.join(self.static_path, "logo.png")):
-            self.config["logo"] = f"{self.static_path}/logo.png"
         template_cache_dir = context.get("template_cache_dir", None)
         additional_template_paths = context.get("additional_template_paths", [])
         self._set_up_template_plugin(template_cache_dir, additional_template_paths=additional_template_paths)
         self.resource_parser = resource_parser.ResourceParser(app)
+        self._set_logo()
 
     def render(self, trans=None, embedded=None, **kwargs):
         """
@@ -118,14 +118,18 @@ class VisualizationPlugin(ServesTemplatesPluginMixin):
             "name": self.name,
             "html": self.config.get("name"),
             "description": self.config.get("description"),
+            "data_sources": self.config.get("data_sources"),
+            "help": self.config.get("help"),
             "logo": self.config.get("logo"),
+            "tags": self.config.get("tags"),
             "title": self.config.get("title"),
             "target": self.config.get("render_target", "galaxy_main"),
             "embeddable": self.config.get("embeddable"),
             "entry_point": self.config.get("entry_point"),
             "settings": self.config.get("settings"),
-            "groups": self.config.get("groups"),
             "specs": self.config.get("specs"),
+            "tracks": self.config.get("tracks"),
+            "tests": self.config.get("tests"),
             "href": self._get_url(),
         }
 
@@ -160,7 +164,7 @@ class VisualizationPlugin(ServesTemplatesPluginMixin):
         render_vars.update(
             visualization_name=self.name,
             visualization_display_name=self.config["name"],
-            title=kwargs.get("title", None),
+            title=kwargs.get("title", "Unnamed Visualization"),
             saved_visualization=None,
             visualization_id=None,
             visualization_plugin=self.to_dict(),
@@ -231,6 +235,15 @@ class VisualizationPlugin(ServesTemplatesPluginMixin):
         # as is for now
         return embedded
 
+    def _set_logo(self):
+        if self.static_path:
+            supported_formats = ["png", "svg"]
+            for file_format in supported_formats:
+                logo_path = os.path.join(self.static_path, f"logo.{file_format}")
+                if os.path.isfile(logo_path):
+                    self.config["logo"] = logo_path
+                    return
+
 
 class ScriptVisualizationPlugin(VisualizationPlugin):
     """
@@ -255,6 +268,7 @@ class ScriptVisualizationPlugin(VisualizationPlugin):
         template.
         """
         render_vars["embedded"] = self._parse_embedded(embedded)
+        render_vars["host_url"] = trans.request.host_url
         render_vars["static_url"] = url_for(f"/{self.static_path}/")
         render_vars.update(vars={})
         render_vars.update({"script_attributes": self.config["entry_point"]["attr"]})

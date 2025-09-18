@@ -1,6 +1,5 @@
 import logging
-
-from sqlalchemy import and_
+from typing import TYPE_CHECKING
 
 from tool_shed.util import (
     hg_util,
@@ -8,37 +7,15 @@ from tool_shed.util import (
     repository_util,
 )
 
+if TYPE_CHECKING:
+    from tool_shed.structured_app import ToolShedApp
+
 log = logging.getLogger(__name__)
 
 
 class ToolVersionManager:
-    def __init__(self, app):
+    def __init__(self, app: "ToolShedApp"):
         self.app = app
-
-    def get_tool_version(self, tool_id):
-        context = self.app.install_model.context
-        return (
-            context.query(self.app.install_model.ToolVersion)
-            .filter(self.app.install_model.ToolVersion.table.c.tool_id == tool_id)
-            .first()
-        )
-
-    def get_tool_version_association(self, parent_tool_version, tool_version):
-        """
-        Return a ToolVersionAssociation if one exists that associates the two
-        received tool_versions. This function is called only from Galaxy.
-        """
-        context = self.app.install_model.context
-        return (
-            context.query(self.app.install_model.ToolVersionAssociation)
-            .filter(
-                and_(
-                    self.app.install_model.ToolVersionAssociation.table.c.parent_id == parent_tool_version.id,
-                    self.app.install_model.ToolVersionAssociation.table.c.tool_id == tool_version.id,
-                )
-            )
-            .first()
-        )
 
     def get_version_lineage_for_tool(self, repository_id, repository_metadata, guid):
         """
