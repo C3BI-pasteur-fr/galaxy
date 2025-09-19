@@ -1,3 +1,0 @@
-"""
-Galaxy patch for Pasteur
-"""
