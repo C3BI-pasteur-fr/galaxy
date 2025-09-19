@@ -944,9 +944,7 @@ class GalaxyAppConfiguration(BaseAppConfiguration, CommonConfigurationMixin):
         if self.workflow_resource_params_mapper and ":" not in self.workflow_resource_params_mapper:
             # Assume it is not a Python function, so a file; else: a Python function
             self.workflow_resource_params_mapper = self._in_root_dir(self.workflow_resource_params_mapper)
-
-        self.use_modules = kwargs.get("use_modules", "False")
-	
+        
         self.pbs_application_server = kwargs.get("pbs_application_server", "")
         self.pbs_dataset_server = kwargs.get("pbs_dataset_server", "")
         self.pbs_dataset_path = kwargs.get("pbs_dataset_path", "")
