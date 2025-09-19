@@ -113,7 +113,6 @@ from galaxy.util.xml_macros import load
 from galaxy.web_stack.handlers import ConfiguresHandlers
 from galaxy.work.context import WorkRequestContext
 
-from pasteur.modulepatch import module_dependency, module_prepare
 
 if TYPE_CHECKING:
     from galaxy.jobs.handler import BaseJobHandlerQueue
@@ -1317,8 +1316,6 @@ class MinimalJobWrapper(HasResourceParameters):
 
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir  # noqa: B018
-        #PASTEUR MAREUIL
-        self.dependency_module_commands = module_prepare(self.app, self.command_line, job, self.working_directory)
         if self.tool.requires_galaxy_python_environment or self.remote_command_line:
             # These tools (upload, metadata, data_source) may need access to the datatypes registry.
             self.app.datatypes_registry.to_xml_file(os.path.join(self.working_directory, "registry.xml"))

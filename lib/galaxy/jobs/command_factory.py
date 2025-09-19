@@ -1,7 +1,6 @@
 import json
 import typing
 from logging import getLogger
-from pasteur.modulepatch import __handle_dependency_module
 from os import (
     getcwd,
     makedirs,
@@ -77,7 +76,6 @@ def build_command(
     # containers ready to go!
     if not container or container.resolve_dependencies:
         __handle_dependency_resolution(commands_builder, job_wrapper, remote_command_params)
-        __handle_dependency_module(commands_builder, job_wrapper) #PASTEUR MAREUIL
 
     __handle_task_splitting(commands_builder, job_wrapper)
     for_pulsar = "pulsar_version" in remote_command_params
